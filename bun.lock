@@ -7,6 +7,7 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.15",
         "@types/node": "24.19.2",
+        "fflate": "0.8.3",
         "playwright-core": "1.64.0",
         "tsx": "4.23.15",
         "typescript": "7.0.2",
@@ -15,7 +16,7 @@
     },
     "apps/extension": {
       "name": "@agent-computers/extension",
-      "version": "26.1023.3",
+      "version": "26.1024.2",
       "dependencies": {
         "@agent-computers/capture": "workspace:*",
         "@base-ui/react": "1.9.0",
@@ -483,6 +484,8 @@
     "exsolve": ["exsolve@1.1.3", "", {}, "sha512-kuzL9zherLQoqDeQaS55AiiIg1kb4KYXaSusTtgZTPlvKP2gGCI82LNmBNh5RjDVUXIcmgx+/Mx7vPwRzBbhJA=="],
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
+
+    "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
 
     "filesize": ["filesize@11.0.28", "", {}, "sha512-tsZcwUmhL0WQpsxe9Oua6FBjb0aBTRkXobZBhQdkoII0pYgy9h+cXm5tp13Fsr8dSwp1+UVDxNwAFULDpxkXaw=="],
 

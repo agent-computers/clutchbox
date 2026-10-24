@@ -16,6 +16,7 @@
   "scripts": {
     "dev:extension": "bun run --cwd apps/extension dev",
     "build:extension": "bun run --cwd apps/extension build",
+    "zip:manual": "node --import tsx scripts/zip-manual.ts",
     "check:extension-version": "node --import tsx scripts/check-extension-version.ts",
     "typecheck": "bun --filter \"*\" typecheck && tsc -p tsconfig.json",
     "test": "vitest run",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
+    "fflate": "0.8.3",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.4",
