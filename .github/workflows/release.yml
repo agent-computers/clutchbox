@@ -24,7 +24,7 @@ jobs:
 
   build:
     needs: check
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -55,7 +55,7 @@ jobs:
 
   github:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: write
@@ -76,7 +76,7 @@ jobs:
   store:
     needs: [build, github]
     if: inputs.store
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     environment: chrome-web-store
     permissions:

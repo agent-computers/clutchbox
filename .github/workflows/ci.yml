@@ -17,7 +17,9 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    # Pull requests, which can come from forks, use GitHub's runners, free for public repos; pushes and releases use
+    # Blacksmith's faster ones, which the project pays for.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
