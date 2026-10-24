@@ -189,4 +189,4 @@ The Playwright adapter's tests drive a real Chromium (`bunx playwright-core inst
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE). The Agent Computers name and logos are covered by the [trademark policy](TRADEMARKS.md): use them to say what's true, and rename a modified extension before publishing it.

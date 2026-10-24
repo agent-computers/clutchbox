@@ -19,3 +19,5 @@ WXT_SERVER_ORIGIN=https://sync.example.com bun run build:extension
 ```
 
 Load `apps/extension/.output/chrome-mv3` unpacked from `chrome://extensions` (Developer mode), or pack it with your own key and force-install it with Chrome Enterprise policy. `bun run dev:extension` starts a development build that reloads on change.
+
+To publish a modified build, on a store or anywhere else, give it its own name and icons (`wxt.config.ts` and `public/icon`) and your own key: the Agent Computers name and icons mean this project's builds ([trademark policy](../../TRADEMARKS.md)).
