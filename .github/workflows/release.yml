@@ -42,10 +42,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: bun run --cwd apps/extension zip:store
       - uses: actions/upload-artifact@v7
         with:
