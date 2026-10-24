@@ -1,0 +1,33 @@
+{
+  "name": "@agent-computers/computer",
+  "version": "0.1.0",
+  "description": "The interface for AI agent computers: create, pause, resume, screenshot, act, exec, CDP, and cookie sync.",
+  "keywords": [
+    "computer-use",
+    "ai-agents",
+    "sandbox",
+    "desktop",
+    "cdp"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/computer"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/apply": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@agent-computers/capture",
+  "version": "0.2.0",
+  "description": "The capture format and sync contract for syncing browser sign-ins to AI agents: cookies, sites, settings, and OAuth.",
+  "keywords": [
+    "cookies",
+    "browser-session",
+    "ai-agents",
+    "capture",
+    "sync",
+    "zod"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/capture"
+  },
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sites": "./src/sites.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "license": "Apache-2.0"
+}

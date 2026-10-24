@@ -1,0 +1,44 @@
+{
+  "name": "@agent-computers/e2b",
+  "version": "0.1.0",
+  "description": "AI agent computers on E2B: a Linux desktop sandbox with Chrome that stays signed in to your sites.",
+  "keywords": [
+    "e2b",
+    "computer-use",
+    "ai-agents",
+    "sandbox",
+    "desktop",
+    "chrome",
+    "cdp"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/e2b"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./timing": "./src/timing.ts",
+    "./template": "./src/template.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build-template": "node --import tsx scripts/build-template.ts"
+  },
+  "dependencies": {
+    "@agent-computers/computer": "workspace:*",
+    "@e2b/desktop": "2.4.0",
+    "e2b": "2.55.0"
+  },
+  "devDependencies": {
+    "@agent-computers/apply": "workspace:*",
+    "@agent-computers/capture": "workspace:*",
+    "@types/node": "24.19.2"
+  }
+}

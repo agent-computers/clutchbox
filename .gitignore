@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.output/
+.wxt/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store

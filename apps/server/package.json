@@ -1,0 +1,37 @@
+{
+  "name": "@agent-computers/self-host",
+  "version": "0.1.0",
+  "description": "A self-hosted sync server for the Agent Computers extension: your browser's sign-ins, served to your agents.",
+  "keywords": [
+    "self-hosted",
+    "cookies",
+    "ai-agents",
+    "sync",
+    "oauth"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "apps/server"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/capture": "workspace:*",
+    "@hono/node-server": "2.1.5",
+    "hono": "4.13.13",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2"
+  }
+}

@@ -1,0 +1,99 @@
+/* The Agent Computers design tokens, fonts, and base styles the extension's three pages use: a plum-black ground,
+   white ink, and pink for the primary action, in EB Garamond and IBM Plex Sans. Tailwind scans this app's files only. */
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@font-face {
+  font-family: "EB Garamond";
+  src: url("./fonts/EBGaramond.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("./fonts/EBGaramond-Italic.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("./fonts/IBMPlexSans.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "EB Garamond", Garamond, Georgia, serif;
+  --font-heading: var(--font-serif);
+  --color-soft: var(--soft);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* One dark theme. Pink (primary) is only for the primary action. */
+:root {
+  color-scheme: dark;
+  --background: #0d060b;
+  --foreground: #ffffff;
+  --card: #1b0e17;
+  --card-foreground: #ffffff;
+  --primary: #ff488b;
+  --primary-foreground: #0d060b;
+  --secondary: #33202c;
+  --secondary-foreground: #ffffff;
+  --muted: #26141f;
+  --muted-foreground: #9a8f97;
+  --soft: #c9bec6;
+  --destructive: #ff9e7a;
+  --border: #33202c;
+  --input: #7d6f78;
+  --ring: #ff488b;
+  --radius: 0.25rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  ::selection {
+    @apply bg-primary text-primary-foreground;
+  }
+}
+
+/* Reduced motion removes every transition. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override every component's animation. */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override every component's transition. */
+    transition: none !important;
+  }
+}

@@ -1,0 +1,39 @@
+import { browserOrigins, serverOrigins } from '@agent-computers/capture';
+import tailwindcss from '@tailwindcss/vite';
+import { defineConfig } from 'wxt';
+import { serverOriginOf } from './src/origin';
+
+const server = serverOriginOf(process.env.WXT_SERVER_ORIGIN);
+
+// Pinned public key: extension ID jpkiadcbmdldnjmfdllbiioieajicacg, which the server allows in EXTENSION_ORIGINS.
+// Store uploads (`zip:store`) leave it out: the Chrome Web Store assigns the ID and rejects a `key` on upload.
+const key =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnUE5ttvYs5K6gUFk0bEwkns7uXwxYx29c0bGz/Ny+cVTFuV582plnnAYzhn/SHB3DXpKmGTGeVuJcQmVzaxWh6NU/jtl7+VFzTbV+eHgrcsb0+9t0tGiHHfu7c6D0NnOL2DK2M6spAeBkZmMH4ug6H0n/ytrV5HpAn6Hv6wtaIR9vciwBvqtjP5/5Wwk9BcMcEy5KswM+HGqbMUfyV1B+e0O3+a9PdiBZz8KMa/yuwvNr9ieVcjfDncxLNdrazsNgr1E4RdoTaLK3aQywsMnLSgWdeYMN8d0upPqOJ4y16yIAJPtUa6O9kJL2BEs4n7N7AjnGCdOg+C5xu9TPwMRCQIDAQAB';
+
+export default defineConfig({
+  modules: ['@wxt-dev/module-react'],
+  zip: { artifactTemplate: 'agent-computers-{{version}}-{{browser}}.zip' },
+  vite: () => ({ plugins: [tailwindcss()] }),
+  // A function so WXT has loaded .env files into process.env first.
+  manifest: ({ mode }) => ({
+    name: 'Agent Computers — Browser Sync',
+    description:
+      'Sync sign-ins for the sites you choose to your agent computer. Encrypted uploads, with exclusions, pause, and disconnect controls.',
+    ...(mode === 'store' ? {} : { key }),
+    minimum_chrome_version: '130',
+    // activeTab: opening the popup lets it read the current tab's address for Add this site.
+    permissions: ['cookies', 'storage', 'alarms', 'activeTab'],
+    // No host permissions at install: the extension reaches its server with OAuth tokens, and each site is
+    // granted when added.
+    optional_host_permissions: [...browserOrigins],
+    // The OAuth redirect page, which the server's redirect opens. When the user signs in with Google mid-connect,
+    // Google's last hop is the navigation's initiator, so it is listed too.
+    web_accessible_resources: [
+      { resources: ['connected.html'], matches: [...serverOrigins(server), 'https://accounts.google.com/*'] },
+    ],
+    incognito: 'not_allowed',
+    content_security_policy: {
+      extension_pages: `script-src 'self'; object-src 'none'; connect-src ${server}`,
+    },
+  }),
+});

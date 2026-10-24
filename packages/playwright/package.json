@@ -1,0 +1,44 @@
+{
+  "name": "@agent-computers/playwright",
+  "version": "0.1.0",
+  "description": "Sign Playwright and browser-use browsers in to your sites: apply synced cookies to a context or any Chrome over CDP.",
+  "keywords": [
+    "playwright",
+    "browser-use",
+    "stagehand",
+    "cdp",
+    "cookies",
+    "ai-agents",
+    "browser-automation",
+    "logged-in",
+    "session"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/playwright"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/apply": "workspace:*",
+    "@agent-computers/capture": "workspace:*"
+  },
+  "peerDependencies": {
+    "playwright-core": ">=1.40"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "playwright-core": "1.64.0"
+  }
+}

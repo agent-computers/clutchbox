@@ -1,0 +1,33 @@
+{
+  "name": "@agent-computers/apply",
+  "version": "0.1.0",
+  "description": "Apply synced browser sign-ins to any Chrome over CDP, writing only what changed, so AI agents start signed in.",
+  "keywords": [
+    "cdp",
+    "chrome-devtools-protocol",
+    "cookies",
+    "ai-agents",
+    "browser-automation",
+    "session"
+  ],
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/apply"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/capture": "workspace:*"
+  }
+}
