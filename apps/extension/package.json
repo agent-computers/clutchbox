@@ -1,12 +1,12 @@
 {
   "name": "@agent-computers/extension",
-  "version": "26.1024.1",
+  "version": "26.1024.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",
-    "zip:store": "wxt zip --mode store",
+    "zip:store": "NODE_ENV=production wxt zip --mode store",
     "postinstall": "wxt prepare",
     "typecheck": "wxt prepare && tsc --noEmit"
   },
