@@ -102,6 +102,7 @@ jobs:
         env:
           TOKEN: ${{ steps.google.outputs.access_token }}
         run: |
+          set -o pipefail
           api() { curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" "$@"; }
           state=$(api -X POST -T "agent-computers-$VERSION-chrome.zip" "$UPLOAD:upload" | tee /dev/stderr | jq -r .uploadState)
           # Large packages finish processing asynchronously.
