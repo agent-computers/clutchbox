@@ -17,7 +17,11 @@ export async function fetchCapture({
   apiKey: string;
   fetcher?: typeof fetch;
 }): Promise<Capture | null> {
-  const response = await fetcher(new URL('/api/v1/capture', server), {
+  const url = new URL('/api/v1/capture', server);
+  // The API key and the capture are secrets: never over plain HTTP, except to this machine.
+  if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
+    throw new Error('The server must use HTTPS');
+  const response = await fetcher(url, {
     headers: { authorization: `Bearer ${apiKey}` },
   });
   if (response.status === 404) return null;

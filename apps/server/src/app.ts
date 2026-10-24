@@ -29,6 +29,12 @@ import { hashToken, open, randomToken, type State, type Store, seal } from './st
 export const ACCESS_TOKEN_SECONDS = 5 * 60;
 export const REFRESH_TOKEN_SECONDS = 30 * 24 * 3600;
 const CODE_SECONDS = 60;
+// Wrong access or API keys allowed per minute, across all clients, before guesses are refused until the minute passes.
+// Behind a proxy the client's address can't be trusted, so the limit is global: it caps online guessing at 14,400 a
+// day, at the cost that someone guessing can briefly block connecting a new browser or an agent's read.
+const KEY_FAILURES_PER_MINUTE = 10;
+// The connect form and token requests are a few hundred bytes; anything larger is refused before it is parsed.
+const MAX_FORM_BYTES = 16_384;
 // The extension's own upload cap (maxUploadBytes).
 const MAX_CAPTURE_BYTES = 4_000_000;
 const SYNC_PATHS = ['/api/v1/me', '/api/v1/captures', '/api/v1/sync', '/api/v1/sync/adopt'];
@@ -70,6 +76,12 @@ export function createApp(config: Config, store: Store, now: () => number = Date
   // a restart costs an in-flight connect or a retried refresh, never a stored secret.
   const codes = new Map<string, Code>();
   const rotations = new Map<string, { body: TokenBody; until: number }>();
+  const keyFailures: number[] = [];
+  const guessingBlocked = () => {
+    while (keyFailures.length && keyFailures[0]! <= now() - 60_000) keyFailures.shift();
+    return keyFailures.length >= KEY_FAILURES_PER_MINUTE;
+  };
+  const formLimit = bodyLimit({ maxSize: MAX_FORM_BYTES, onError: c => c.text('Request too large.', 413) });
 
   const settingsOf = (state: State): SyncSettings | null =>
     state.settings
@@ -135,7 +147,7 @@ export function createApp(config: Config, store: Store, now: () => number = Date
   });
 
   // --- OAuth for the extension: PKCE, no consent page, opaque tokens ---
-  const page = (c: Context<Env>, params: Authorize, error?: string) => {
+  const page = (c: Context<Env>, params: Authorize, error?: string, status: 401 | 429 = 401) => {
     c.header('X-Frame-Options', 'DENY');
     // The form's redirect goes to the extension, so it is allowed as a form action.
     c.header(
@@ -150,7 +162,7 @@ export function createApp(config: Config, store: Store, now: () => number = Date
 <style>body{font:16px system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;background:#0d060b;color:#fff}input[type=password]{width:100%;padding:.6rem;margin:.5rem 0 1rem;box-sizing:border-box}button{padding:.6rem 1rem;background:#ff488b;border:0;color:#0d060b;font-weight:600}p.error{color:#ff9e7a}</style></head>
 <body><h1>Connect this browser</h1><p>Its extension will sync the sites you choose to ${escapeHtml(config.PUBLIC_URL)}.</p>${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
 <form method="post">${hidden}<label>Access key<input type="password" name="access_key" autocomplete="current-password" required autofocus></label><button type="submit">Connect</button></form></body></html>`,
-      error ? 401 : 200,
+      error ? status : 200,
     );
   };
   const readAuthorize = (input: Record<string, unknown>) => {
@@ -163,12 +175,14 @@ export function createApp(config: Config, store: Store, now: () => number = Date
     if (!params) return c.text('Invalid authorization request.', 400);
     return page(c, params);
   });
-  app.post('/api/auth/oauth2/authorize', async c => {
+  app.post('/api/auth/oauth2/authorize', formLimit, async c => {
     const form = (await c.req.parseBody()) as Record<string, string>;
     const { access_key: key, ...rest } = form;
     const params = readAuthorize(rest);
     if (!params) return c.text('Invalid authorization request.', 400);
+    if (guessingBlocked()) return page(c, params, 'Too many wrong access keys. Try again in a minute.', 429);
     if (typeof key !== 'string' || !sameSecret(key, config.ACCESS_KEY)) {
+      keyFailures.push(now());
       await new Promise(resolve => setTimeout(resolve, 500));
       return page(c, params, 'That access key is not right.');
     }
@@ -187,7 +201,7 @@ export function createApp(config: Config, store: Store, now: () => number = Date
     '/api/auth/oauth2/token',
     cors({ origin: from => (isExtension(from) ? from : null), allowMethods: ['POST'], allowHeaders: ['content-type'] }),
   );
-  app.post('/api/auth/oauth2/token', async c => {
+  app.post('/api/auth/oauth2/token', formLimit, async c => {
     const invalid = () => c.json({ error: 'invalid_grant' }, 400);
     const form = (await c.req.parseBody()) as Record<string, string>;
     if (form.client_id !== extensionClientId) return c.json({ error: 'invalid_client' }, 401);
@@ -313,8 +327,12 @@ export function createApp(config: Config, store: Store, now: () => number = Date
 
   // --- For agents and computers: the latest capture, with the API key ---
   app.get('/api/v1/capture', c => {
+    if (guessingBlocked()) return c.json({ error: 'rate_limited' }, 429, { 'Retry-After': '60' });
     const match = /^Bearer (.+)$/.exec(c.req.header('authorization') ?? '');
-    if (!match || !sameSecret(match[1]!, config.API_KEY)) return c.json({ error: 'unauthenticated' }, 401);
+    if (!match || !sameSecret(match[1]!, config.API_KEY)) {
+      keyFailures.push(now());
+      return c.json({ error: 'unauthenticated' }, 401);
+    }
     const state = store.read();
     const capture = captureOf(state);
     if (!capture || !state.capture) return c.json({ error: 'no_capture' }, 404);
@@ -325,7 +343,7 @@ export function createApp(config: Config, store: Store, now: () => number = Date
   app.notFound(c =>
     c.req.method === 'GET' && !c.req.path.startsWith('/api/')
       ? c.html(
-          `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Self-hosted sync</title></head><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;background:#0d060b;color:#fff"><h1>Self-hosted sync</h1><p>This is a self-hosted Agent Computers sync server for ${escapeHtml(config.OWNER_EMAIL)}. It has no account pages: manage sites, pause, and disconnect from the extension.</p></body></html>`,
+          `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Self-hosted sync</title></head><body style="font:16px system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;background:#0d060b;color:#fff"><h1>Self-hosted sync</h1><p>This is a self-hosted Agent Computers sync server. It has no account pages: manage sites, pause, and disconnect from the extension.</p></body></html>`,
           404,
         )
       : c.json({ error: 'not_found' }, 404),

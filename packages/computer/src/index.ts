@@ -5,6 +5,14 @@ import { z } from 'zod';
 // controls one. Adapters implement these for a sandbox provider (packages/e2b).
 // The desktop's size; screenshots and actions use its coordinates.
 export const DISPLAY = { width: 1280, height: 800 };
+// A key name (Return, ctrl, F5, a) or a chord of them joined by +, in characters a shell passes through unquoted:
+// adapters may hand keys to a command line, as E2B's xdotool does. Text, symbols included, goes through `type`.
+export const keyNamePattern = /^[A-Za-z0-9_+.,=/:-]+$/;
+const keyName = z
+  .string()
+  .min(1)
+  .max(40)
+  .regex(keyNamePattern, 'A key name, such as Return, ctrl, or a; type text with type.');
 export const actionSchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -36,7 +44,7 @@ export const actionSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('key'),
-      keys: z.union([z.string().min(1).max(40), z.array(z.string().min(1).max(40)).min(1).max(5)]),
+      keys: z.union([keyName, z.array(keyName).min(1).max(5)]),
     })
     .strict(),
   z.object({ type: z.literal('wait'), ms: z.int().min(1).max(5000) }).strict(),

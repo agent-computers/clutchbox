@@ -100,7 +100,13 @@ export const cookieSchema = z
   .object({
     name: z.string().max(4096),
     value: z.string().max(16384),
-    domain: z.string().min(1).max(253),
+    // A hostname, with a leading dot for a domain cookie: anything else could name one site to the scope check and
+    // another to whoever sets the cookie by URL.
+    domain: z
+      .string()
+      .min(1)
+      .max(253)
+      .regex(/^\.?[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\.?$/i),
     hostOnly: z.boolean(),
     path: z.string().startsWith('/').max(4096),
     secure: z.boolean(),

@@ -121,6 +121,23 @@ describe('connecting a browser', () => {
     const { response } = await connect('wrong key, but long enough');
     expect(response.status).toBe(401);
   });
+  it('refuses key guesses past ten a minute, the right key included, then accepts it again', async () => {
+    const { connect, latest, clock } = setup();
+    for (let i = 0; i < 10; i++) expect((await latest(`wrong api key number ${i}`)).status).toBe(401);
+    expect((await connect()).response.status).toBe(429);
+    expect((await latest()).status).toBe(429);
+    clock.now += 61_000;
+    expect((await connect()).tokens).toBeDefined();
+  });
+  it('refuses an oversized connect form before reading it', async () => {
+    const { app } = setup();
+    const response = await app.request(`${config.PUBLIC_URL}/api/auth/oauth2/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: `access_key=${'a'.repeat(20_000)}`,
+    });
+    expect(response.status).toBe(413);
+  });
   it('exchanges a code once, and only with its verifier', async () => {
     const { connect, fetcher } = setup();
     const { tokens, code, verifier } = await connect();

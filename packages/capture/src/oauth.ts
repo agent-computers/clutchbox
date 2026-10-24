@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
 // The extension's OAuth client of its own server: PKCE, no consent page, opaque `sync` tokens. Pure
-// functions with an injected fetch, so the extension and the server's contract test
-// (packages/api/src/extension-oauth.test.ts) run the same code.
+// functions with an injected fetch, so the extension and servers' contract tests run the same code.
 
-// Not a URL, so CIMD never registers it (packages/server/src/browsers.ts).
+// A plain name, not a URL, so a server that registers clients from their metadata URL never tries to fetch it.
 export const extensionClientId = 'agent-computers-extension';
 export const syncScope = 'sync';
 // How long the server gives a rotated refresh token the same answer. A rotated token presented after it counts as

@@ -37,7 +37,7 @@ A minimal server for the Agent Computers extension, for one owner. It receives t
 
 ## What it stores
 
-One file, `DATA_DIR/state.json`, rewritten whole after each change. The capture and the sync settings are sealed with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`; tokens are kept only as hashes. Access tokens last five minutes, and refresh tokens rotate and expire after 30 days unused. A rotated refresh token replayed after 30 seconds counts as stolen: that browser is disconnected and what it uploaded is deleted. Disconnecting from the extension does the same.
+One file, `DATA_DIR/state.json`, rewritten whole after each change. The capture and the sync settings are sealed with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`; tokens are kept only as hashes. Access tokens last five minutes, and refresh tokens rotate and expire after 30 days unused. A rotated refresh token replayed after 30 seconds counts as stolen: that browser is disconnected and what it uploaded is deleted. Disconnecting from the extension does the same. Wrong access or API keys are limited to ten a minute across all clients; past that, every attempt is refused until the minute passes.
 
 ## For agents
 

@@ -83,9 +83,8 @@ function setup(initial?: unknown) {
       ...(theirs.config ? { config: theirs.config } : {}),
     });
   });
-  // The server's OAuth rules the extension relies on, as packages/server/src/browsers.test.ts and the contract case in
-  // packages/api/src/extension-oauth.test.ts prove them against real Better Auth: single-use codes bound to the PKCE
-  // challenge and redirect URI; rotating refresh tokens whose rotated token gets the same answer for 30 seconds and
+  // The server's OAuth rules the extension relies on, as apps/server's tests prove them for the self-host server:
+  // single-use codes bound to the PKCE challenge and redirect URI; rotating refresh tokens whose rotated token gets the same answer for 30 seconds and
   // disconnects its family after; a disconnected family's tokens refused.
   let counter = 0;
   const codes = new Map<string, { user: string; challenge: string; redirectUri: string }>();

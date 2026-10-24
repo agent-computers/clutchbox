@@ -152,5 +152,9 @@ describe('fetching the latest capture', () => {
       '401',
     );
     expect(sent).toEqual(['Bearer k', 'Bearer k', 'Bearer k']);
+    await expect(
+      fetchCapture({ server: 'http://sync.test', apiKey: 'k', fetcher: answer(200, { capture: stored }) }),
+    ).rejects.toThrow('HTTPS');
+    expect(sent).toHaveLength(3);
   });
 });

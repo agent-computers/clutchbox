@@ -120,6 +120,11 @@ describe('added sites', () => {
       }).success,
     ).toBe(true);
     expect(captureSchema.safeParse({ ...bundle(), scope: { ...scope, sites: ['other.test'] } }).success).toBe(false);
+    // A domain that isn't a hostname could pass the scope check as one site and be set by URL on another.
+    for (const domain of ['attacker.test#.capture.test', 'attacker.test/.capture.test', 'a b.capture.test'])
+      expect(captureSchema.safeParse({ ...bundle(), scope, cookies: [{ ...cookie, domain }] }).success, domain).toBe(
+        false,
+      );
   });
   it('reads whole-browser settings from before site selection as all sites', () => {
     const legacy = { consentVersion: 1, connected: true, paused: false, excludedDomains: ['bank.test'] };

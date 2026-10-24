@@ -181,6 +181,23 @@ describe('E2B adapter', () => {
       stdout: '{"error":"cdp_unavailable"}',
     });
   });
+  it('keeps key names and time zones off the command line unless they are plain names', async () => {
+    const run = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    const press = vi.fn(async () => {});
+    vi.spyOn(Sandbox, 'connect').mockResolvedValue({ commands: { run }, press } as never);
+    const session = await e2bComputerProvider().connect('sandbox', 1000);
+    // E2B's press runs `xdotool key <keys>` in a shell.
+    await expect(session.act({ type: 'key', keys: ['ctrl', 'a;touch /tmp/owned'] })).rejects.toThrow('key name');
+    await expect(session.act({ type: 'key', keys: '$(id)' })).rejects.toThrow('key name');
+    expect(press).not.toHaveBeenCalled();
+    await session.act({ type: 'key', keys: ['ctrl', 'Page_Down'] });
+    expect(press).toHaveBeenCalledWith(['ctrl', 'Page_Down']);
+    // Run as root on a path built from the name.
+    await expect(session.setTimeZone('../../../etc/shadow')).rejects.toThrow('time zone');
+    expect(run).not.toHaveBeenCalled();
+    await session.setTimeZone('America/Los_Angeles');
+    expect(run).toHaveBeenCalledTimes(1);
+  });
   it('creates private computers and starts live view only on one with a traffic token (E2B adapter)', async () => {
     const run = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
     const create = vi
@@ -207,7 +224,7 @@ describe('E2B adapter', () => {
     } as never);
     const session = await e2bComputerProvider().connect('sandbox', 1000);
     expect(session.isPrivate).toBe(true);
-    // websockify accepts only this Origin, which no page in the computer's Chrome can send (checked live in mcp.test.ts).
+    // websockify accepts only this Origin, which no page in the computer's Chrome can send.
     expect(await session.stream(15_000)).toEqual({
       url: 'wss://6080-sandbox.e2b.app/',
       headers: { 'e2b-traffic-access-token': 'token', origin: STREAM_ORIGIN },

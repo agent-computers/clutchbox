@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { type ComputerProvider, type ComputerSession, DISPLAY, type ExecResult } from '@agent-computers/computer';
+import {
+  type ComputerProvider,
+  type ComputerSession,
+  DISPLAY,
+  type ExecResult,
+  keyNamePattern,
+} from '@agent-computers/computer';
 import { Sandbox } from '@e2b/desktop';
 import { Sandbox as BaseSandbox, CommandExitError, TimeoutError } from 'e2b';
 import {
@@ -378,6 +384,8 @@ function session(sandbox: Sandbox): ComputerSession {
         case 'type':
           return sandbox.write(action.text, { chunkSize: 50, delayInMs: TYPE_KEY_DELAY_MS });
         case 'key':
+          // E2B's press runs `xdotool key <keys>` unquoted, so a key name must not reach it unchecked.
+          if (![action.keys].flat().every(key => keyNamePattern.test(key))) throw new Error('Invalid key name');
           return sandbox.press(action.keys);
         case 'wait':
           return sandbox.wait(action.ms);
@@ -459,6 +467,8 @@ function session(sandbox: Sandbox): ComputerSession {
     // As root: /etc/localtime is the system zone, and Chrome (started without TZ) follows a change to it in
     // open tabs too. A zone tzdata lacks fails the command and leaves the old one.
     async setTimeZone(timeZone) {
+      // It becomes a path read as root, so an IANA name only: no dots, so no `..`.
+      if (!/^[A-Za-z][A-Za-z0-9_+/-]{0,63}$/.test(timeZone)) throw new Error('Invalid time zone');
       const zone = quote(`/usr/share/zoneinfo/${timeZone}`);
       await sandbox.commands.run(
         `test -f ${zone} && ln -sf ${zone} /etc/localtime && echo ${quote(timeZone)} > /etc/timezone`,
