@@ -4,11 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these checks first.
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded pull request runs, but let main finish, so a release isn't cut off halfway.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # By event too, so a push to main never cancels a release's checks.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -36,38 +38,3 @@ jobs:
       - run: bunx playwright-core install --with-deps chromium
       - run: bun run test
 
-  # Each new extension version on main becomes a release carrying the Chrome Web Store build, made here from that
-  # commit. The store gets this same zip, so anyone can match the listed extension to its source.
-  release:
-    needs: check
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-      - id: version
-        run: |
-          version=$(node -p "require('./apps/extension/package.json').version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "Extension $version is already released."
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.version.outputs.released != 'true'
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - if: steps.version.outputs.released != 'true'
-        run: bun install --frozen-lockfile
-      - if: steps.version.outputs.released != 'true'
-        run: bun run --cwd apps/extension zip:store
-      - if: steps.version.outputs.released != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          gh release create "v$VERSION" "apps/extension/.output/agent-computers-$VERSION-chrome.zip" \
-            --target "$GITHUB_SHA" --title "Extension $VERSION" --generate-notes \
-            --notes "The Chrome extension's Chrome Web Store build, made by CI from this commit. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi); this zip is for [checking the store's package against the source](https://github.com/agent-computers/agent-computers/blob/v$VERSION/apps/extension/README.md#verify-the-store-build). Not every version goes to the store."
