@@ -1,0 +1,28 @@
+/* Self-hosted faces for surfaces without next/font. The web app loads the same files with next/font/local. */
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../fonts/EBGaramond.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "EB Garamond";
+  src: url("../fonts/EBGaramond-Italic.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../fonts/IBMPlexSans.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Name the faces for the shared font stacks, as next/font does in the web app. */
+:root {
+  --font-garamond: "EB Garamond";
+  --font-plex: "IBM Plex Sans";
+}
