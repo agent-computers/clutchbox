@@ -118,6 +118,8 @@ asyncio.run(agent.run())
 | [`packages/computer`](packages/computer) | The interface an agent computer provider implements: create, pause, resume, screenshot, act, exec, and CDP. |
 | [`packages/e2b`](packages/e2b) | Agent computers on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
+| [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations. |
+| [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay. |
 
 Planned: adapters for Daytona, Browserbase, and Kernel.
 

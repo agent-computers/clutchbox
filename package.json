@@ -22,10 +22,19 @@
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "render:readme-images": "node --import tsx scripts/render-readme-images.ts"
+    "render:readme-images": "node --import tsx scripts/render-readme-images.ts",
+    "db:generate": "bun run --cwd packages/server drizzle-kit generate",
+    "db:migrate": "node --import tsx packages/server/src/migrate.ts",
+    "test:accounts": "vitest run packages/server/src/accounts.test.ts",
+    "test:computers": "vitest run packages/server/src/computers.test.ts",
+    "test:captures": "vitest run packages/server/src/captures.test.ts",
+    "test:mcp": "vitest run packages/api/src/mcp.test.ts",
+    "computer:template": "node --conditions=react-server --import tsx packages/server/scripts/build-computer-template.ts",
+    "computer:smoke": "node --conditions=react-server --import tsx packages/server/scripts/smoke-computer.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@electric-sql/pglite": "0.5.9",
     "@types/node": "24.19.2",
     "fflate": "0.8.3",
     "tsx": "4.23.15",

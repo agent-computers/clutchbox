@@ -31,6 +31,9 @@ jobs:
       - run: bun run check:extension-version ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: bun run lint
       - run: bun run typecheck
+      # Fails when the schema changed without its migration: generating one must change nothing.
+      - run: >-
+          bun run db:generate --name missing_migration && test -z "$(git status --porcelain packages/server/migrations)"
 
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}

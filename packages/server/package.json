@@ -1,0 +1,66 @@
+{
+  "name": "@agent-computers/server",
+  "version": "0.1.0",
+  "description": "The Agent Computers web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations.",
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/server"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./schema": "./src/schema.ts",
+    "./database": "./src/database.ts",
+    "./auth": "./src/auth.ts",
+    "./config": "./src/config.ts",
+    "./mcp": "./src/mcp.ts",
+    "./computers": "./src/computers.ts",
+    "./computer-timing": "./src/computer-timing.ts",
+    "./fake-computer-provider": "./src/fake-computer-provider.ts",
+    "./heartbeat": "./src/heartbeat.ts",
+    "./browsers": "./src/browsers.ts",
+    "./captures": "./src/captures.ts",
+    "./log": "./src/log.ts",
+    "./setup": "./src/setup.ts",
+    "./agents": "./src/agents.ts",
+    "./time-zones": "./src/time-zones.ts",
+    "./tool-calls": "./src/tool-calls.ts",
+    "./rfb-filter": "./src/rfb-filter.ts",
+    "./live-view-relay": "./src/live-view-relay.ts",
+    "./hooks": "./src/hooks.ts",
+    "./migrator": "./src/migrator.ts",
+    "./provider": "./src/provider.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/apply": "workspace:*",
+    "@agent-computers/capture": "workspace:*",
+    "@agent-computers/computer": "workspace:*",
+    "@agent-computers/e2b": "workspace:*",
+    "@better-auth/cimd": "1.7.11",
+    "@better-auth/drizzle-adapter": "1.7.11",
+    "@better-auth/mcp": "1.7.11",
+    "@better-auth/oauth-provider": "1.7.11",
+    "@better-auth/utils": "0.5.0",
+    "@vercel/functions": "3.10.1",
+    "better-auth": "1.7.11",
+    "drizzle-orm": "0.45.4",
+    "e2b": "2.55.0",
+    "pg": "8.23.1",
+    "server-only": "0.0.1",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "@types/ws": "8.18.2",
+    "drizzle-kit": "0.31.11"
+  }
+}

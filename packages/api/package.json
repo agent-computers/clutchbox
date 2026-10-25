@@ -1,0 +1,42 @@
+{
+  "name": "@agent-computers/api",
+  "version": "0.1.0",
+  "description": "The Agent Computers web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay.",
+  "homepage": "https://www.agent-computers.com",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "packages/api"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mcp": "./src/mcp.ts",
+    "./live-view": "./src/live-view.ts",
+    "./node-upgrade": "./src/node-upgrade.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --root ../.. packages/api/src"
+  },
+  "dependencies": {
+    "@agent-computers/capture": "workspace:*",
+    "@agent-computers/server": "workspace:*",
+    "@better-auth/mcp": "1.7.11",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@vercel/functions": "3.10.1",
+    "hono": "4.13.13",
+    "server-only": "0.0.1",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@agent-computers/e2b": "workspace:*",
+    "@types/ws": "8.18.2",
+    "drizzle-orm": "0.45.4"
+  }
+}
