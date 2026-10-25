@@ -120,6 +120,8 @@ asyncio.run(agent.run())
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
 | [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations. |
 | [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay. |
+| [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node server. |
+| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. |
 
 Planned: adapters for Daytona, Browserbase, and Kernel.
 

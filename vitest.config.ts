@@ -6,7 +6,7 @@ export default defineConfig({
   resolve: { alias: { 'server-only': fileURLToPath(new URL('./tests/empty-server-only.ts', import.meta.url)) } },
   // Long enough for a real Chromium to start on a CI runner.
   test: {
-    include: ['packages/*/src/**/*.test.ts', 'apps/*/{src,lib}/**/*.test.ts'],
+    include: ['packages/*/src/**/*.test.ts', 'apps/*/{src,lib}/**/*.test.ts', 'apps/web/*.test.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },

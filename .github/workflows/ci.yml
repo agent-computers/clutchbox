@@ -34,6 +34,27 @@ jobs:
       # Fails when the schema changed without its migration: generating one must change nothing.
       - run: >-
           bun run db:generate --name missing_migration && test -z "$(git status --porcelain packages/server/migrations)"
+      # Route files are generated from the product's route manifest, with literal segment config such as maxDuration;
+      # fails when one was edited by hand, is stale, or a hand-written route claims a product URL.
+      - run: bun run generate-routes --check
+
+  # The web app's production build, with placeholder configuration: catches what only `next build` sees (route segment
+  # config, server-to-client props, CSS). It builds the manual extension zip for the placeholder origin first.
+  build:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: bun run build:web
+        env:
+          APP_ENV: production
+          DATABASE_URL: postgres://build:build@127.0.0.1:5432/build
+          BETTER_AUTH_URL: https://app.example.com
+          BETTER_AUTH_SECRET: build-only-placeholder-not-a-secret-0000
+          GOOGLE_CLIENT_ID: build-only-placeholder
+          GOOGLE_CLIENT_SECRET: build-only-placeholder
+          EXTENSION_ORIGINS: chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg
 
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}

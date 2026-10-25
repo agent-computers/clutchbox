@@ -1,0 +1,47 @@
+{
+  "name": "@agent-computers/app",
+  "version": "0.1.0",
+  "description": "The Agent Computers web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults.",
+  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "author": "Agent Computers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "directory": "apps/web"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "node --import tsx ../../scripts/build-extension-download.ts --out public/downloads --record .extension-download.json && next build",
+    "start": "node --import tsx server.ts",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@agent-computers/api": "workspace:*",
+    "@agent-computers/capture": "workspace:*",
+    "@agent-computers/server": "workspace:*",
+    "@agent-computers/ui": "workspace:*",
+    "@agent-computers/web": "workspace:*",
+    "@better-auth-ui/core": "1.7.30",
+    "@better-auth-ui/react": "1.7.30",
+    "@better-auth/oauth-provider": "1.7.11",
+    "@better-auth/utils": "0.5.0",
+    "@novnc/novnc": "1.7.0",
+    "@tanstack/react-query": "5.104.3",
+    "better-auth": "1.7.11",
+    "lucide-react": "1.59.0",
+    "next": "16.4.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-orm": "0.45.4",
+    "tailwindcss": "4.3.3"
+  }
+}
