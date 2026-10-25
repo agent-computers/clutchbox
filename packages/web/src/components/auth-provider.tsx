@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 import { authClient } from '../lib/auth-client';
 
-const socialProviders = ['google'];
 const emailAndPassword = { enabled: false };
 const localization = { auth: { signIn: 'Sign in', signOut: 'Sign out' } };
 const basePaths = { auth: '', settings: '' };
@@ -25,7 +24,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authClient={authClient}
       queryClient={queryClient}
       navigate={navigate}
-      socialProviders={socialProviders}
       emailAndPassword={emailAndPassword}
       localization={localization}
       basePaths={basePaths}

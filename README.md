@@ -61,9 +61,9 @@ Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-co
 
 ### Self-hosted: the whole product for your organization
 
-[`apps/web`](apps/web) is the product the hosted service runs, for one organization: Google sign-in, browser sync, an agent computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
+[`apps/web`](apps/web) is the product the hosted service runs, for one organization: sign-in with Google, GitHub, your identity provider over OIDC, or email links, browser sync, an agent computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
 
-You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and a Google OAuth client.
+You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and at least one way to sign in: a Google or GitHub OAuth app, an OIDC client at your identity provider, or an SMTP server for email links.
 
 1. Install, and start your configuration from [`apps/web/.env.example`](apps/web/.env.example), which describes every variable:
 
@@ -81,7 +81,10 @@ You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and a Google 
    | `DATABASE_URL` | Your Postgres. |
    | `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. HTTPS, except on localhost in development. |
    | `BETTER_AUTH_SECRET` | `openssl rand -base64 32`. |
-   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | A Google OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. Google is the only sign-in for now. |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in: an OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. |
+   | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in: an OAuth app with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback URL. GitHub must have verified the email address it shares for the member. |
+   | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` | Company SSO (Okta, Entra ID, Keycloak, Authentik, and others): the issuer URL, or its discovery document's, and a confidential client with `<BETTER_AUTH_URL>/api/auth/callback/oidc` as its redirect URI. The provider's ID token must carry `email` and `email_verified: true`. `OIDC_NAME` names the button, such as `Acme SSO`. |
+   | `SMTP_URL`, `SMTP_FROM` | Email links: an `smtp://` or `smtps://` URL with the server's credentials, such as `smtps://user:password@smtp.example.com`, and the address the links come from. |
    | `E2B_API_KEY` | Your E2B team's API key. Without it, development uses an in-memory fake computer. |
    | `CAPTURE_ENCRYPTION_KEY` | `openssl rand -base64 32`. It seals synced captures at rest; without it, uploads answer 503. |
    | `EXTENSION_ORIGINS` | Keep `chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg`, the ID the manual build is pinned to. |
@@ -105,7 +108,7 @@ You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and a Google 
 
 5. Sign in at `BETTER_AUTH_URL`. The Browser sync page offers the manual build of the extension, which `build:web` made for your origin: unzip it and load it unpacked from `chrome://extensions` (Developer mode). To force-install it across your company with Chrome Enterprise policy, pack it with your own key and add that ID to `EXTENSION_ORIGINS`. Connect agents to `<BETTER_AUTH_URL>/api/mcp`; the Agents page has the steps for each.
 
-The Chrome Web Store extension syncs to agent-computers.com, not to your app, so self-hosters load the manual build their own app offers. For now, sign-in is Google only, and the usage table and the MCP tools' free-minutes fields are there for a metering hook: without one, nothing writes or shows them.
+The Chrome Web Store extension syncs to agent-computers.com, not to your app, so self-hosters load the manual build their own app offers. Set at least one sign-in method; the app refuses to start without one, or with one only partly set. The sign-in page offers each one you set. An email address signs in the way its account was first made, or by email link, which proves the address; signing in another way shows an error rather than joining the accounts. The usage table and the MCP tools' free-minutes fields are there for a metering hook: without one, nothing writes or shows them.
 
 ### Self-hosted sync, with Playwright
 

@@ -23,10 +23,7 @@ export function Settings() {
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="grid gap-1">
-              <UserView user={user} />
-              <p className="text-sm text-muted-foreground">Signed in with Google</p>
-            </div>
+            <UserView user={user} />
             <Button variant="secondary" disabled={pending} onClick={() => signOut.mutate()}>
               <LogOut aria-hidden />
               Sign out

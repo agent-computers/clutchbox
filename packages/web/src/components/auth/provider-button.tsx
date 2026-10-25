@@ -1,5 +1,5 @@
 'use client';
-// Better Auth UI v1.7.30 ProviderButton, adapted for redirect-only Google sign-in and our CTA styles.
+// Better Auth UI v1.7.30 ProviderButton, adapted for redirect-only sign-in and our CTA styles.
 // Source: https://github.com/better-auth-ui/better-auth-ui/tree/v1.7.30/examples/start-shadcn-baseui-example/src/components/auth.
 // Upstream MIT license: LICENSE.
 import { Button, buttonVariants } from '@agent-computers/ui/components/button';
@@ -26,15 +26,16 @@ const errorClass = {
   text: 'auth-error absolute top-full right-0 z-20 mt-1 w-[min(18rem,calc(100vw-2.5rem))] rounded-lg bg-popover p-4 text-sm text-destructive',
 };
 
+// The provider is always named, so a button never offers one the deployment does not configure (signInMethods).
 export function ProviderButton({
-  provider = 'google',
+  provider,
   appearance = 'default',
   label,
   signedIn,
   callbackURL,
   className,
 }: {
-  provider?: AuthSocialProvider;
+  provider: AuthSocialProvider;
   appearance?: 'default' | 'text' | 'plain';
   label?: string;
   // With a label, a signed-in visitor gets a link with it to where sign-in would have led, instead of sign-in.
@@ -62,7 +63,8 @@ export function ProviderButton({
     signIn.mutate({
       provider: providerId,
       callbackURL: getAuthCallbackURL(baseURL, getSafeRedirectTo(callbackURL ?? redirectTo, window.location.origin)),
-      errorCallbackURL: '/sign-in?error=oauth',
+      // Better Auth adds the error code, such as account_not_linked, which the sign-in page explains.
+      errorCallbackURL: '/sign-in',
     });
   };
   if (signedIn && session.data)
