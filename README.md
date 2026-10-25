@@ -14,7 +14,7 @@
     ·
     <a href="https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi">Chrome extension</a>
     ·
-    <a href="apps/server">Self-host</a>
+    <a href="#self-hosted-the-whole-product-for-your-organization">Self-host</a>
     ·
     <a href="SECURITY.md">Security</a>
     ·
@@ -24,7 +24,7 @@
 
 **Agent Computers syncs your browser's sign-ins to your AI agents.** A Chrome extension captures the sites you choose and keeps them current in the background, one way. Your agent's browser (Playwright, browser-use, Stagehand, an E2B sandbox, or any Chrome over CDP) then starts signed in instead of blank. No passwords typed, no 2FA prompts, and no signing in again in every sandbox.
 
-Everything here is Apache-2.0: the extension, the capture format, the apply runtime, the provider adapters, and a self-host server. Run all of it yourself, or use the hosted service at [agent-computers.com](https://www.agent-computers.com).
+Everything here is Apache-2.0: the extension, the capture format, the apply runtime, the provider adapters, and the whole web app for one organization, with sign-in, browser sync, agent computers with live view and takeover, and the MCP server agents connect to. Run all of it yourself, or use the hosted service at [agent-computers.com](https://www.agent-computers.com).
 
 ## Why
 
@@ -48,7 +48,7 @@ flowchart LR
 ```
 
 1. **Capture.** The extension reads cookies only for the sites you add, each behind its own Chrome permission, and skips the domains you exclude. It uploads a new capture when something changes.
-2. **Store.** The server keeps the latest capture encrypted at rest and serves it to agents that hold your API key.
+2. **Store.** The server keeps the latest capture encrypted at rest and serves it only to the agents you connect.
 3. **Apply.** The apply runtime compares the new capture with the last one it applied and writes only what changed into the agent's browser. It clears the sites you signed out of and leaves every other site alone.
 
 Nothing flows back: an agent's actions never change your own browser.
@@ -59,9 +59,57 @@ Nothing flows back: an agent's actions never change your own browser.
 
 Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi), choose the sites to sync, and connect Claude, ChatGPT, or Codex at [agent-computers.com](https://www.agent-computers.com). Your agents get a cloud Linux desktop with Chrome that is already signed in, with live view and takeover.
 
-### Self-hosted, with Playwright
+### Self-hosted: the whole product for your organization
 
-Run the [self-host server](apps/server), build the extension for it, and connect your browser. Then, in your agent:
+[`apps/web`](apps/web) is the product the hosted service runs, for one organization: Google sign-in, browser sync, an agent computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
+
+You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and a Google OAuth client.
+
+1. Install, and start your configuration from [`apps/web/.env.example`](apps/web/.env.example), which describes every variable:
+
+   ```sh
+   bun install
+   cd apps/web
+   cp .env.example .env.local
+   ```
+
+2. Fill in `.env.local`:
+
+   | Variable | |
+   | --- | --- |
+   | `APP_ENV` | `production` for a real deployment, which then requires `E2B_API_KEY`; `development` locally. |
+   | `DATABASE_URL` | Your Postgres. |
+   | `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. HTTPS, except on localhost in development. |
+   | `BETTER_AUTH_SECRET` | `openssl rand -base64 32`. |
+   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | A Google OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. Google is the only sign-in for now. |
+   | `E2B_API_KEY` | Your E2B team's API key. Without it, development uses an in-memory fake computer. |
+   | `CAPTURE_ENCRYPTION_KEY` | `openssl rand -base64 32`. It seals synced captures at rest; without it, uploads answer 503. |
+   | `EXTENSION_ORIGINS` | Keep `chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg`, the ID the manual build is pinned to. |
+
+3. Load the configuration into your shell for the commands below, which read the environment rather than the file. Then, from the repository root, build the computer template into your E2B team, once: computers start from `agent-computers-desktop` (or `E2B_COMPUTER_TEMPLATE`), so without it `computer_open` fails.
+
+   ```sh
+   set -a; . ./.env.local; set +a
+   cd ../..
+   bun run computer:template
+   ```
+
+4. Build and start the app behind HTTPS (a reverse proxy is fine). `MIGRATE_ON_START=true` applies pending migrations before it listens, under a lock, so replicas can start together:
+
+   ```sh
+   bun run build:web
+   MIGRATE_ON_START=true bun run start:web   # HOST and PORT choose the address; default 0.0.0.0:3000
+   ```
+
+   Behind a reverse proxy, set `TRUST_PROXY=true` and have the proxy overwrite `X-Forwarded-For` with the client's address, never append to it. For development, run `bun run db:migrate` and then `bun run dev:web`, and build the extension yourself with `WXT_SERVER_ORIGIN=http://localhost:3000 bun run build:extension` and load `apps/extension/.output/chrome-mv3`; live view needs the built server.
+
+5. Sign in at `BETTER_AUTH_URL`. The Browser sync page offers the manual build of the extension, which `build:web` made for your origin: unzip it and load it unpacked from `chrome://extensions` (Developer mode). To force-install it across your company with Chrome Enterprise policy, pack it with your own key and add that ID to `EXTENSION_ORIGINS`. Connect agents to `<BETTER_AUTH_URL>/api/mcp`; the Agents page has the steps for each.
+
+The Chrome Web Store extension syncs to agent-computers.com, not to your app, so self-hosters load the manual build their own app offers. For now, sign-in is Google only, and the usage table and the MCP tools' free-minutes fields are there for a metering hook: without one, nothing writes or shows them.
+
+### Self-hosted sync, with Playwright
+
+Run the [sync server](apps/server), build the extension for it, and connect your browser. Then, in your agent:
 
 ```sh
 npm install @agent-computers/playwright playwright
@@ -111,7 +159,8 @@ asyncio.run(agent.run())
 | Package | What it does |
 | --- | --- |
 | [`apps/extension`](apps/extension) | The Chrome extension (Manifest V3) that captures the sites you authorize and syncs them to your server. |
-| [`apps/server`](apps/server) | A self-host sync server for one owner: the extension's sign-in and sync routes, and the latest capture for agents. |
+| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. |
+| [`apps/server`](apps/server) | A minimal sync server for one owner: the extension's sign-in and sync routes, and the latest capture for your own agents. Being replaced by `apps/web`. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
@@ -121,9 +170,17 @@ asyncio.run(agent.run())
 | [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations. |
 | [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay. |
 | [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node server. |
-| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. |
 
 Planned: adapters for Daytona, Browserbase, and Kernel.
+
+## Extending the web app
+
+The product takes a deployment's own layers as parameters, never as imports, so you can add yours without forking it. [`apps/web`](apps/web) passes the defaults in two files:
+
+- **Server hooks**, in [`apps/web/deployment/server.ts`](apps/web/deployment/server.ts): `createServices(hooks, { extendApi })` builds the services every route uses. `ServerHooks` ([`packages/server/src/hooks.ts`](packages/server/src/hooks.ts)) has `metering`, an allowance checked before a computer starts or keeps running and charged for its running time; `operatorAdmin`, Better Auth plugins for operators and a record of each member's activity; and `providerAccount`, computers on a provider account other than `E2B_API_KEY`'s. The defaults are no-ops: no allowance, no operator admin, and computers from your E2B config. `extendApi` adds API routes after the API's shared session, origin, and header handling.
+- **The UI deployment**, in [`apps/web/deployment/ui.ts`](apps/web/deployment/ui.ts): `UiDeployment` ([`packages/web/src/deployment.tsx`](packages/web/src/deployment.tsx)) has an `Analytics` component rendered on every page, and shell extras, as plain data: sidebar pages with an optional badge, footer links, where the wordmark goes, and a store listing to offer instead of the manual build.
+
+Product routes come from the route manifest ([`packages/web/src/route-manifest.ts`](packages/web/src/route-manifest.ts)). `bun run generate-routes` writes each one as a thin file in the app's `app/`, wired to its own `deployment/`, and CI fails when they differ. Add your own pages beside them.
 
 ## Security model
 
@@ -134,9 +191,9 @@ Syncing sessions is sensitive, so the defaults are narrow and the code is open f
 - **Opt-in per site.** No host permissions at install. Each site you add asks Chrome for its own permission, and only those sites' cookies are read. Capturing every site takes an explicit **Allow all sites**, which only builds outside the Chrome Web Store offer. Excluded domains are never captured.
 - **One way.** Captures flow from your browser to your agents, never back.
 - **You stay in control.** Pause, remove a site, or disconnect from the extension at any time. Disconnecting deletes everything that browser uploaded.
-- **Encrypted at rest.** The self-host server seals captures with AES-256-GCM and keeps only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
+- **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, the sync server under a key you hold, and both keep only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
 - **Cookies, not passwords.** Your passwords and 2FA secrets never leave your browser.
-- **Honest limits.** Whoever runs the server and the agent's browser can use the synced sessions; treat the API key like a password. Device-bound sessions (Chrome's DBSC) don't carry over, and some sites sign out a copied session.
+- **Honest limits.** Whoever runs the server and the agent's browser can use the synced sessions, so connect only agents you trust, and treat the sync server's API key like a password. Device-bound sessions (Chrome's DBSC) don't carry over, and some sites sign out a copied session.
 
 Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
@@ -155,9 +212,9 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 | | Self-hosted (this repository) | Hosted ([agent-computers.com](https://www.agent-computers.com)) |
 | --- | --- | --- |
-| Extension | Build it for your server, or force-install it with Chrome Enterprise policy | Listed on the Chrome Web Store |
-| Sync server | One owner, one file of encrypted state | Multi-user, managed |
-| Agent browsers | Yours: Playwright, browser-use, E2B, any CDP | Hosted Linux desktops with Chrome, live view, and MCP for Claude, ChatGPT, and Codex |
+| Extension | The manual build your server offers or you build for it, loaded unpacked or force-installed with Chrome Enterprise policy | Listed on the Chrome Web Store |
+| Server | The web app for your organization on your Postgres, or the minimal sync server for one owner | Multi-user, managed |
+| Agent browsers | Linux desktops with Chrome on your E2B team, with live view and MCP; or yours: Playwright, browser-use, any CDP | Hosted Linux desktops with Chrome, live view, and MCP for Claude, ChatGPT, and Codex |
 
 ## FAQ
 
@@ -179,7 +236,7 @@ No. Only the cookies of the sites you chose are captured. Passwords, passkeys, a
 
 ### Can I run it entirely on my own infrastructure?
 
-Yes. The [self-host server](apps/server), the extension, and the adapters run without any service of ours. Build the extension for your server's address and load it, or force-install it across your company.
+Yes. The [web app](#self-hosted-the-whole-product-for-your-organization), the [sync server](apps/server), the extension, and the adapters run without any service of ours. Load the manual build of the extension your server offers or you build for it, or force-install it across your company.
 
 ## Contributing
 
@@ -190,7 +247,7 @@ bun install
 bun run lint && bun run typecheck && bun run test
 ```
 
-The Playwright adapter's tests drive a real Chromium (`bunx playwright-core install chromium`). See [CONTRIBUTING.md](CONTRIBUTING.md).
+The Playwright adapter's tests drive a real Chromium (`bunx playwright-core install chromium`); the web app's tests run on in-process PGlite, with no Postgres to set up. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

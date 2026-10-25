@@ -1,5 +1,7 @@
 # Self-host server
 
+> Being replaced by [`apps/web`](../web), the whole product for one organization (see the [root README](../../README.md#self-hosted-the-whole-product-for-your-organization)). Until the web app serves the latest capture to your own agents, use this server with [`@agent-computers/playwright`](../../packages/playwright) or [`@agent-computers/apply`](../../packages/apply).
+
 A minimal server for the Agent Computers extension, for one owner. It receives the extension's encrypted uploads and serves the latest capture to your agents, which apply it with [`@agent-computers/playwright`](../../packages/playwright) or [`@agent-computers/apply`](../../packages/apply). There are no accounts, dashboard, or billing: browsers connect with an access key, and agents read with an API key.
 
 ## Run it
