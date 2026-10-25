@@ -2,7 +2,13 @@ import { randomBytes } from 'node:crypto';
 
 // Public IDs: TypeIDs, a registered prefix and a UUID v7 in 26 Crockford base32 characters.
 // Integer primary keys never leave packages/server; rows referenced from outside carry one of these.
-const PREFIXES = { computer: 'cmp', computerSession: 'cs', browser: 'brw' } as const;
+const PREFIXES = {
+  computer: 'cmp',
+  computerSession: 'cs',
+  browser: 'brw',
+  organization: 'org',
+  membership: 'mem',
+} as const;
 export type PublicIdKind = keyof typeof PREFIXES;
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 

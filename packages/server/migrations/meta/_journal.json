@@ -64,6 +64,20 @@
       "when": 1792692333084,
       "tag": "0008_superseded_only",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792971367816,
+      "tag": "0009_organizations",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792971377618,
+      "tag": "0010_membership_on_insert",
+      "breakpoints": true
     }
   ]
 }

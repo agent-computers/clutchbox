@@ -21,6 +21,7 @@ import type { Database } from './database';
 import { noOperatorAdmin, type OperatorAdmin } from './hooks';
 import { MCP_SCOPES } from './mcp';
 import * as oauthSchema from './oauth-schema';
+import { singleOrganization, type Tenancy } from './organizations';
 import { account, rateLimit, session, user, verification } from './schema';
 
 // The auth adapter (and so an operator dashboard's generic adapter endpoint) reaches only
@@ -97,14 +98,20 @@ const recordExtensionBrowser = (db: Database) =>
   });
 
 // Tests inject a fetcher for client metadata documents; production uses the DNS-pinning one. Operator admin is a
-// hook (hooks.ts): its plugins, and the paths of theirs that stay off.
+// hook (hooks.ts): its plugins, and the paths of theirs that stay off. So is tenancy: which organization a new account
+// joins.
 export function createAuth(
   db: Database,
   config: ServerConfig,
   {
     fetchClientMetadata = fetchClientMetadataResource,
     operatorAdmin = noOperatorAdmin,
-  }: { fetchClientMetadata?: typeof fetchClientMetadataResource; operatorAdmin?: OperatorAdmin } = {},
+    tenancy = singleOrganization,
+  }: {
+    fetchClientMetadata?: typeof fetchClientMetadataResource;
+    operatorAdmin?: OperatorAdmin;
+    tenancy?: Tenancy;
+  } = {},
 ) {
   return betterAuth({
     appName: 'Agent Computers',
@@ -146,6 +153,17 @@ export function createAuth(
     // errors) land on sign-in instead of Better Auth's development error page.
     onAPIError: { errorURL: `${config.BETTER_AUTH_URL}/sign-in` },
     hooks: { before: extensionGuards(db), after: recordExtensionBrowser(db) },
+    // Better Auth runs this once the account's transaction has committed. If it fails, the next migration run's
+    // backfill (organizations.ts) puts the account in its organization.
+    databaseHooks: {
+      user: {
+        create: {
+          after: async created => {
+            await db.transaction(tx => tenancy.join(tx, created));
+          },
+        },
+      },
+    },
     // OAuth is owned by Better Auth. Application grants (consents) are checked live by MCP.
     disabledPaths: ['/token', '/oauth2/update-consent', '/oauth2/delete-consent', ...operatorAdmin.disabledPaths],
     plugins: [

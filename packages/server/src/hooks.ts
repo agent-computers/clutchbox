@@ -3,11 +3,13 @@ import type { ComputerProvider } from '@agent-computers/computer';
 import type { BetterAuthPlugin } from 'better-auth';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { singleOrganization, type Tenancy } from './organizations';
 
 // A deployment's own layers, such as the hosted service's, plug in here. The product calls metering, operator admin,
-// and a per-organization provider account only through these hooks, and never imports their implementations: the
-// deployment passes them in when it builds its services. The defaults are no-ops, so a deployment without them has
-// no allowance and no operator admin, and its computers come from its own E2B config (providerFromConfig).
+// a per-organization provider account, and tenancy only through these hooks, and never imports their implementations:
+// the deployment passes them in when it builds its services. The defaults are no-ops, so a deployment without them has
+// no allowance and no operator admin, its computers come from its own E2B config (providerFromConfig), and it serves
+// one organization that everyone joins.
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -44,9 +46,13 @@ export type ServerHooks = {
   // Computers on a provider account other than the deployment's; undefined falls back to providerFromConfig
   // (the deployment's E2B_API_KEY).
   providerAccount(config: ServerConfig): ComputerProvider | undefined;
+  // Which organization a new account joins (organizations.ts). The migration runner takes the same choice for accounts
+  // made before organizations, so a deployment passes it there too.
+  tenancy: Tenancy;
 };
 export const defaultServerHooks: ServerHooks = {
   metering: noMetering,
   operatorAdmin: noOperatorAdmin,
   providerAccount: () => undefined,
+  tenancy: singleOrganization,
 };

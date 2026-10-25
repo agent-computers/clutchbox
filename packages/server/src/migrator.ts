@@ -2,6 +2,9 @@ import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { PoolClient } from 'pg';
+import type { Database } from './database';
+import { backfillMemberships, type Tenancy } from './organizations';
+import * as schema from './schema';
 
 export const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
 
@@ -22,16 +25,20 @@ export function migrationTarget(
 }
 
 // Applies pending migrations on one session, under an advisory lock so concurrent deploys or replicas take turns, and
-// records whether the database holds production data so the other kind of deployment refuses it. `afterMigrate` runs
+// records whether the database holds production data so the other kind of deployment refuses it. Then it puts accounts
+// made before organizations into one, with the deployment's own tenancy (ServerHooks.tenancy): required, so a
+// deployment cannot backfill with another's choice by leaving it out. `afterMigrate` runs
 // on the same session before the lock is released, with every public table, so a deployment can grant its own roles
 // access to exactly the tables the migrations left.
 export async function runMigrations({
   client,
   dataClass,
+  tenancy,
   afterMigrate,
 }: {
   client: PoolClient;
   dataClass: DataClass;
+  tenancy: Tenancy;
   afterMigrate?: (client: PoolClient, tables: string[]) => Promise<void>;
 }): Promise<void> {
   await client.query("SELECT pg_advisory_lock(hashtext('agent-computers-migrations'))");
@@ -49,6 +56,7 @@ export async function runMigrations({
       "INSERT INTO installation (id, data_class) VALUES ('singleton', $1) ON CONFLICT (id) DO NOTHING",
       [dataClass],
     );
+    await backfillMemberships(drizzle(client, { schema }) as unknown as Database, tenancy);
     if (afterMigrate) {
       const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).rows.map(
         row => row.tablename as string,

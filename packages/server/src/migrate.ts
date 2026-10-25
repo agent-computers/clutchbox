@@ -1,8 +1,9 @@
 import { resolve } from 'node:path';
 import { Pool } from 'pg';
 import { migrationTarget, reportMigrationFailure, runMigrations } from './migrator';
+import { singleOrganization } from './organizations';
 
-// Applies pending migrations to the database the environment names. True when it applied; on failure it has said why,
+// Applies pending migrations to the database the environment names, for a deployment that serves one organization. True when it applied; on failure it has said why,
 // without credentials. The web app's Node server runs it with MIGRATE_ON_START=true, and so does
 // `node --import tsx packages/server/src/migrate.ts`.
 export async function migrate(): Promise<boolean> {
@@ -15,7 +16,7 @@ export async function migrate(): Promise<boolean> {
   try {
     const client = await pool.connect();
     try {
-      await runMigrations({ client, dataClass: target.dataClass });
+      await runMigrations({ client, dataClass: target.dataClass, tenancy: singleOrganization });
       console.log(`Migrations applied successfully (${target.dataClass}).`);
       return true;
     } finally {

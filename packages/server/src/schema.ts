@@ -122,6 +122,49 @@ const oneOf = (column: AnyPgColumn, values: readonly string[]) =>
 
 // An IANA zone name's characters only: it becomes a path on the computer (time-zones.ts checks the zone exists).
 const timeZoneName = (column: AnyPgColumn) => sql`${column} ~ '^[A-Za-z][A-Za-z0-9_+/-]{0,63}$'`;
+export const MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
+// An organization: the tenant whose members sync to it and whose agents use their computers (organizations.ts). A
+// personal organization records the person it was made for, so each person has at most one; a deployment that serves
+// one organization leaves it null.
+export const organizations = pgTable(
+  'organizations',
+  {
+    id: id(),
+    publicId: text('public_id').notNull().unique(),
+    name: text('name').notNull(),
+    personalUserId: text('personal_user_id')
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    ...timestamps(),
+  },
+  table => [check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`)],
+);
+// A person's place in one organization. Per-user tables below carry it as membership_id beside user_id while data
+// moves from per-user to per-membership: a trigger fills it on insert from the person's membership, and the migration
+// runner fills older rows (organizations.ts, backfillMemberships). Nothing reads it yet.
+export const memberships = pgTable(
+  'memberships',
+  {
+    id: id(),
+    publicId: text('public_id').notNull().unique(),
+    organizationId: key('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: MEMBER_ROLES }).notNull(),
+    ...timestamps(),
+  },
+  table => [
+    unique('memberships_organization_user_unique').on(table.organizationId, table.userId),
+    index('memberships_user_idx').on(table.userId),
+    check('memberships_role', oneOf(table.role, MEMBER_ROLES)),
+  ],
+);
+// The membership a per-user row belongs to; see memberships.
+const membershipId = () => key('membership_id').references(() => memberships.id, { onDelete: 'cascade' });
+
 export const COMPUTER_STATUSES = ['creating', 'ready'] as const;
 // Validation prototype: one persistent main computer per user.
 export const computers = pgTable(
@@ -134,6 +177,7 @@ export const computers = pgTable(
       .notNull()
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
     sandboxId: text('sandbox_id'),
     // The last applied capture, the sites it wrote (cleared when absent later), and its cookies sealed
@@ -178,6 +222,7 @@ export const computers = pgTable(
     ...timestamps(),
   },
   table => [
+    index('computers_membership_idx').on(table.membershipId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
     check('computers_time_zone', timeZoneName(table.timeZone)),
     check(
@@ -201,6 +246,7 @@ export const computerSessions = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     clientId: text('client_id')
       .notNull()
       .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
@@ -215,6 +261,7 @@ export const computerSessions = pgTable(
     ...timestamps(),
   },
   table => [
+    index('computer_sessions_membership_idx').on(table.membershipId),
     uniqueIndex('computer_sessions_live_unique').on(table.computerId).where(sql`${table.endedAt} IS NULL`),
     index('computer_sessions_computer_idx').on(table.computerId),
     index('computer_sessions_user_client_idx').on(table.userId, table.clientId),
@@ -234,6 +281,7 @@ export const toolCalls = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     clientId: text('client_id')
       .notNull()
       .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
@@ -247,6 +295,7 @@ export const toolCalls = pgTable(
     createdAt: createdAt(),
   },
   table => [
+    index('tool_calls_membership_idx').on(table.membershipId),
     index('tool_calls_user_started_idx').on(table.userId, table.startedAt),
     index('tool_calls_started_idx').on(table.startedAt),
     index('tool_calls_client_idx').on(table.clientId),
@@ -270,6 +319,7 @@ export const connectedBrowsers = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     // oauth_refresh_token.authorization_code_id: stable across rotation, but not a key there, so no foreign key.
     authorizationCodeId: text('authorization_code_id').notNull().unique(),
     // From the User-Agent at first use; null when unknown, and cleared on disconnect.
@@ -281,6 +331,7 @@ export const connectedBrowsers = pgTable(
     ...timestamps(),
   },
   table => [
+    index('connected_browsers_membership_idx').on(table.membershipId),
     index('connected_browsers_user_idx').on(table.userId),
     check('connected_browsers_browser', oneOf(table.browser, BROWSER_NAMES)),
     check('connected_browsers_platform', oneOf(table.platform, BROWSER_PLATFORMS)),
@@ -297,6 +348,7 @@ export const captures = pgTable(
       .notNull()
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     // The extension's ID for this capture.
     captureId: uuid('capture_id').notNull(),
     digest: text('digest').notNull(),
@@ -312,31 +364,44 @@ export const captures = pgTable(
     connectedBrowserId: key('connected_browser_id').references(() => connectedBrowsers.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
-  table => [index('captures_connected_browser_idx').on(table.connectedBrowserId)],
+  table => [
+    index('captures_membership_idx').on(table.membershipId),
+    index('captures_connected_browser_idx').on(table.connectedBrowserId),
+  ],
 );
 // Last capture deletion per user: uploads received before it are refused. `disconnected`
 // (dashboard Delete everything) refuses all uploads until the extension reconnects.
-export const syncRevocations = pgTable('sync_revocations', {
-  id: id(),
-  userId: text('user_id')
-    .notNull()
-    .unique()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  deletedAt: time('deleted_at').notNull(),
-  disconnected: boolean('disconnected').notNull().default(false),
-  ...timestamps(),
-});
+export const syncRevocations = pgTable(
+  'sync_revocations',
+  {
+    id: id(),
+    userId: text('user_id')
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
+    deletedAt: time('deleted_at').notNull(),
+    disconnected: boolean('disconnected').notNull().default(false),
+    ...timestamps(),
+  },
+  table => [index('sync_revocations_membership_idx').on(table.membershipId)],
+);
 // Browser sync settings per user: added sites, exclusions, and pause, sealed like the
 // capture (captures.ts). The extension adopts them; the account page edits them.
-export const syncSettings = pgTable('sync_settings', {
-  id: id(),
-  userId: text('user_id')
-    .notNull()
-    .unique()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  sealed: text('sealed').notNull(),
-  ...timestamps(),
-});
+export const syncSettings = pgTable(
+  'sync_settings',
+  {
+    id: id(),
+    userId: text('user_id')
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
+    sealed: text('sealed').notNull(),
+    ...timestamps(),
+  },
+  table => [index('sync_settings_membership_idx').on(table.membershipId)],
+);
 // Computer seconds charged per user per UTC calendar month, against the free allowance.
 export const computerUsage = pgTable(
   'computer_usage',
@@ -345,30 +410,39 @@ export const computerUsage = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
     month: date('month', { mode: 'string' }).notNull(),
     usedSeconds: integer('used_seconds').notNull().default(0),
     ...timestamps(),
   },
-  table => [unique('computer_usage_user_month_unique').on(table.userId, table.month)],
+  table => [
+    index('computer_usage_membership_idx').on(table.membershipId),
+    unique('computer_usage_user_month_unique').on(table.userId, table.month),
+  ],
 );
 // Setup progress, one row per user. First-completion times and
 // firstSetUpAt are never cleared, so they record the funnel; Delete everything clears only
 // setUpAt and noticeClosedAt. `preexisting`: the user existed before setup shipped (no events).
-export const setups = pgTable('setups', {
-  id: id(),
-  userId: text('user_id')
-    .notNull()
-    .unique()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  preexisting: boolean('preexisting').notNull().default(false),
-  browserSyncedAt: time('browser_synced_at'),
-  // The earliest live consent's createdAt.
-  agentConnectedAt: time('agent_connected_at'),
-  firstSetUpAt: time('first_set_up_at'),
-  setUpAt: time('set_up_at'),
-  noticeClosedAt: time('notice_closed_at'),
-  ...timestamps(),
-});
+export const setups = pgTable(
+  'setups',
+  {
+    id: id(),
+    userId: text('user_id')
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    membershipId: membershipId(),
+    preexisting: boolean('preexisting').notNull().default(false),
+    browserSyncedAt: time('browser_synced_at'),
+    // The earliest live consent's createdAt.
+    agentConnectedAt: time('agent_connected_at'),
+    firstSetUpAt: time('first_set_up_at'),
+    setUpAt: time('set_up_at'),
+    noticeClosedAt: time('notice_closed_at'),
+    ...timestamps(),
+  },
+  table => [index('setups_membership_idx').on(table.membershipId)],
+);
 // Per-user app preferences, kept off Better Auth's tables.
 export const userSettings = pgTable(
   'user_settings',
