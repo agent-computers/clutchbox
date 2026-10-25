@@ -1,0 +1,21 @@
+name: Bug report
+description: Something in the extension, capture format, runtime, an adapter, or the self-host server doesn't work.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Issues are public. Never paste cookie values, tokens, API keys, or browser profiles; redact them from logs.
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: How to reproduce
+      description: The smallest steps that show it.
+  - type: input
+    attributes:
+      label: Versions
+      description: Extension version, package versions, Chrome version, and OS.

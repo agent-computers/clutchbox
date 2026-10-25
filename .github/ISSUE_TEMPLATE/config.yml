@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/agent-computers/agent-computers/security/advisories/new
+    about: Report security issues privately, never in a public issue. See SECURITY.md.

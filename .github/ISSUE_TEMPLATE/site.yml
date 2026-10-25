@@ -1,0 +1,23 @@
+name: Site doesn't stay signed in
+description: A site you synced is signed out, blocked, or erroring in the agent's browser.
+labels: [site-compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: Issues are public. Never paste cookie values or tokens; the site name and what happened are enough.
+  - type: input
+    attributes:
+      label: Site
+      description: The domain, such as example.com.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What the agent saw
+      description: Signed out, a bot check, an error, or something else, and roughly how long after syncing.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Provider
+      description: Where the agent's browser ran, such as E2B, local Playwright, or browser-use.

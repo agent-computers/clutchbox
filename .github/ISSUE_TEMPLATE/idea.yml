@@ -1,0 +1,10 @@
+name: Feature or adapter request
+description: Suggest a feature, or a provider the open core should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: What you want to do
+      description: The problem or workflow, and what's in the way today.
+    validations:
+      required: true
