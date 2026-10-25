@@ -16,11 +16,12 @@ permissions:
   contents: read
 
 jobs:
+  # Jobs run in parallel; the release workflow, which calls this one, waits for all of them.
   check:
     # Pull requests, which can come from forks, use GitHub's runners, free for public repos; pushes and releases use
     # Blacksmith's faster ones, which the project pays for.
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,7 +31,13 @@ jobs:
       - run: bun run check:extension-version ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: bun run lint
       - run: bun run typecheck
+
+  test:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
       # The Playwright adapter's tests drive a real Chromium.
       - run: bunx playwright-core install --with-deps chromium
       - run: bun run test
-

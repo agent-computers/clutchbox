@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!.agents", "!.claude"]
+    "includes": ["**", "!.agents", "!.claude", "!**/next-env.d.ts", "!packages/server/migrations/meta"]
   },
   "formatter": {
     "indentStyle": "space",

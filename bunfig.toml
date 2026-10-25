@@ -1,0 +1,6 @@
+# Keep scripts' environment explicit: Bun would otherwise load .env files into every `bun run`.
+env = false
+
+[install]
+exact = true
+linker = "isolated"
