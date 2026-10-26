@@ -1,11 +1,12 @@
 import { type CaptureRequest, type StatusResponse, siteName, siteOfInput } from '@agent-computers/capture';
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { allSitesOffered, distribution } from '../../src/build';
 import { serverOrigin } from '../../src/server';
 import { Badge } from '../../src/ui/components/badge';
 import { Button } from '../../src/ui/components/button';
 import { Input } from '../../src/ui/components/input';
+import { Connections, connectionName } from '../../src/ui/connections';
 import { AllSitesDisclosure, SitesDisclosure } from '../../src/ui/disclosures';
 import { SuggestedSites } from '../../src/ui/suggested-sites';
 import { hint, SyncStatus, syncMessage } from '../../src/ui/sync-status';
@@ -20,14 +21,18 @@ const version = chrome.runtime.getManifest().version;
 const heading = 'font-heading text-xl font-medium';
 const section = 'grid gap-3 border-t pt-4';
 // Sites and exclusions are also managed on the server's account page.
-const openAccount = () => void chrome.tabs.create({ url: `${serverOrigin}/account#extension` });
+const openAccount = (origin: string) => void chrome.tabs.create({ url: `${origin}/account#extension` });
 // Live view runs on the server's website, which holds the stream; the extension only opens it.
-const openLiveView = () => void chrome.tabs.create({ url: `${serverOrigin}/computer` });
+const openLiveView = (origin: string) => void chrome.tabs.create({ url: `${origin}/computer` });
 
 export function App() {
   const [view, setView] = useState<'home' | 'add' | 'settings'>('home');
   const [allSitesOpen, setAllSitesOpen] = useState(false);
   const [site, setSite] = useState('');
+  // The connection the popup acts on (the first until one is picked), or connecting another organization, from when
+  // the list held `before`.
+  const [selected, setSelected] = useState<string>();
+  const [another, setAnother] = useState<{ before: string[] }>();
   const {
     status,
     config,
@@ -44,11 +49,22 @@ export function App() {
     connect,
     reconnect,
     addedSitesOnly,
-  } = useCaptureActions({ onGranted: () => setAllSitesOpen(false) });
+  } = useCaptureActions({ connection: selected, another: !!another, onGranted: () => setAllSitesOpen(false) });
   const { data: tabSite = null } = useQuery({ queryKey: ['tab'], queryFn: currentSite, staleTime: Infinity });
+  const connections = status?.connections ?? [];
+  // Once connecting another organization adds a connection, the popup acts on it. Connecting one already connected
+  // adds none, and the popup stays until it is closed.
+  const added = another && connections.find(each => !another.before.includes(each.id));
+  useEffect(() => {
+    if (!added) return;
+    setSelected(added.id);
+    setAnother(undefined);
+  }, [added]);
+  const origin = status?.origin ?? serverOrigin;
+  const current = connections.find(each => each.id === status?.connection);
 
   const settings = status?.settings;
-  const connected = settings?.connected ?? false;
+  const connected = !another && (settings?.connected ?? false);
   const paused = settings?.paused ?? false;
   const allSites = connected && settings?.mode === 'all';
   const sites = settings?.sites ?? [];
@@ -74,6 +90,11 @@ export function App() {
     setView(next);
     setAllSitesOpen(false);
   };
+  const select = (connection: string) => {
+    setSelected(connection);
+    setAnother(undefined);
+    setAllSitesOpen(false);
+  };
 
   const allSitesDisclosure = (
     <AllSitesDisclosure disabled={busy || pending || !status} onAgree={() => connect('all')} />
@@ -89,7 +110,7 @@ export function App() {
           </Badge>
         ) : view === 'home' ? (
           <nav className="flex gap-1">
-            <Button variant="ghost" size="sm" onClick={openAccount}>
+            <Button variant="ghost" size="sm" onClick={() => openAccount(origin)}>
               Account
             </Button>
             <Button variant="ghost" size="sm" onClick={() => open('settings')}>
@@ -118,15 +139,31 @@ export function App() {
               Update now
             </Button>
           ) : (
-            <Button size="sm" onClick={openAccount}>
+            <Button size="sm" onClick={() => openAccount(origin)}>
               Get the update
             </Button>
           )}
         </aside>
       )}
+      {view === 'home' && (
+        <Connections
+          connections={connections}
+          selected={status?.connection}
+          another={!!another}
+          site={tabSite}
+          disabled={busy}
+          onSelect={select}
+          onAnother={() => {
+            setAnother({ before: connections.map(each => each.id) });
+            setAllSitesOpen(false);
+          }}
+        />
+      )}
       {!connected ? (
         <Connect
           status={status}
+          another={!!another}
+          onCancel={() => setAnother(undefined)}
           tabSite={tabSite}
           busy={busy}
           pending={pending}
@@ -203,7 +240,9 @@ export function App() {
                   </div>
                 ) : (
                   <Button size="lg" disabled={busy || pending || ended} onClick={() => addSites(newSites(tabSite))}>
-                    Add this site
+                    {connections.length > 1 && current
+                      ? `Add this site to ${connectionName(current)}`
+                      : 'Add this site'}
                   </Button>
                 )}
               </>
@@ -235,7 +274,7 @@ export function App() {
                 Add more sites
               </Button>
             )}
-            <Button variant="secondary" size="sm" className="ml-auto" onClick={openLiveView}>
+            <Button variant="secondary" size="sm" className="ml-auto" onClick={() => openLiveView(origin)}>
               Open live view
             </Button>
           </div>
@@ -247,6 +286,7 @@ export function App() {
           </h2>
           <SuggestedSites
             config={config}
+            origin={origin}
             sites={sites}
             blocked={blocked}
             disabled={busy || pending}
@@ -287,6 +327,9 @@ export function App() {
 
 function Connect(props: {
   status: StatusResponse | undefined;
+  // Connecting another organization rather than this connection.
+  another: boolean;
+  onCancel: () => void;
   tabSite: string | null;
   busy: boolean;
   // A click elsewhere is waiting for Chrome's prompt.
@@ -298,9 +341,10 @@ function Connect(props: {
   allSitesDisclosure: ReactNode;
   onRemoveAccess: () => void;
 }) {
-  const { status, tabSite, busy, pending, canAdd } = props;
-  const saved = status?.settings.sites.length ?? 0;
-  const syncState = status?.sync.state;
+  const { status, tabSite, busy, pending, canAdd, another } = props;
+  const saved = another ? 0 : (status?.settings.sites.length ?? 0);
+  const syncState = another ? undefined : status?.sync.state;
+  const current = status?.connections.find(each => each.id === status.connection);
   return (
     <>
       <h1 className="font-heading text-[32px] leading-[1.05] font-medium tracking-[-0.015em]">
@@ -314,8 +358,19 @@ function Connect(props: {
         <p className={hint}>
           {status?.connecting
             ? 'Finish connecting in the Agent Computers tab.'
-            : 'Opens Agent Computers in a tab, where you sign in if needed.'}
+            : another
+              ? 'Opens Agent Computers in a tab. It connects the organization you are using there, so switch to the one you want first.'
+              : current
+                ? `Connects ${connectionName(current)} again. Opens Agent Computers in a tab, where you sign in if needed.`
+                : 'Opens Agent Computers in a tab, where you sign in if needed.'}
         </p>
+        {another && (
+          <div>
+            <Button variant="link" className="h-auto px-0" disabled={busy} onClick={props.onCancel}>
+              Cancel
+            </Button>
+          </div>
+        )}
         {saved > 0 && (
           <p className={hint}>
             Also restores the {saved === 1 ? 'site' : `${saved} sites`} you added before, if you connect to the same
@@ -337,7 +392,7 @@ function Connect(props: {
       </div>
       {props.allSitesOpen && props.allSitesDisclosure}
       {syncState === 'delete_failed' && status && <p className={hint}>{syncMessage(status.sync)}</p>}
-      {status?.permissionGranted && (
+      {!another && status?.permissionGranted && (
         <div className="grid justify-items-start gap-2">
           <p className={hint}>Your browser still grants access, but sync is disconnected.</p>
           <Button variant="secondary" disabled={busy} onClick={props.onRemoveAccess}>
@@ -361,6 +416,8 @@ function Settings(props: {
 }) {
   const { status, busy, allSites, run } = props;
   const { sites, excludedDomains } = status.settings;
+  const current = status.connections.find(each => each.id === status.connection);
+  const name = current ? connectionName(current) : 'this organization';
   return (
     <>
       <section className="grid justify-items-start gap-3" aria-labelledby="manage-heading">
@@ -372,7 +429,7 @@ function Settings(props: {
           {excludedDomains.length} {excludedDomains.length === 1 ? 'exclusion' : 'exclusions'}. Remove sites and edit
           exclusions on your account page.
         </p>
-        <Button variant="secondary" onClick={openAccount}>
+        <Button variant="secondary" onClick={() => openAccount(status.origin)}>
           Manage on your account
         </Button>
       </section>
@@ -407,8 +464,9 @@ function Settings(props: {
             Disconnect
           </Button>
           <p className={hint}>
-            Deletes the local and uploaded copies and removes browser access. It does not sign you out of websites or
-            Agent Computers. Added sites and exclusions are kept.
+            Disconnects {name} only: deletes its local and uploaded copies and removes the browser access no other
+            organization uses. It does not sign you out of websites or Agent Computers. Added sites and exclusions are
+            kept.
           </p>
         </div>
       </section>
@@ -416,7 +474,12 @@ function Settings(props: {
       <footer className="grid gap-2 border-t pt-4 text-xs text-muted-foreground">
         <p>Syncs cookies only: not page storage, files, or incognito windows.</p>
         <div className="flex justify-between">
-          <a className="underline underline-offset-2" href={`${serverOrigin}/privacy`} target="_blank" rel="noreferrer">
+          <a
+            className="underline underline-offset-2"
+            href={`${status.origin}/privacy`}
+            target="_blank"
+            rel="noreferrer"
+          >
             Privacy policy
           </a>
           <span>Version {version}</span>

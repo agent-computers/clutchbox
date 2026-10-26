@@ -54,6 +54,15 @@ export async function organizationsOf(db: Pick<Database, 'select'>, userId: stri
   return rows.map(({ membershipId, ...row }) => ({ ...row, current: membershipId === current?.membershipId }));
 }
 
+// The organization a member acts in, by its public ID and name: what /me names to a connected extension.
+export async function organizationOf(db: Pick<Database, 'select'>, member: Member) {
+  const [organization] = await db
+    .select({ id: organizations.publicId, name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, member.organizationId));
+  return organization ?? null;
+}
+
 // Makes the person act in one of their organizations, by its public ID, from their next request on. False when they
 // are not a member of it.
 export async function switchOrganization(

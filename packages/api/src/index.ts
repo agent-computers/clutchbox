@@ -69,6 +69,7 @@ import {
 import {
   createOrganizationFor,
   currentMember,
+  organizationOf,
   organizationsOf,
   switchOrganization,
   type Tenancy,
@@ -220,9 +221,12 @@ export function createApi({
     // The dashboard and the sync client keep an active web session alive through these calls.
     for (const cookie of refreshed.getSetCookie()) c.res.headers.append('Set-Cookie', cookie);
   });
+  // The person, and the organization they act in: a sync token's, which the extension names its connection by, or
+  // the current one for app auth. Null for a person in no organization here yet.
   app.get('/me', async c => {
-    const { id, name, email } = c.get('principal');
-    return c.json({ user: { id, name, email } });
+    const principal = c.get('principal');
+    const member = principal.member ?? (await currentMember(db, principal.id));
+    return c.json({ user: person(c), organization: member ? await organizationOf(db, member) : null });
   });
   app.get('/mcp/grants', async c => c.json({ grants: await listMcpGrants(db, await memberOf(c)) }));
   app.post('/mcp/revoke', async c => {

@@ -49,7 +49,7 @@ export function App({ url }: { url: string }) {
       <span className="font-serif text-lg font-medium italic">agent computers</span>
       <p role="status" aria-live="polite">
         {exchange.isSuccess
-          ? `Connected. This browser syncs to ${exchange.data.email}.`
+          ? `Connected. This browser syncs to ${exchange.data.email}${exchange.data.organization ? ` in ${exchange.data.organization}` : ''}.`
           : error === 'expired'
             ? 'This connection attempt expired or was already used. Open the extension and connect again.'
             : error === 'denied'

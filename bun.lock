@@ -17,7 +17,7 @@
     },
     "apps/extension": {
       "name": "@agent-computers/extension",
-      "version": "26.1024.3",
+      "version": "26.1026.0",
       "dependencies": {
         "@agent-computers/capture": "workspace:*",
         "@base-ui/react": "1.9.0",

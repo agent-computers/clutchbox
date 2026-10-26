@@ -1,5 +1,4 @@
 import { type ExtensionConfig, type SuggestedSite, withCompanions } from '@agent-computers/capture';
-import { serverOrigin } from '../server';
 import { Button } from './components/button';
 import { hint } from './sync-status';
 
@@ -7,6 +6,8 @@ import { hint } from './sync-status';
 // sites are all added.
 export function SuggestedSites(props: {
   config: Pick<ExtensionConfig, 'suggestedSites' | 'companions'>;
+  // The server whose config this is, which serves the icons.
+  origin: string;
   sites: string[];
   blocked: (site: string) => string;
   disabled: boolean;
@@ -39,7 +40,7 @@ export function SuggestedSites(props: {
                   <li key={row.name} className="flex items-center justify-between gap-3 border-b py-1.5">
                     <span className="flex min-w-0 items-center gap-2.5">
                       {row.icon && (
-                        <img src={`${serverOrigin}${row.icon}`} alt="" width={16} height={16} className="size-4" />
+                        <img src={`${props.origin}${row.icon}`} alt="" width={16} height={16} className="size-4" />
                       )}
                       <span className="grid min-w-0">
                         <span>{row.name}</span>

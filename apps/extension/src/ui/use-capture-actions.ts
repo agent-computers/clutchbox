@@ -17,7 +17,7 @@ import { send } from './send';
 export const statusKey = ['status'];
 const checkKey = ['check'];
 const pendingQueryKey = ['pending'];
-const serverSite = siteOfHost(new URL(serverOrigin).hostname);
+const siteOf = (origin: string) => siteOfHost(new URL(origin).hostname);
 class NotGranted extends Error {}
 type Action = { request: CaptureRequest; permission?: Promise<boolean>; prepared?: Promise<unknown> };
 
@@ -32,20 +32,39 @@ async function pendingUntil() {
 export const pendingMessage =
   "Waiting for your answer to the browser's access prompt. If it closed, try again in two minutes.";
 
-// The worker's status and the actions the popup and the setup tab share.
-export function useCaptureActions({ onGranted }: { onGranted?: () => void } = {}) {
+// The worker's status and the actions the popup and the setup tab share, for one connection: `connection`, or the first
+// without one. With `another`, connecting connects whichever organization the person acts in on the server's website,
+// adding a connection unless it is already connected.
+export function useCaptureActions({
+  connection,
+  another = false,
+  onGranted,
+}: {
+  connection?: string | undefined;
+  another?: boolean;
+  onGranted?: () => void;
+} = {}) {
   const queryClient = useQueryClient();
   const [notice, setNotice] = useState('');
+  const scoped = (request: CaptureRequest): CaptureRequest =>
+    request.type === 'finish' || request.type === 'exchange'
+      ? request
+      : another && (request.type === 'connect' || request.type === 'prepare')
+        ? { ...request, another: true }
+        : connection
+          ? { ...request, connection }
+          : request;
+  const key = [...statusKey, connection ?? null];
   const { data: status, isError: unavailable } = useQuery({
-    queryKey: statusKey,
-    queryFn: () => send({ type: 'status' }),
+    queryKey: key,
+    queryFn: () => send(scoped({ type: 'status' })),
   });
-  // Fetching the account's settings calls the server, so each page does it once on opening.
+  // Fetching the accounts' settings calls the servers, so each page does it once on opening.
   useQuery({
     queryKey: checkKey,
     queryFn: async () => {
-      const next = await send({ type: 'check' });
-      queryClient.setQueryData(statusKey, next);
+      const next = await send(scoped({ type: 'check' }));
+      queryClient.setQueryData(key, next);
       return next;
     },
     staleTime: Number.POSITIVE_INFINITY,
@@ -71,10 +90,10 @@ export function useCaptureActions({ onGranted }: { onGranted?: () => void } = {}
         }
         throw new NotGranted();
       }
-      return send(request);
+      return send(scoped(request));
     },
     onMutate: () => setNotice(''),
-    onSuccess: next => queryClient.setQueryData(statusKey, next),
+    onSuccess: next => queryClient.setQueryData(key, next),
     onError: error => {
       setNotice(
         error instanceof NotGranted
@@ -112,8 +131,12 @@ export function useCaptureActions({ onGranted }: { onGranted?: () => void } = {}
   const sites = settings?.sites ?? [];
   // The server's suggested sites and related domains, or the built-in ones until the worker has them.
   const config = status?.config ?? defaultExtensionConfig;
+  // No connection's server site is synced.
+  const serverSites = [status?.origin ?? serverOrigin, ...(status?.connections ?? []).map(each => each.origin)].map(
+    siteOf,
+  );
   const blocked = (site: string) =>
-    site === serverSite
+    serverSites.includes(site)
       ? 'Agent Computers itself is never synced.'
       : settings?.excludedDomains.some(domain => within(site, domain))
         ? 'This site is excluded.'
@@ -121,7 +144,7 @@ export function useCaptureActions({ onGranted }: { onGranted?: () => void } = {}
   const newSites = (site: string) => withCompanions(site, config.companions).filter(each => !sites.includes(each));
   // Both calls start in the click: the message reaches the worker before anyone can answer Chrome's prompt.
   const granted = (origins: string[], prepare: CaptureRequest) => {
-    const prepared = chrome.runtime.sendMessage(prepare);
+    const prepared = chrome.runtime.sendMessage(scoped(prepare));
     action.mutate(
       { request: { type: 'finish' }, permission: chrome.permissions.request({ origins }), prepared },
       { onSuccess: () => onGranted?.() },
@@ -137,20 +160,21 @@ export function useCaptureActions({ onGranted }: { onGranted?: () => void } = {}
     );
     run({ type: 'sites', sites: sites.filter(each => !removed.includes(each)) });
   };
-  // Grants the click's sites, then opens the server in a tab to connect, unless this browser still has live tokens.
+  // Grants the click's sites, then opens the server in a tab to connect, unless the connection still has live tokens.
   const connect = (mode: 'sites' | 'all', add: string[] = []) => {
-    const origins = mode === 'all' ? [...browserOrigins] : [...sites, ...add].flatMap(siteOrigins);
+    const origins = mode === 'all' ? [...browserOrigins] : [...(another ? [] : sites), ...add].flatMap(siteOrigins);
     if (origins.length) granted(origins, { type: 'prepare', connect: mode, sites: add });
     else run({ type: 'connect', mode });
   };
   // Opens the server in a tab to connect again, without the disclosure or a permission prompt.
   const reconnect = () => run({ type: 'reconnect' });
   // Use added sites only keeps the connection. The worker records added-sites mode and removes the all-sites grant,
-  // which takes the added sites' grants with it; requesting them again in the same click restores them without a
-  // prompt, since Chrome still records them as granted. Sites it does not restore are listed to allow.
+  // which takes every connection's added sites' grants with it; requesting them again in the same click restores them
+  // without a prompt, since Chrome still records them as granted. Sites it does not restore are listed to allow.
   const addedSitesOnly = () => {
-    const origins = sites.flatMap(siteOrigins);
-    const restored = (chrome.runtime.sendMessage({ type: 'narrow' }) as Promise<Response>).then(response => {
+    const every = [sites, ...(status?.connections ?? []).map(each => each.settings.sites)].flat();
+    const origins = [...new Set(every)].flatMap(siteOrigins);
+    const restored = (chrome.runtime.sendMessage(scoped({ type: 'narrow' })) as Promise<Response>).then(response => {
       if (!response.ok) throw new Error(response.error);
       return origins.length ? chrome.permissions.request({ origins }).catch(() => false) : true;
     });

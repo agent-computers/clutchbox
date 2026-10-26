@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { allSitesOffered } from '../../src/build';
 import { serverOrigin } from '../../src/server';
 import { Button } from '../../src/ui/components/button';
+import { Connections, connectionName } from '../../src/ui/connections';
 import { AllSitesDisclosure, SitesDisclosure } from '../../src/ui/disclosures';
 import { SuggestedSites } from '../../src/ui/suggested-sites';
 import { hint, SyncStatus, syncMessage } from '../../src/ui/sync-status';
@@ -12,16 +13,30 @@ const heading = 'font-heading text-2xl font-medium';
 // The tab that opens on install: agree and connect, then add sites from the suggestions.
 export function App() {
   const [allSitesOpen, setAllSitesOpen] = useState(false);
+  // As in the popup: the connection this tab acts on, or connecting another organization.
+  const [selected, setSelected] = useState<string>();
+  const [another, setAnother] = useState<{ before: string[] }>();
   const { status, config, unavailable, notice, busy, pending, blocked, addSites, connect, reconnect } =
     useCaptureActions({
+      connection: selected,
+      another: !!another,
       onGranted: () => setAllSitesOpen(false),
     });
+  const connections = status?.connections ?? [];
+  const added = another && connections.find(each => !another.before.includes(each.id));
+  useEffect(() => {
+    if (!added) return;
+    setSelected(added.id);
+    setAnother(undefined);
+  }, [added]);
+  const origin = status?.origin ?? serverOrigin;
+  const current = connections.find(each => each.id === status?.connection);
   const settings = status?.settings;
-  const connected = settings?.connected ?? false;
+  const connected = !another && (settings?.connected ?? false);
   const allSites = connected && settings?.mode === 'all';
   const sites = settings?.sites ?? [];
-  const saved = connected ? 0 : sites.length;
-  const syncState = status?.sync.state;
+  const saved = connected || another ? 0 : sites.length;
+  const syncState = another ? undefined : status?.sync.state;
 
   return (
     <main className="mx-auto grid w-full max-w-2xl gap-8 px-6 py-12 font-sans text-sm leading-relaxed">
@@ -32,6 +47,17 @@ export function App() {
         Keep your agent computer signed in.
       </h1>
 
+      <Connections
+        connections={connections}
+        selected={status?.connection}
+        another={!!another}
+        disabled={busy}
+        onSelect={connection => {
+          setSelected(connection);
+          setAnother(undefined);
+        }}
+        onAnother={() => setAnother({ before: connections.map(each => each.id) })}
+      />
       {status && connected && <SyncStatus status={status} busy={busy} onReconnect={reconnect} />}
       {!connected && syncState === 'delete_failed' && status && <p className={hint}>{syncMessage(status.sync)}</p>}
 
@@ -41,13 +67,21 @@ export function App() {
         </h2>
         <SitesDisclosure />
         {connected ? (
-          <p className="text-soft">Connected</p>
+          <p className="text-soft">Connected{current ? ` to ${connectionName(current)}` : ''}</p>
         ) : (
           <div className="grid justify-items-start gap-2">
             <Button size="lg" disabled={busy || pending || !status} onClick={() => connect('sites')}>
               Agree and connect
             </Button>
-            {status?.connecting && <p className={hint}>Finish connecting in the Agent Computers tab.</p>}
+            {status?.connecting ? (
+              <p className={hint}>Finish connecting in the Agent Computers tab.</p>
+            ) : (
+              another && (
+                <p className={hint}>
+                  Connects the organization you are using on Agent Computers, so switch to the one you want there first.
+                </p>
+              )
+            )}
             {saved > 0 && (
               <p className={hint}>
                 Also restores the {saved === 1 ? 'site' : `${saved} sites`} you added before, if you connect to the same
@@ -73,6 +107,7 @@ export function App() {
             </p>
             <SuggestedSites
               config={config}
+              origin={origin}
               sites={sites}
               blocked={blocked}
               disabled={!connected || busy || pending}
@@ -115,7 +150,7 @@ export function App() {
       )}
 
       <footer className="border-t pt-4">
-        <a className="underline underline-offset-2" href={`${serverOrigin}/account`}>
+        <a className="underline underline-offset-2" href={`${origin}/account`}>
           Back to your account
         </a>
       </footer>

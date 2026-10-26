@@ -7,6 +7,7 @@ The Chrome extension (Manifest V3) that keeps your agents signed in to the sites
 - **Only the sites you add,** each behind its own Chrome permission; it requests no host permissions at install. Builds outside the Chrome Web Store also offer **Allow all sites**, as an explicit choice.
 - **Excluded domains** are never captured, even under Allow all sites.
 - **Pause, remove a site, or disconnect** at any time. Disconnecting deletes what this browser uploaded.
+- **Several organizations,** on one server, each connected on its own: its own sites, exclusions, pause, and disconnect. A site goes only to the organizations you add it to.
 - **Uploads only on change,** in the background while Chrome runs, over OAuth with PKCE and short-lived tokens.
 
 Works in Chrome 130 and later, and in other Chromium browsers (Edge, Brave, Arc).

@@ -10,6 +10,7 @@ import {
   type TokenResult,
 } from '@agent-computers/capture';
 import { PGlite } from '@electric-sql/pglite';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +23,7 @@ import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { consentMembership } from '../../server/src/mcp';
 import { inTheOrganization } from '../../server/src/member-fixtures';
+import { createOrganization, switchOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { extensionCors, tokenPreflight } from './origins';
@@ -143,13 +145,50 @@ describe('extension routes over OAuth', () => {
     }
   });
 
+  it("name each sync token's organization: the one the person acted in when the browser connected", async () => {
+    const a = await identity('a');
+    const first = await connect(a);
+    const theirs = await db.transaction(tx =>
+      createOrganization(tx, { name: 'Second', owner: { id: 'a', name: 'Fixture a', email: 'a@example.test' } }),
+    );
+    const [second] = await db
+      .select({ id: schema.organizations.publicId })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, theirs!));
+    const me = async (options: Options) => (await json(await request('GET', '/me', options))).body.organization;
+    const deployment = await me({ token: first });
+    expect(deployment).toEqual({ id: expect.stringMatching(/^org_/), name: expect.any(String) });
+    expect(deployment.id).not.toBe(second!.id);
+    // Switching on the website moves the web session, not the browser already connected.
+    expect(await switchOrganization(db, 'a', second!.id)).toBe(true);
+    expect(await me({ cookie: a, from: origin })).toEqual({ id: second!.id, name: 'Second' });
+    expect(await me({ token: first })).toEqual(deployment);
+    // A browser connected after switching acts in the new one.
+    expect(await me({ token: await connect(a) })).toEqual({ id: second!.id, name: 'Second' });
+    // A person in no organization yet.
+    await db.insert(schema.user).values({ id: 'n', name: 'N', email: 'n@example.test', emailVerified: true });
+    const token = randomBytes(32).toString('base64url');
+    await db
+      .insert(schema.session)
+      .values({ id: randomUUID(), userId: 'n', token, expiresAt: new Date(Date.now() + 3600_000) });
+    const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
+    const cookie = `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
+    expect(await json(await request('GET', '/me', { cookie, from: origin }))).toEqual({
+      status: 200,
+      body: { user: { id: 'n', name: 'N', email: 'n@example.test' }, organization: null },
+    });
+  });
+
   it('take a sync token on the extension routes, with CORS on every answer', async () => {
     const a = await identity('a');
     const tokens = await connect(a);
     const me = await request('GET', '/me', { token: tokens });
     expect(await json(me)).toEqual({
       status: 200,
-      body: { user: { id: 'a', name: 'Fixture a', email: 'a@example.test' } },
+      body: {
+        user: { id: 'a', name: 'Fixture a', email: 'a@example.test' },
+        organization: { id: expect.stringMatching(/^org_/), name: expect.any(String) },
+      },
     });
     expect(me.headers.get('access-control-allow-origin')).toBe(extension);
     expect(me.headers.get('set-cookie')).toBeNull();

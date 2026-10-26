@@ -1,6 +1,5 @@
 import type { StatusResponse, SyncStatus as Sync } from '@agent-computers/capture';
 import type { ReactNode } from 'react';
-import { serverOrigin } from '../server';
 import { Button, buttonVariants } from './components/button';
 
 export const hint = 'text-[13px] leading-relaxed text-muted-foreground';
@@ -115,7 +114,7 @@ export function SyncStatus({
         <div>
           <a
             className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-            href={`${serverOrigin}/account`}
+            href={`${status.origin}/account`}
             target="_blank"
             rel="noreferrer"
           >

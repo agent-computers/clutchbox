@@ -1,11 +1,21 @@
 import { createHash } from 'node:crypto';
-import { applySyncChange, browserOrigins, refreshRetryMs, type SyncSettings } from '@agent-computers/capture';
+import {
+  applySyncChange,
+  browserOrigins,
+  refreshRetryMs,
+  type StatusResponse,
+  type SyncSettings,
+} from '@agent-computers/capture';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   accountKey,
+  alarmOf,
   type CaptureBrowser,
   CaptureController,
+  type ConnectionEntry,
+  connectionsKey,
   type Distribution,
+  keyOf,
   recordKey,
   settingsKey,
   syncAlarm,
@@ -45,9 +55,10 @@ const cookie = {
 // How the server's token endpoint can fail: `network` before it is reached, `lost` after it rotated the token,
 // `replay_pending` a retry that arrives before the server saved the answer to replay (invalid_grant).
 type TokenFailure = 'network' | 'lost' | 'replay_pending' | '5xx' | '429';
-function setup(initial?: unknown) {
-  let session: { [key: string]: unknown } = initial ? { [recordKey]: initial } : {};
-  let local: { [key: string]: unknown } = {};
+// `installed`: local storage as a build from before connections left it, which startup moves to the first connection.
+function setup(installed: { [key: string]: unknown } = {}) {
+  let session: { [key: string]: unknown } = {};
+  let local: { [key: string]: unknown } = structuredClone(installed);
   const grants = new Set<string>();
   const getAll = vi.fn(async () => [cookie, { ...cookie, domain: 'other.test' }]);
   const alarms = new Map<string, { periodInMinutes: number } | { when: number }>();
@@ -55,18 +66,30 @@ function setup(initial?: unknown) {
   const fetch = vi.fn(async (_url: string, init: RequestInit) =>
     init.method === 'DELETE' ? new Response(null, { status: 204 }) : accepted(),
   );
-  // GET /api/v1/me for the token's owner.
-  const me = vi.fn(async (user: string) => answer(200, { user: { id: user, email: emails[user], name: 'A' } }));
-  // Each account's sync settings (/api/v1/sync): a small fake of the server's rules.
+  // GET /api/v1/me for the token's owner and the organization it acts in: the one the person acted in on the
+  // server's website when they connected (`acting`).
+  const organizations: { [id: string]: string } = { 'org-a': 'Acme', 'org-b': 'Beta' };
+  const acting: { [user: string]: string } = { 'user-a': 'org-a', 'user-b': 'org-a' };
+  const me = vi.fn(async (user: string, organization: string) =>
+    answer(200, {
+      user: { id: user, email: emails[user], name: 'A' },
+      organization: { id: organization, name: organizations[organization] },
+    }),
+  );
+  // Each membership's sync settings (/api/v1/sync): a small fake of the server's rules. A person's membership in
+  // org-a is named for them alone, and in any other organization `<user>@<organization>`.
   type Account = { settings: SyncSettings | null; disconnected: boolean; config?: unknown };
   const accounts: { [user: string]: Account } = {
     'user-a': { settings: null, disconnected: false },
     'user-b': { settings: null, disconnected: false },
   };
   const account = accounts['user-a']!;
+  const memberOf = (user: string, organization: string) =>
+    organization === 'org-a' ? user : `${user}@${organization}`;
   const syncApi = vi.fn(async (url: string, init: RequestInit, user: string) => {
     const body = init.body ? JSON.parse(init.body as string) : undefined;
-    const theirs = accounts[user]!;
+    accounts[user] ??= { settings: null, disconnected: false };
+    const theirs = accounts[user];
     if (url.endsWith('/adopt')) {
       theirs.settings ??= applySyncChange(body.settings, {}, 'server.test');
       theirs.disconnected = false;
@@ -87,14 +110,15 @@ function setup(initial?: unknown) {
   // app: single-use codes bound to the PKCE challenge and redirect URI; rotating refresh tokens whose rotated token gets the same answer for 30 seconds and
   // disconnects its family after; a disconnected family's tokens refused.
   let counter = 0;
-  const codes = new Map<string, { user: string; challenge: string; redirectUri: string }>();
-  const accessTokens = new Map<string, { user: string; family: string }>();
-  const refreshTokens = new Map<string, { user: string; family: string; rotatedAt?: number; answer?: object }>();
+  const codes = new Map<string, { user: string; organization: string; challenge: string; redirectUri: string }>();
+  type Holder = { user: string; organization: string; family: string };
+  const accessTokens = new Map<string, Holder>();
+  const refreshTokens = new Map<string, Holder & { rotatedAt?: number; answer?: object }>();
   const revoked = new Set<string>();
   const failures: TokenFailure[] = [];
   // Set by refuseAccess: access tokens minted from then on are refused too.
   let refuseIssued = false;
-  const issue = (user: string, family: string) => {
+  const issue = ({ user, organization, family }: Holder) => {
     counter++;
     const tokens = {
       access_token: `access-${counter}`,
@@ -103,8 +127,8 @@ function setup(initial?: unknown) {
       refresh_token: `refresh-${counter}`,
       scope: 'offline_access sync',
     };
-    if (!refuseIssued) accessTokens.set(tokens.access_token, { user, family });
-    refreshTokens.set(tokens.refresh_token, { user, family });
+    if (!refuseIssued) accessTokens.set(tokens.access_token, { user, organization, family });
+    refreshTokens.set(tokens.refresh_token, { user, organization, family });
     return tokens;
   };
   const invalidGrant = () => answer(400, { error: 'invalid_grant' });
@@ -117,7 +141,7 @@ function setup(initial?: unknown) {
         .update(body.get('code_verifier') ?? '')
         .digest('base64url');
       if (!code || code.redirectUri !== body.get('redirect_uri') || code.challenge !== challenge) return invalidGrant();
-      return answer(200, issue(code.user, `family-${counter + 1}`));
+      return answer(200, issue({ user: code.user, organization: code.organization, family: `family-${counter + 1}` }));
     }
     const presented = refreshTokens.get(body.get('refresh_token') ?? '');
     if (!presented || revoked.has(presented.family)) return invalidGrant();
@@ -126,7 +150,7 @@ function setup(initial?: unknown) {
       revoked.add(presented.family);
       return invalidGrant();
     }
-    presented.answer = issue(presented.user, presented.family);
+    presented.answer = issue(presented);
     presented.rotatedAt = Date.now();
     return answer(200, presented.answer);
   };
@@ -148,15 +172,19 @@ function setup(initial?: unknown) {
     return found && !revoked.has(found.family) ? found : undefined;
   };
   const requests: { url: string; init: RequestInit }[] = [];
+  // The captures each organization accepted.
+  const received: { organization: string; capture: { scope: unknown; cookies: { domain: string }[] } }[] = [];
   const route = async (url: string, init: RequestInit = {}) => {
     requests.push({ url, init });
     if (init.credentials !== 'omit') credentialed.push(url);
     if (url === `${issuer}/oauth2/token`) return token(new URLSearchParams(String(init.body)));
     const caller = bearer(init);
     if (!caller) return failure(401, 'unauthenticated');
-    if (url === `${origin}/api/v1/me`) return me(caller.user);
-    if (url.startsWith(`${origin}/api/v1/sync`)) return syncApi(url, init, caller.user);
+    if (url === `${origin}/api/v1/me`) return me(caller.user, caller.organization);
+    if (url.startsWith(`${origin}/api/v1/sync`)) return syncApi(url, init, memberOf(caller.user, caller.organization));
     const response = await fetch(url, init);
+    if (init.method === 'POST' && response.ok)
+      received.push({ organization: caller.organization, capture: JSON.parse(String(init.body)).capture });
     // DELETE /captures disconnects the browser that sent it.
     if (url === `${origin}/api/v1/captures` && init.method === 'DELETE' && response.ok) revoked.add(caller.family);
     return response;
@@ -258,7 +286,7 @@ function setup(initial?: unknown) {
   const mint = (user = 'user-a') => {
     const { state, challenge } = authorizeRequest();
     const code = `code-${++counter}`;
-    codes.set(code, { user, challenge, redirectUri });
+    codes.set(code, { user, organization: acting[user]!, challenge, redirectUri });
     return { code, state };
   };
   const exchange = (url: string) => controller.handle({ type: 'exchange', url });
@@ -284,9 +312,20 @@ function setup(initial?: unknown) {
     account.settings = applySyncChange(account.settings!, change, 'server.test');
     return controller.handle({ type: 'check' });
   };
+  // The first connection's ID, and its stored values.
+  const first = () => (local[connectionsKey] as ConnectionEntry[])[0]!.id;
+  const named = (data: { [key: string]: unknown }) =>
+    Object.fromEntries(Object.entries(data).map(([key, value]) => [keyOf(key, first()), value]));
   return {
     controller,
     restart,
+    first,
+    entries: () => (local[connectionsKey] as ConnectionEntry[] | undefined) ?? [],
+    stored: (key: string) => local[keyOf(key, first())],
+    record: () => session[keyOf(recordKey, first())],
+    alarm: () => alarmOf(first()),
+    write: (data: { [key: string]: unknown }) => api.storage.local.set(named(data)),
+    writeSession: (data: { [key: string]: unknown }) => api.storage.session.set(named(data)),
     api,
     grants,
     getAll,
@@ -296,6 +335,8 @@ function setup(initial?: unknown) {
     token,
     account,
     accounts,
+    acting,
+    received,
     syncApi,
     requests,
     fromAccount,
@@ -660,7 +701,7 @@ describe('added sites', () => {
       settings: { connected: false },
     });
     expect(test.api.tabs.get).toHaveBeenCalledWith(3);
-    expect(await test.authorize()).toEqual({ ok: true, email: 'a@example.test', opener: 3 });
+    expect(await test.authorize()).toEqual({ ok: true, email: 'a@example.test', organization: 'Acme', opener: 3 });
     expect(await test.drain()).toMatchObject({
       settings: { connected: true, mode: 'sites', sites: ['capture.test'] },
       capture: { state: 'complete' },
@@ -672,12 +713,11 @@ describe('added sites', () => {
     expect(await test.controller.permissionsAdded()).toMatchObject({ settings: { sites: ['capture.test'] } });
   });
   it('keeps a whole-browser connection from before site selection as all sites', async () => {
-    const test = setup();
-    test.grant();
-    await test.api.storage.local.set({
+    const test = setup({
       [settingsKey]: { consentVersion: 1, connected: true, paused: false, excludedDomains: ['other.test'] },
     });
-    expect(await test.restart().handle({ type: 'status' })).toMatchObject({
+    test.grant();
+    expect(await test.controller.handle({ type: 'status' })).toMatchObject({
       settings: { connected: true, mode: 'all', sites: [], excludedDomains: ['other.test'] },
     });
   });
@@ -699,7 +739,7 @@ describe('whole-browser authorization and lifecycle', () => {
     expect(JSON.stringify(result)).not.toContain(cookie.value);
     expect(JSON.stringify(test.local())).not.toContain(cookie.value);
     expect(test.getAll).toHaveBeenCalledWith({ partitionKey: {} });
-    expect(test.session()[recordKey]).toMatchObject({
+    expect(test.record()).toMatchObject({
       bundle: { schemaVersion: 2, scope: { mode: 'whole-browser', excludedDomains: [] } },
     });
   });
@@ -718,7 +758,7 @@ describe('whole-browser authorization and lifecycle', () => {
       connect: true,
       capture: { scope: { mode: 'whole-browser' } },
     });
-    expect(test.alarms.get(syncAlarm)).toEqual({ periodInMinutes: 1 });
+    expect(test.alarms.get(test.alarm())).toEqual({ periodInMinutes: 1 });
   });
   it('discards the first capture of an all-sites connection that Pause interrupted', async () => {
     const test = setup();
@@ -768,7 +808,7 @@ describe('whole-browser authorization and lifecycle', () => {
     await test.fromAccount({ excludedDomains: ['capture.test'] });
     expect(JSON.stringify(test.session())).not.toContain(cookie.value);
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ capture: { cookieCount: 1 } });
-    expect(test.session()[recordKey]).toMatchObject({ bundle: { cookies: [{ ...cookie, domain: 'other.test' }] } });
+    expect(test.record()).toMatchObject({ bundle: { cookies: [{ ...cookie, domain: 'other.test' }] } });
   });
   it('pauses across worker restarts and clears retained data, then resumes explicitly', async () => {
     const test = setup();
@@ -837,8 +877,8 @@ describe('whole-browser authorization and lifecycle', () => {
     test.api.permissions.remove.mockRejectedValueOnce(new Error('removal failed'));
     expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({ ok: false });
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: false });
-    expect(test.local()[settingsKey]).toMatchObject({ connected: false });
-    expect(test.local()[tokensKey]).toBeUndefined();
+    expect(test.stored(settingsKey)).toMatchObject({ connected: false });
+    expect(test.stored(tokensKey)).toBeUndefined();
     expect(await test.controller.handle({ type: 'status' })).toMatchObject({
       permissionGranted: true,
       settings: { connected: false },
@@ -857,12 +897,12 @@ describe('whole-browser authorization and lifecycle', () => {
       await save(record);
     });
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: false });
-    expect(test.session()[recordKey]).toMatchObject({ status: { state: 'failed' } });
+    expect(test.record()).toMatchObject({ status: { state: 'failed' } });
   });
   it('reconciles a capture interrupted by a worker restart instead of reporting it complete', async () => {
     const test = setup();
     await test.connect();
-    await test.api.storage.session.set({ [recordKey]: { status: { state: 'capturing' } } });
+    await test.writeSession({ [recordKey]: { status: { state: 'capturing' } } });
     expect(await test.restart().handle({ type: 'status' })).toMatchObject({ capture: { state: 'interrupted' } });
   });
   it('accepts the popup and the setup tab, the redirect page for the exchange only, and rejects others', () => {
@@ -912,12 +952,12 @@ describe('sync to the agent computer', () => {
       headers: {
         'content-type': 'application/json',
         'x-extension-version': '0.5.0',
-        authorization: `Bearer ${(test.local()[tokensKey] as { access: string }).access}`,
+        authorization: `Bearer ${(test.stored(tokensKey) as { access: string }).access}`,
       },
     });
     expect(JSON.parse(init.body as string).capture.cookies).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain('digest');
-    expect(test.local()[syncKey]).toMatchObject({ state: 'synced', digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(test.stored(syncKey)).toMatchObject({ state: 'synced', digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(JSON.stringify(test.local())).not.toContain(cookie.value);
   });
   it('reports a newer build the server offers, and an outdated refusal, until this build catches up', async () => {
@@ -1018,10 +1058,10 @@ describe('sync to the agent computer', () => {
       sync: { state },
       account: { state: 'syncing' },
     });
-    expect(test.session()[recordKey]).toMatchObject({
+    expect(test.record()).toMatchObject({
       bundle: { cookies: [cookie, { ...cookie, domain: 'other.test' }] },
     });
-    expect(test.local()[syncKey]).not.toHaveProperty('digest');
+    expect(test.stored(syncKey)).not.toHaveProperty('digest');
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ sync: { state: 'synced' } });
     expect(test.uploads()).toHaveLength(2);
   });
@@ -1030,16 +1070,16 @@ describe('sync to the agent computer', () => {
     await test.connect();
     test.fetch.mockRejectedValueOnce(new TypeError('network'));
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: true, sync: { state: 'failed' } });
-    expect(test.local()[syncKey]).toEqual({ state: 'failed', connect: true });
+    expect(test.stored(syncKey)).toEqual({ state: 'failed', connect: true });
   });
   it('schedules periodic capture while connected, clears it on pause, and recreates it on resume', async () => {
     const test = setup();
     await test.connect();
-    expect(test.alarms.get(syncAlarm)).toEqual({ periodInMinutes: 1 });
+    expect(test.alarms.get(test.alarm())).toEqual({ periodInMinutes: 1 });
     await test.controller.handle({ type: 'pause' });
-    expect(test.alarms.has(syncAlarm)).toBe(false);
+    expect(test.alarms.has(test.alarm())).toBe(false);
     await test.controller.handle({ type: 'resume' });
-    expect(test.alarms.has(syncAlarm)).toBe(true);
+    expect(test.alarms.has(test.alarm())).toBe(true);
   });
   it('does not restart an existing alarm when the worker wakes, and restores a missing one', async () => {
     const test = setup();
@@ -1049,11 +1089,11 @@ describe('sync to the agent computer', () => {
     expect(test.api.alarms.create).not.toHaveBeenCalled();
     test.alarms.clear();
     await test.restart().handle({ type: 'status' });
-    expect(test.alarms.has(syncAlarm)).toBe(true);
+    expect(test.alarms.has(test.alarm())).toBe(true);
     // An older build's 15-minute alarm is replaced.
-    test.alarms.set(syncAlarm, { periodInMinutes: 15 });
+    test.alarms.set(test.alarm(), { periodInMinutes: 15 });
     await test.restart().handle({ type: 'status' });
-    expect(test.alarms.get(syncAlarm)).toEqual({ periodInMinutes: 1 });
+    expect(test.alarms.get(test.alarm())).toEqual({ periodInMinutes: 1 });
   });
   it('captures and uploads when the alarm fires, and does nothing while paused', async () => {
     const test = setup();
@@ -1072,7 +1112,7 @@ describe('sync to the agent computer', () => {
     const test = setup();
     await test.connect();
     await test.controller.handle({ type: 'capture' });
-    const { access } = test.local()[tokensKey] as { access: string };
+    const { access } = test.stored(tokensKey) as { access: string };
     let grantedDuringDelete = false;
     test.fetch.mockImplementationOnce(async () => {
       grantedDuringDelete = test.grants.size > 0;
@@ -1095,9 +1135,9 @@ describe('sync to the agent computer', () => {
     expect(grantedDuringDelete).toBe(true);
     // Never /oauth2/revoke, which the server refuses for the extension.
     expect(test.requests.map(({ url }) => url)).not.toContain(`${issuer}/oauth2/revoke`);
-    expect(test.local()[syncKey]).toBeUndefined();
-    expect(test.local()[tokensKey]).toBeUndefined();
-    expect(test.local()[accountKey]).toEqual({ id: 'user-a', email: 'a@example.test' });
+    expect(test.stored(syncKey)).toBeUndefined();
+    expect(test.stored(tokensKey)).toBeUndefined();
+    expect(test.stored(accountKey)).toEqual({ id: 'user-a', email: 'a@example.test' });
     expect(test.alarms.size).toBe(0);
     expect(test.badge()).toBe('');
   });
@@ -1115,7 +1155,7 @@ describe('sync to the agent computer', () => {
       permissionGranted: false,
       sync: { state: 'delete_failed' },
     });
-    expect(test.local()[tokensKey]).toBeUndefined();
+    expect(test.stored(tokensKey)).toBeUndefined();
     // Chrome's permissions.onRemoved follows the removal; the notice survives it.
     await test.controller.permissionsRemoved();
     expect(await test.controller.handle({ type: 'status' })).toMatchObject({ sync: { state: 'delete_failed' } });
@@ -1148,7 +1188,7 @@ describe('sync to the agent computer', () => {
     });
     expect(test.alarms.size).toBe(0);
     expect(test.badge()).toBe('!');
-    expect(test.local()[tokensKey]).toBeUndefined();
+    expect(test.stored(tokensKey)).toBeUndefined();
     expect(JSON.stringify(test.session())).not.toContain(cookie.value);
     expect(test.fetch.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(0);
   });
@@ -1188,7 +1228,7 @@ describe('sync to the agent computer', () => {
       );
       const capturing = test.controller.handle({ type: 'capture' });
       await vi.waitFor(() => expect(test.uploads()).toHaveLength(1));
-      expect(test.local()[syncKey]).toEqual({ state: 'uploading', connect: true });
+      expect(test.stored(syncKey)).toEqual({ state: 'uploading', connect: true });
       const stopping = test.controller.handle({ type: action });
       expect(await capturing).toEqual({ ok: false, error: 'permission_required' });
       expect(signal.aborted).toBe(true);
@@ -1219,7 +1259,7 @@ describe('sync to the agent computer', () => {
   it('reconciles an upload interrupted by a worker restart', async () => {
     const test = setup();
     await test.connect();
-    await test.api.storage.local.set({ [syncKey]: { state: 'uploading' } });
+    await test.write({ [syncKey]: { state: 'uploading' } });
     expect(await test.restart().handle({ type: 'status' })).toMatchObject({ sync: { state: 'failed' } });
   });
   it('external revocation stops periodic capture and forgets the upload state', async () => {
@@ -1229,20 +1269,19 @@ describe('sync to the agent computer', () => {
     test.grants.clear();
     await test.controller.permissionsRemoved();
     expect(test.alarms.size).toBe(0);
-    expect(test.local()[syncKey]).toBeUndefined();
+    expect(test.stored(syncKey)).toBeUndefined();
   });
 });
 
 describe("the account's settings", () => {
   // A browser that connected to user-a before and kept its sites.
   async function withSites(sites: string[], account?: { sites: string[]; excludedDomains: string[]; paused: boolean }) {
-    const test = setup();
-    if (account) test.account.settings = account;
-    for (const site of sites) for (const grant of siteGrants(site)) test.grants.add(grant);
-    await test.api.storage.local.set({
+    const test = setup({
       [settingsKey]: { consentVersion: 2, connected: false, paused: false, mode: 'sites', sites, excludedDomains: [] },
       [accountKey]: { id: 'user-a', email: 'a@example.test' },
     });
+    if (account) test.account.settings = account;
+    for (const site of sites) for (const grant of siteGrants(site)) test.grants.add(grant);
     await test.controller.handle({ type: 'connect', mode: 'sites' });
     await test.authorize();
     return test;
@@ -1278,10 +1317,10 @@ describe("the account's settings", () => {
       settings: { paused: true },
       capture: { state: 'empty' },
     });
-    expect(test.alarms.has(syncAlarm)).toBe(false);
+    expect(test.alarms.has(test.alarm())).toBe(false);
     expect(await test.controller.handle({ type: 'resume' })).toMatchObject({ settings: { paused: false } });
     expect(test.account.settings).toMatchObject({ paused: false });
-    expect(test.alarms.has(syncAlarm)).toBe(true);
+    expect(test.alarms.has(test.alarm())).toBe(true);
     // Resuming needs the server; pausing does not, and reaches the account at the next fetch.
     test.syncApi.mockRejectedValueOnce(new TypeError('network'));
     expect(await test.controller.handle({ type: 'pause' })).toMatchObject({ settings: { paused: true } });
@@ -1308,7 +1347,7 @@ describe("the account's settings", () => {
   it("uses the server's config within fixed bounds, and fetches settings again only when due", async () => {
     const test = setup();
     await test.connect();
-    expect(test.alarms.get(syncAlarm)).toEqual({ periodInMinutes: 1 });
+    expect(test.alarms.get(test.alarm())).toEqual({ periodInMinutes: 1 });
     test.account.config = {
       syncPeriodMinutes: 0.01,
       maxUploadBytes: 10,
@@ -1346,7 +1385,7 @@ describe("the account's settings", () => {
       vi.setSystemTime(Date.now() + 30 * 60_000);
       await test.controller.alarmFired(syncAlarm);
       expect(test.syncApi).toHaveBeenCalledTimes(1);
-      expect(test.alarms.get(syncAlarm)).toEqual({ periodInMinutes: 5 });
+      expect(test.alarms.get(test.alarm())).toEqual({ periodInMinutes: 5 });
     } finally {
       vi.useRealTimers();
     }
@@ -1419,6 +1458,7 @@ describe('connecting', () => {
     expect(await test.exchange(test.redirect({ code, state, iss: issuer }))).toEqual({
       ok: true,
       email: 'a@example.test',
+      organization: 'Acme',
       opener: 7,
     });
   });
@@ -1437,13 +1477,14 @@ describe('connecting', () => {
     });
     const exchanged = await test.authorize();
     responses.push(exchanged);
-    expect(exchanged).toEqual({ ok: true, email: 'a@example.test', opener: 7 });
+    expect(exchanged).toEqual({ ok: true, email: 'a@example.test', organization: 'Acme', opener: 7 });
     // Saved together, before the first upload.
+    expect(test.entries()).toEqual([{ id: test.first(), origin, organization: { id: 'org-a', name: 'Acme' } }]);
     expect(test.local()).toMatchObject({
-      [tokensKey]: { access: expect.any(String), refresh: expect.any(String) },
-      [accountKey]: { id: 'user-a', email: 'a@example.test' },
-      [settingsKey]: { connected: true, mode: 'all' },
-      [syncKey]: { state: 'never', connect: true },
+      [keyOf(tokensKey, test.first())]: { access: expect.any(String), refresh: expect.any(String) },
+      [keyOf(accountKey, test.first())]: { id: 'user-a', email: 'a@example.test' },
+      [keyOf(settingsKey, test.first())]: { connected: true, mode: 'all' },
+      [keyOf(syncKey, test.first())]: { state: 'never', connect: true },
     });
     expect(test.badge()).toBe('');
     await vi.waitFor(() => expect(release).toBeDefined());
@@ -1455,15 +1496,14 @@ describe('connecting', () => {
     expect(status).not.toHaveProperty('connecting');
     expect(test.uploads()).toHaveLength(1);
     responses.push(await test.controller.handle({ type: 'capture' }));
-    const { access, refresh } = test.local()[tokensKey] as { access: string; refresh: string };
+    const { access, refresh } = test.stored(tokensKey) as { access: string; refresh: string };
     for (const response of responses) {
       expect(JSON.stringify(response)).not.toContain(access);
       expect(JSON.stringify(response)).not.toContain(refresh);
     }
   });
   it('writes nothing when /me fails after the exchange, and disconnects the tokens it got', async () => {
-    const test = setup();
-    await test.api.storage.local.set({ [accountKey]: { id: 'user-b', email: 'b@example.test' } });
+    const test = setup({ [accountKey]: { id: 'user-b', email: 'b@example.test' } });
     test.grant();
     await test.controller.handle({ type: 'connect', mode: 'all' });
     const before = structuredClone(test.local());
@@ -1518,13 +1558,11 @@ describe('connecting', () => {
       .slice(from)
       .filter(({ init }) => init.method === 'PATCH' && JSON.parse(String(init.body)).paused === false);
     expect(resumed).toEqual([]);
-    expect(test.alarms.has(syncAlarm)).toBe(false);
+    expect(test.alarms.has(test.alarm())).toBe(false);
     expect(test.uploads()).toEqual([]);
   });
   it('starts fresh for a different account: drops the previous sites and their grants, keeping the new ones', async () => {
-    const test = setup();
-    for (const site of ['capture.test', 'other.test']) for (const grant of siteGrants(site)) test.grants.add(grant);
-    await test.api.storage.local.set({
+    const test = setup({
       [settingsKey]: {
         consentVersion: 2,
         connected: false,
@@ -1535,18 +1573,24 @@ describe('connecting', () => {
       },
       [accountKey]: { id: 'user-a', email: 'a@example.test' },
     });
+    for (const site of ['capture.test', 'other.test']) for (const grant of siteGrants(site)) test.grants.add(grant);
     await test.controller.handle({ type: 'prepare', connect: 'sites', sites: ['other.test'] });
     await test.controller.permissionsAdded();
-    expect(await test.authorize('user-b')).toEqual({ ok: true, email: 'b@example.test', opener: 7 });
+    expect(await test.authorize('user-b')).toEqual({
+      ok: true,
+      email: 'b@example.test',
+      organization: 'Acme',
+      opener: 7,
+    });
     expect(await test.drain()).toMatchObject({
       settings: { connected: true, mode: 'sites', sites: ['other.test'], excludedDomains: [] },
       account: { state: 'syncing', email: 'b@example.test' },
     });
-    expect(test.local()[accountKey]).toEqual({ id: 'user-b', email: 'b@example.test' });
+    expect(test.stored(accountKey)).toEqual({ id: 'user-b', email: 'b@example.test' });
     expect(test.accounts['user-b']!.settings).toMatchObject({ sites: ['other.test'] });
     expect([...test.grants]).toEqual(siteGrants('other.test'));
     // Revoked only after the new settings were saved.
-    const saved = test.api.storage.local.set.mock.calls.findIndex(([data]) => tokensKey in data);
+    const saved = test.api.storage.local.set.mock.calls.findIndex(([data]) => keyOf(tokensKey, test.first()) in data);
     const revokedAt = test.api.permissions.remove.mock.invocationCallOrder[0]!;
     expect(test.api.storage.local.set.mock.invocationCallOrder[saved]!).toBeLessThan(revokedAt);
   });
@@ -1556,7 +1600,7 @@ describe('connecting', () => {
   ])('lands a Reconnect from all sites as %s in added sites, without the all-sites grant', async (_name, user) => {
     const test = setup();
     await test.connect();
-    if (user === 'user-a') await test.api.storage.local.remove(accountKey);
+    if (user === 'user-a') await test.api.storage.local.remove(keyOf(accountKey, test.first()));
     test.revokeFamily();
     expect(await test.controller.alarmFired(syncAlarm)).toMatchObject({ account: { state: 'reconnect' } });
     await test.controller.handle({ type: 'reconnect' });
@@ -1606,7 +1650,7 @@ describe('connecting', () => {
       permissionGranted: true,
     });
     expect(test.token).toHaveBeenCalledTimes(1);
-    expect(test.alarms.has(syncAlarm)).toBe(false);
+    expect(test.alarms.has(test.alarm())).toBe(false);
     expect(test.badge()).toBe('!');
     expect(test.grants.size).toBe(2);
     // Nothing is captured until then.
@@ -1638,15 +1682,15 @@ describe('connecting', () => {
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ account: { state: 'reconnect' } });
     expect(test.token).toHaveBeenCalledTimes(1);
     expect(test.requests.slice(before).filter(({ url }) => url === `${origin}/api/v1/captures`)).toHaveLength(2);
-    expect(test.local()[tokensKey]).toBeUndefined();
+    expect(test.stored(tokensKey)).toBeUndefined();
     expect(test.badge()).toBe('!');
   });
   it('refreshes once for concurrent requests with an expiring token', async () => {
     const test = setup();
     await test.connect();
     for (const grant of siteGrants('capture.test')) test.grants.add(grant);
-    const tokens = test.local()[tokensKey] as object;
-    await test.api.storage.local.set({ [tokensKey]: { ...tokens, expiresAt: Date.now() } });
+    const tokens = test.stored(tokensKey) as object;
+    await test.write({ [tokensKey]: { ...tokens, expiresAt: Date.now() } });
     await Promise.all([
       test.controller.handle({ type: 'capture' }),
       test.controller.handle({ type: 'check' }),
@@ -1655,8 +1699,8 @@ describe('connecting', () => {
     expect(test.token).toHaveBeenCalledTimes(1);
   });
   const stale = async (test: Test) => {
-    const tokens = test.local()[tokensKey] as { refresh: string };
-    await test.api.storage.local.set({ [tokensKey]: { ...tokens, expiresAt: Date.now() } });
+    const tokens = test.stored(tokensKey) as { refresh: string };
+    await test.write({ [tokensKey]: { ...tokens, expiresAt: Date.now() } });
     return tokens.refresh;
   };
   const presented = (test: Test) => test.token.mock.calls.map(([body]) => body.get('refresh_token'));
@@ -1695,7 +1739,7 @@ describe('connecting', () => {
         account: { state: 'syncing' },
       });
       expect(presented(test)).toEqual([refresh, refresh, refresh]);
-      expect((test.local()[tokensKey] as { refresh: string }).refresh).not.toBe(refresh);
+      expect((test.stored(tokensKey) as { refresh: string }).refresh).not.toBe(refresh);
     }),
   );
   it('asks to reconnect when the first refresh attempt is refused', async () => {
@@ -1717,7 +1761,7 @@ describe('connecting', () => {
       account: { state: 'syncing' },
     });
     expect(test.token).toHaveBeenCalledTimes(1);
-    expect((test.local()[tokensKey] as { refresh: string }).refresh).toBe(refresh);
+    expect((test.stored(tokensKey) as { refresh: string }).refresh).toBe(refresh);
   });
   it(
     'keeps the tokens when every refresh attempt fails, and stops trying inside the reuse window',
@@ -1743,7 +1787,7 @@ describe('connecting', () => {
       const gaps = starts.slice(1).map((at, index) => at - starts[index]!);
       expect(gaps.map((gap, index) => gap >= [1_000, 3_000, 5_000][index]!)).toEqual([true, true, true]);
       expect(starts.at(-1)! - starts[0]!).toBeLessThan(refreshRetryMs);
-      expect((test.local()[tokensKey] as { refresh: string }).refresh).toBe(refresh);
+      expect((test.stored(tokensKey) as { refresh: string }).refresh).toBe(refresh);
     }),
   );
   it('shows Reconnect once for an install updated from a build that synced with the web sign-in', async () => {
@@ -1769,7 +1813,7 @@ describe('connecting', () => {
       sync: { state: 'failed' },
       permissionGranted: true,
     });
-    expect(test.alarms.has(syncAlarm)).toBe(false);
+    expect(test.alarms.has(test.alarm())).toBe(false);
     expect(test.badge()).toBe('!');
     expect(await updated.alarmFired(syncAlarm)).toBeUndefined();
     expect(test.getAll).not.toHaveBeenCalled();
@@ -1790,7 +1834,7 @@ describe('connecting', () => {
       sync: { state: 'delete_failed' },
       permissionGranted: false,
     });
-    expect(test.local()[tokensKey]).toBeUndefined();
+    expect(test.stored(tokensKey)).toBeUndefined();
     expect(test.badge()).toBe('');
   });
   it('opens a tab when connecting with tokens the server no longer accepts', async () => {
@@ -1818,6 +1862,224 @@ describe('connecting', () => {
       settings: { connected: true, mode: 'sites' },
       account: { state: 'syncing' },
     });
-    expect(test.local()[tokensKey]).toBeDefined();
+    expect(test.stored(tokensKey)).toBeDefined();
+  });
+});
+
+describe('several organizations', () => {
+  // Connects whichever organization the person acts in on the server's website, as Connect another organization does.
+  const connectAnother = async (test: Test, user = 'user-a') => {
+    await test.controller.handle({ type: 'connect', mode: 'sites', another: true });
+    await test.authorize(user);
+    await test.drain();
+    return test.entries().at(-1)!.id;
+  };
+  const add = async (test: Test, connection: string, sites: string[]) => {
+    for (const site of sites) for (const grant of siteGrants(site)) test.grants.add(grant);
+    const status = (await test.controller.handle({ type: 'status', connection })) as StatusResponse;
+    return test.controller.handle({ type: 'sites', sites: [...status.settings.sites, ...sites], connection });
+  };
+  const remove = async (test: Test, connection: string, site: string) => {
+    const status = (await test.controller.handle({ type: 'status', connection })) as StatusResponse;
+    return test.controller.handle({
+      type: 'sites',
+      sites: status.settings.sites.filter(each => each !== site),
+      connection,
+    });
+  };
+  const domains = (test: Test, organization: string) =>
+    test.received
+      .filter(each => each.organization === organization)
+      .at(-1)
+      ?.capture.cookies.map(each => each.domain);
+  // One Chrome profile connected to org-a, then to org-b after switching organizations on the website.
+  async function twoOrganizations() {
+    const test = setup();
+    const a = await connectAnother(test);
+    test.acting['user-a'] = 'org-b';
+    const b = await connectAnother(test);
+    return { test, a, b };
+  }
+
+  it('adds a connection for a new organization, and sends each site only to the connections that added it', async () => {
+    const { test, a, b } = await twoOrganizations();
+    expect(a).not.toBe(b);
+    expect(test.entries()).toEqual([
+      { id: a, origin, organization: { id: 'org-a', name: 'Acme' } },
+      { id: b, origin, organization: { id: 'org-b', name: 'Beta' } },
+    ]);
+    await add(test, a, ['capture.test']);
+    await add(test, b, ['other.test']);
+    expect(domains(test, 'org-a')).toEqual(['capture.test']);
+    expect(domains(test, 'org-b')).toEqual(['other.test']);
+    expect(test.accounts['user-a']!.settings).toMatchObject({ sites: ['capture.test'] });
+    expect(test.accounts['user-a@org-b']!.settings).toMatchObject({ sites: ['other.test'] });
+    // Each connection has its own periodic capture, which captures only its own sites.
+    expect(test.alarms.has(alarmOf(a))).toBe(true);
+    expect(test.alarms.has(alarmOf(b))).toBe(true);
+    test.getAll.mockResolvedValue([
+      { ...cookie, value: 'changed' },
+      { ...cookie, domain: 'other.test', value: 'changed' },
+    ]);
+    test.received.length = 0;
+    await test.controller.alarmFired(alarmOf(b));
+    expect(test.received.map(each => each.organization)).toEqual(['org-b']);
+    expect(domains(test, 'org-b')).toEqual(['other.test']);
+    // The list names every connection, with its organization, origin and sites.
+    expect(await test.controller.handle({ type: 'status', connection: b })).toMatchObject({
+      connection: b,
+      settings: { sites: ['other.test'] },
+      connections: [
+        { id: a, origin, organization: { name: 'Acme' }, settings: { sites: ['capture.test'] } },
+        { id: b, origin, organization: { name: 'Beta' }, settings: { sites: ['other.test'] } },
+      ],
+    });
+    // Without a connection, a request acts on the first.
+    expect(await test.controller.handle({ type: 'status' })).toMatchObject({ connection: a });
+    expect(await test.controller.handle({ type: 'status', connection: 'unknown' })).toEqual({
+      ok: false,
+      error: 'invalid_request',
+    });
+  });
+  it('pauses and disconnects one connection, leaving the other syncing', async () => {
+    const { test, a, b } = await twoOrganizations();
+    await add(test, a, ['capture.test']);
+    await add(test, b, ['other.test']);
+    expect(await test.controller.handle({ type: 'pause', connection: a })).toMatchObject({
+      settings: { paused: true },
+    });
+    expect(test.account.settings).toMatchObject({ paused: true });
+    expect(test.accounts['user-a@org-b']!.settings).toMatchObject({ paused: false });
+    expect(test.alarms.has(alarmOf(a))).toBe(false);
+    expect(test.alarms.has(alarmOf(b))).toBe(true);
+    expect(await test.controller.handle({ type: 'capture', connection: a })).toEqual({ ok: false, error: 'paused' });
+    test.getAll.mockResolvedValue([{ ...cookie, domain: 'other.test', value: 'changed' }]);
+    expect(await test.controller.handle({ type: 'capture', connection: b })).toMatchObject({
+      sync: { state: 'synced' },
+    });
+    expect(await test.controller.handle({ type: 'resume', connection: a })).toMatchObject({
+      settings: { paused: false },
+    });
+    // Disconnect deletes only that organization's copy, and keeps the grants the other connection uses.
+    test.fetch.mockClear();
+    expect(await test.controller.handle({ type: 'disconnect', connection: b })).toMatchObject({
+      settings: { connected: false },
+      account: { state: 'none' },
+    });
+    expect(test.fetch.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(1);
+    expect(test.local()[keyOf(tokensKey, b)]).toBeUndefined();
+    expect(test.local()[keyOf(tokensKey, a)]).toBeDefined();
+    expect([...test.grants]).toEqual(siteGrants('capture.test'));
+    expect(test.alarms.has(alarmOf(b))).toBe(false);
+    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
+      settings: { connected: true, sites: ['capture.test'] },
+      account: { state: 'syncing' },
+    });
+    // The server's Delete everything ends only the connection it was done for.
+    test.accounts['user-a']!.disconnected = true;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60_000);
+    expect(await test.controller.handle({ type: 'capture', connection: a })).toMatchObject({
+      account: { state: 'reconnect' },
+    });
+    expect(test.badge()).toBe('!');
+  });
+  it("keeps a site's grant while another connection uses it, and a site revoked in Chrome leaves every connection", async () => {
+    const { test, a, b } = await twoOrganizations();
+    await add(test, a, ['capture.test', 'other.test']);
+    await add(test, b, ['capture.test']);
+    await remove(test, a, 'capture.test');
+    expect(test.grants.has(siteGrants('capture.test')[0]!)).toBe(true);
+    await remove(test, b, 'capture.test');
+    expect(test.grants.has(siteGrants('capture.test')[0]!)).toBe(false);
+    await add(test, b, ['other.test']);
+    for (const grant of siteGrants('other.test')) test.grants.delete(grant);
+    await test.controller.permissionsRemoved(siteGrants('other.test'));
+    for (const connection of [a, b])
+      expect(await test.controller.handle({ type: 'status', connection })).toMatchObject({
+        settings: { connected: true, sites: [] },
+      });
+    expect(test.account.settings).toMatchObject({ sites: [] });
+    expect(test.accounts['user-a@org-b']!.settings).toMatchObject({ sites: [] });
+  });
+  it('keeps the all-sites grant while another connection captures all sites', async () => {
+    const test = setup();
+    await test.connect();
+    const a = test.first();
+    test.acting['user-a'] = 'org-b';
+    const b = await connectAnother(test);
+    await add(test, b, ['other.test']);
+    expect(await test.controller.handle({ type: 'disconnect', connection: b })).toMatchObject({
+      settings: { connected: false },
+    });
+    expect(test.grants.has(browserOrigins[0])).toBe(true);
+    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
+      settings: { connected: true, mode: 'all' },
+    });
+  });
+  it('moves an existing install into the first connection without reconnecting, and names it', async () => {
+    const test = setup();
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.handle({ type: 'connect', mode: 'sites' });
+    await test.authorize();
+    await test.drain();
+    await test.controller.handle({ type: 'sites', sites: ['capture.test'] });
+    // The keys and alarm a build from before connections kept.
+    const id = test.first();
+    const flat = Object.fromEntries(
+      [settingsKey, tokensKey, accountKey, syncKey].map(key => [key, test.local()[keyOf(key, id)]]),
+    );
+    await test.api.storage.local.remove([connectionsKey, ...Object.keys(test.local()).filter(key => key.includes(id))]);
+    await test.api.storage.local.set(flat);
+    await test.api.storage.session.set({ [recordKey]: test.session()[keyOf(recordKey, id)] });
+    test.alarms.clear();
+    test.alarms.set(syncAlarm, { periodInMinutes: 1 });
+    const tabs = test.api.tabs.create.mock.calls.length;
+    const updated = test.restart();
+    expect(await updated.handle({ type: 'status' })).toMatchObject({
+      settings: { connected: true, sites: ['capture.test'] },
+      account: { state: 'syncing', email: 'a@example.test' },
+      capture: { state: 'complete' },
+      connections: [{ origin, settings: { sites: ['capture.test'] } }],
+    });
+    const moved = test.first();
+    expect(test.entries()).toEqual([{ id: moved, origin }]);
+    for (const key of Object.keys(flat)) expect(test.local()).not.toHaveProperty(key);
+    expect(test.local()[keyOf(tokensKey, moved)]).toEqual(flat[tokensKey]);
+    expect(test.session()).not.toHaveProperty(recordKey);
+    expect([...test.alarms.keys()]).toEqual([alarmOf(moved)]);
+    // Opening the popup names it, and it syncs with the tokens it had.
+    expect(await updated.handle({ type: 'check' })).toMatchObject({
+      connections: [{ id: moved, organization: { id: 'org-a', name: 'Acme' } }],
+    });
+    test.getAll.mockResolvedValue([{ ...cookie, value: 'changed' }]);
+    expect(await updated.alarmFired(alarmOf(moved))).toMatchObject({ sync: { state: 'synced' } });
+    expect(test.api.tabs.create).toHaveBeenCalledTimes(tabs);
+    // Restarting again moves nothing.
+    expect(await test.restart().handle({ type: 'status' })).toMatchObject({ connection: moved });
+    expect(test.entries()).toHaveLength(1);
+  });
+  it('connects an organization already connected again in place, keeping its settings', async () => {
+    const test = setup();
+    const a = await connectAnother(test);
+    await add(test, a, ['capture.test']);
+    const tokens = test.local()[keyOf(tokensKey, a)];
+    expect(await connectAnother(test)).toBe(a);
+    expect(test.entries()).toHaveLength(1);
+    expect(test.local()[keyOf(tokensKey, a)]).not.toEqual(tokens);
+    expect(await test.controller.handle({ type: 'status' })).toMatchObject({
+      settings: { connected: true, sites: ['capture.test'] },
+      account: { state: 'syncing' },
+    });
+    // Reconnecting a connection whose tokens ended lands in the organization the person acts in now.
+    test.revokeFamily();
+    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ account: { state: 'reconnect' } });
+    test.acting['user-a'] = 'org-b';
+    await test.controller.handle({ type: 'reconnect', connection: a });
+    await test.authorize();
+    await test.drain();
+    expect(test.entries().map(entry => entry.organization?.id)).toEqual(['org-a', 'org-b']);
+    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
+      account: { state: 'reconnect' },
+    });
   });
 });

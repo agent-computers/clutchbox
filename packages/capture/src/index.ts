@@ -304,6 +304,8 @@ export const syncResponseSchema = z.object({
   config: z.unknown().optional(),
   latestVersion: z.string().max(32).optional(),
 });
+// The connection a request acts on, by the extension's own ID for it; without one, the first connection.
+const connection = z.string().min(1).max(64).optional();
 export const requestSchema = z.discriminatedUnion('type', [
   // `check` fetches the account's settings. `reconnect` starts a connect flow for a connection whose tokens ended,
   // without the disclosure. `narrow` leaves all sites for added sites, keeping the connection. `update` asks Chrome for
@@ -322,14 +324,27 @@ export const requestSchema = z.discriminatedUnion('type', [
         'narrow',
         'update',
       ]),
+      connection,
     })
     .strict(),
-  z.object({ type: z.literal('connect'), mode: captureModeSchema }).strict(),
+  // `another` connects the organization the person acts in on the server's website, adding a connection unless that
+  // organization is already connected, rather than connecting the given or first connection again.
+  z
+    .object({ type: z.literal('connect'), mode: captureModeSchema, connection, another: z.literal(true).optional() })
+    .strict(),
   // A click that needs Chrome's permission prompt: `prepare` records what it is for, and `finish` does it once
   // granted, from the popup or from the permission event if the prompt closed the popup.
-  z.object({ type: z.literal('prepare'), connect: captureModeSchema.optional(), sites: sitesSchema }).strict(),
+  z
+    .object({
+      type: z.literal('prepare'),
+      connect: captureModeSchema.optional(),
+      sites: sitesSchema,
+      connection,
+      another: z.literal(true).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('finish') }).strict(),
-  z.object({ type: z.literal('sites'), sites: sitesSchema }).strict(),
+  z.object({ type: z.literal('sites'), sites: sitesSchema, connection }).strict(),
   // The redirect page's address, which carries the authorization code (connected.html only).
   z.object({ type: z.literal('exchange'), url: z.string().max(4096) }).strict(),
 ]);
@@ -388,16 +403,37 @@ export function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
-// GET /api/v1/me success body, as the extension reads it.
-export const meSchema = z.object({ user: z.object({ id: z.string().min(1), email: z.string() }) });
+// GET /api/v1/me success body, as the extension reads it. `organization` is the one the token acts in, which servers
+// from before organizations leave out; the extension names a connection by it.
+export const organizationSchema = z.object({ id: z.string().min(1).max(64), name: z.string().max(100) });
+export type Organization = z.infer<typeof organizationSchema>;
+export const meSchema = z.object({
+  user: z.object({ id: z.string().min(1), email: z.string() }),
+  organization: organizationSchema.nullish().catch(undefined),
+});
 // The account this browser syncs to. `reconnect`: connected, but its tokens ended (disconnected, unused for 30 days,
 // or updated from a build that synced with the web sign-in), so sync waits for Reconnect.
 export type AccountState =
   | { state: 'none' }
   | { state: 'syncing'; email: string }
   | { state: 'reconnect'; email?: string };
+// One connection in the list the popup and the setup tab show: an organization on one server.
+export interface ConnectionSummary {
+  id: string;
+  origin: string;
+  // As the server last named it; unknown until it does.
+  organization?: Organization;
+  account: AccountState;
+  settings: CaptureSettings;
+}
+// The status of one connection, with the list of every connection. Without any connection, `connection` is absent and
+// the rest is a new connection's.
 export interface StatusResponse {
   ok: true;
+  connection?: string;
+  // The connection's server origin, or the build's for a new one.
+  origin: string;
+  connections: ConnectionSummary[];
   capture: CaptureStatus;
   sync: SyncStatus;
   settings: CaptureSettings;
@@ -437,6 +473,7 @@ export type Response =
 export interface ExchangeResponse {
   ok: true;
   email: string;
+  organization?: string;
   // The tab the connect click came from, to return to.
   opener?: number;
 }
