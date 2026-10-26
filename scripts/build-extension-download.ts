@@ -19,7 +19,7 @@ import { serverOriginOf } from '../apps/extension/src/origin';
 const root = path.join(import.meta.dirname, '..');
 const extensionDir = path.join(root, 'apps/extension');
 const checkExtension = path.join(import.meta.dirname, 'check-extension.ts');
-const releases = 'https://github.com/agent-computers/clutchbox/releases';
+const releases = 'https://github.com/clutchbox-hq/clutchbox/releases';
 
 const { values } = parseArgs({
   options: { out: { type: 'string' }, record: { type: 'string' }, 'release-origin': { type: 'string' } },

@@ -4,7 +4,7 @@ Agent Computers handles session cookies, which can sign in as you. We take repor
 
 ## Reporting a vulnerability
 
-Report privately through [GitHub Security Advisories](https://github.com/agent-computers/clutchbox/security/advisories/new). Please don't open a public issue. Include what you found, how to reproduce it, and its impact. We'll confirm we received it, keep you updated as we fix it, and agree a disclosure date with you.
+Report privately through [GitHub Security Advisories](https://github.com/clutchbox-hq/clutchbox/security/advisories/new). Please don't open a public issue. Include what you found, how to reproduce it, and its impact. We'll confirm we received it, keep you updated as we fix it, and agree a disclosure date with you.
 
 In scope: this repository's extension, capture format, apply runtime, adapters, and web app (`apps/web` and its packages `web`, `server`, and `api`), the Docker image and compose file, and the hosted service at agent-computers.com. Out of scope: findings that need a compromised device or browser profile, and social engineering.
 

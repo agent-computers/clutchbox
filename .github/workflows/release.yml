@@ -70,7 +70,7 @@ jobs:
           gh release create "v$VERSION" "agent-computers-$VERSION-chrome.zip" "agent-computers-$VERSION-chrome-manual.zip" \
             -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "Extension $VERSION" --generate-notes \
-            --notes "The Chrome extension's Chrome Web Store build, made by CI from this commit. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi); this zip is what the store gets, for [checking its package against the source](https://github.com/agent-computers/clutchbox/blob/v$VERSION/apps/extension/README.md#verify-the-store-build). The \`-manual\` zip is the build agent-computers.com offers for loading unpacked, which can also sync every site."
+            --notes "The Chrome extension's Chrome Web Store build, made by CI from this commit. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi); this zip is what the store gets, for [checking its package against the source](https://github.com/clutchbox-hq/clutchbox/blob/v$VERSION/apps/extension/README.md#verify-the-store-build). The \`-manual\` zip is the build agent-computers.com offers for loading unpacked, which can also sync every site."
 
   # Signs in to Google with this run's GitHub identity (Workload Identity Federation), so no key is stored here. The
   # chrome-web-store environment allows only main, and the pool accepts only this workflow on main.

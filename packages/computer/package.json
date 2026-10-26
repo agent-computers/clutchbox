@@ -10,11 +10,11 @@
     "cdp"
   ],
   "homepage": "https://www.agent-computers.com",
-  "bugs": "https://github.com/agent-computers/clutchbox/issues",
+  "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
   "author": "Agent Computers",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agent-computers/clutchbox.git",
+    "url": "git+https://github.com/clutchbox-hq/clutchbox.git",
     "directory": "packages/computer"
   },
   "private": true,
