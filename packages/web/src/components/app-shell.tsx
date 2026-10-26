@@ -1,4 +1,5 @@
 'use client';
+import { buttonVariants } from '@agent-computers/ui/components/button';
 import {
   Sidebar,
   SidebarContent,
@@ -32,9 +33,20 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, type MouseEvent, type ReactNode, type RefObject, useContext, useEffect, useRef } from 'react';
 import { shellIcons, useShell } from '../deployment';
-import { api, browsersQuery, computerQuery, grantsQuery, type SetupView, setupQuery, syncQuery } from '../lib/api';
+import {
+  api,
+  browsersQuery,
+  computerQuery,
+  grantsQuery,
+  repoStarsQuery,
+  type SetupView,
+  setupQuery,
+  syncQuery,
+} from '../lib/api';
 import { computerStatus } from '../lib/computer';
+import { formatStars } from '../lib/github';
 import { UserButton } from './auth/user-button';
+import { GitHubMark } from './github-mark';
 import { OrganizationSwitcher } from './organization-switcher';
 
 export type AppUser = { id: string; name: string; email: string; image?: string | null };
@@ -175,14 +187,17 @@ function AppSidebar({
   return (
     <Sidebar>
       <SidebarHeader className="gap-4 px-4 pt-6 pb-4">
-        <Link
-          href={home}
-          onClick={follow(home)}
-          className="font-serif text-lg font-medium italic"
-          aria-label="Clutchbox home page"
-        >
-          clutchbox
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <Link
+            href={home}
+            onClick={follow(home)}
+            className="font-serif text-lg font-medium italic"
+            aria-label="Clutchbox home page"
+          >
+            clutchbox
+          </Link>
+          {shell.githubRepo && <StarLink repo={shell.githubRepo} />}
+        </div>
         <OrganizationSwitcher
           onCreate={() => {
             setOpenMobile(false);
@@ -239,6 +254,26 @@ function AppSidebar({
         )}
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+// Asks for a star on the deployment's repository, with the count once GitHub answers.
+function StarLink({ repo }: { repo: string }) {
+  const { data: stars } = useQuery(repoStarsQuery(repo));
+  return (
+    <a
+      className={buttonVariants({ variant: 'outline', size: 'sm' })}
+      href={`https://github.com/${repo}`}
+      target="_blank"
+      rel="noopener"
+      aria-label={stars === undefined ? 'Star on GitHub' : `Star on GitHub, ${formatStars(stars)} stars`}
+    >
+      <GitHubMark />
+      Star
+      {stars !== undefined && (
+        <span className="border-l pl-1.5 font-normal text-muted-foreground tabular-nums">{formatStars(stars)}</span>
+      )}
+    </a>
   );
 }
 

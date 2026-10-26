@@ -20,6 +20,9 @@ export type ShellExtras = {
   sectionPages?: Record<string, string>;
   // The extension's store listing. Without it, the app offers only the manual build.
   chromeWebStoreUrl?: string;
+  // A GitHub repository as owner/name, such as 'clutchbox-hq/clutchbox'. With it, the sidebar asks for a star beside
+  // the wordmark, with the live count.
+  githubRepo?: string;
 };
 
 // A deployment's web app: its analytics, rendered on every page, and its shell extras.
