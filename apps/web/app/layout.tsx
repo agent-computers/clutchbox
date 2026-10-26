@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
   title: 'Clutchbox',
   description:
-    'Your agents, already signed in. Sync your browser sign-ins to your agents’ browsers, so they never need your password.',
+    'Your agents, already signed in. Sync your sign-ins to where your agents run.',
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
