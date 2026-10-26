@@ -963,7 +963,7 @@ describe('whole-browser authorization and lifecycle', () => {
   });
 });
 
-describe('sync to the agent computer', () => {
+describe('sync to the server', () => {
   it('uploads a changed capture with the bearer token and no cookies, and records only metadata', async () => {
     const test = setup();
     await test.connect();

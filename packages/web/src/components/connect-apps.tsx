@@ -82,7 +82,7 @@ export function ConnectApps() {
             required
             value={uris}
             onChange={event => setUris(event.target.value)}
-            placeholder="https://app.example.com/auth/agent-computers/callback"
+            placeholder="https://app.example.com/auth/clutchbox/callback"
           />
           <div>
             <Button type="submit" disabled={create.isPending || !name.trim() || !uris.trim()}>

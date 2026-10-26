@@ -243,4 +243,4 @@ export function BrowserSync({
   );
 }
 const description =
-  'Keeps your agent computer signed in to the sites you choose, from Chrome, Edge, Brave, or Arc. Nothing flows back to your browser.';
+  'Keeps your agents signed in to the sites you choose, from Chrome, Edge, Brave, or Arc. Nothing flows back to your browser.';

@@ -12,7 +12,7 @@ import { LiveViewPanel } from './live-view';
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 // The Computer page: status and usage, live view in place, and reset.
-export function AgentComputer() {
+export function YourComputer() {
   const { data: view, isError } = useQuery(computerQuery);
   return (
     <AppPage

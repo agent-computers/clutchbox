@@ -117,7 +117,7 @@ try {
   }
   await timed('actClick', () => session.act({ type: 'click', x: 640, y: 400, button: 'left', double: false }));
   await timed('actChord', () => session.act({ type: 'key', keys: ['ctrl', 'l'] }));
-  await timed('actType', () => session.act({ type: 'type', text: 'agent computers' }));
+  await timed('actType', () => session.act({ type: 'type', text: 'clutchbox' }));
   await timed('actKey', () => session.act({ type: 'key', keys: 'Escape' }));
   await timed('actScroll', () => session.act({ type: 'scroll', x: 640, y: 400, direction: 'down', amount: 3 }));
   await writeFile(join(out, 'computer-smoke.png'), await timed('screenshot', () => session.screenshot()));

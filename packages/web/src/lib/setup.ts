@@ -25,13 +25,13 @@ const prompts: { readonly [name: string]: string } = {
   Instacart: 'list my Instacart cart',
   OpenTable: 'list my upcoming OpenTable reservations',
 };
-const onComputer = (task: string) => `On my agent computer, ${task}.`;
+const withClutchbox = (task: string) => `Use Clutchbox to ${task}.`;
 export function promptsFor(sync: { mode: string | null; sites: string[] }) {
-  if (sync.mode === 'whole-browser') return Object.values(prompts).map(onComputer);
+  if (sync.mode === 'whole-browser') return Object.values(prompts).map(withClutchbox);
   const found = siteGroups(sync.sites).map(({ name }) =>
-    onComputer(prompts[name] ?? `open ${name} and tell me what's there`),
+    withClutchbox(prompts[name] ?? `open ${name} and tell me what's there`),
   );
-  return found.length ? found : [onComputer('tell me what you see on its screen')];
+  return found.length ? found : [withClutchbox("open my computer and tell me what's on its screen")];
 }
 
 // Browser sync runs in desktop Chromium browsers (Chrome, Edge, Brave, Arc, ...) on macOS, Windows, or Linux;

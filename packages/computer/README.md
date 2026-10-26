@@ -1,6 +1,6 @@
 # @agent-computers/computer
 
-The interface an agent computer provider implements, so agents and sync work the same on any provider.
+The interface a computer provider implements, so agents and sync work the same on any provider.
 
 - **`ComputerProvider`:** `create`, `find`, `connect` (resumes a paused computer), `pause`, `setTimeout`, and `kill`.
 - **`ComputerSession`:** `screenshot`, `act` (click, drag, scroll, type, key chords), `exec`, `cdp`, `closeTabs`, `downloadUrl`, `setTimeZone`, `syncCookies`, live view's `stream` and `setClipboard`, and `refresh`.

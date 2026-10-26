@@ -61,7 +61,7 @@ Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-co
 
 ### Self-hosted: the whole product for your organization
 
-[`apps/web`](apps/web) is the product the hosted service runs, for one organization: sign-in with Google, GitHub, your identity provider over OIDC, or email links, browser sync, an agent computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
+[`apps/web`](apps/web) is the product the hosted service runs, for one organization: sign-in with Google, GitHub, your identity provider over OIDC, or email links, browser sync, a computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
 
 You need Docker with Compose, Chrome, and an [E2B API key](https://e2b.dev/dashboard?tab=keys). Computers start from the template we publish on E2B, so there is nothing to build there.
 
@@ -137,7 +137,7 @@ To link your own users to members, register your app under **Connect apps** on t
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
-| [`packages/computer`](packages/computer) | The interface an agent computer provider implements: create, pause, resume, screenshot, act, exec, and CDP. |
+| [`packages/computer`](packages/computer) | The interface a computer provider implements: create, pause, resume, screenshot, act, exec, and CDP. |
 | [`packages/e2b`](packages/e2b) | Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
 | [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres with its migrations. |

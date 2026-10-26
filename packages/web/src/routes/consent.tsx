@@ -16,7 +16,7 @@ const scopeMetadata: OAuthScopeMetadataMap = {
   profile: { label: 'Read your basic account profile' },
   offline_access: { label: 'Stay connected until access expires or you disconnect' },
   'mcp:tools': {
-    label: 'Fully control your agent computer',
+    label: 'Fully control your Clutchbox computer',
     description:
       'See the screen, click, type, run commands, and act as you on every site signed in there. Only one agent controls it at a time.',
   },

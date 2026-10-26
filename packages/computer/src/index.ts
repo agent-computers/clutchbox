@@ -1,7 +1,7 @@
 import type { CdpCookieParam } from '@agent-computers/apply';
 import { z } from 'zod';
 
-// What an agent computer offers, whatever runs it: a provider creates, resumes, and pauses computers, and a session
+// What a computer offers, whatever runs it: a provider creates, resumes, and pauses computers, and a session
 // controls one. Adapters implement these for a sandbox provider (packages/e2b).
 // The desktop's size; screenshots and actions use its coordinates.
 export const DISPLAY = { width: 1280, height: 800 };

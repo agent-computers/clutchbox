@@ -30,7 +30,7 @@ import {
   XDOTOOL_MS,
 } from './timing';
 
-// Agent computers on E2B: a desktop sandbox from a template with Chrome running, controlled with xdotool, CDP, and
+// Computers on E2B: a desktop sandbox from a template with Chrome running, controlled with xdotool, CDP, and
 // commands. Helpers are baked into the template (TEMPLATE, built with HELPERS and START_DESKTOP) and kept current on
 // older computers by refresh.
 export const HELPER_DIR = '/opt/agent-computers';
