@@ -8,6 +8,7 @@ const PREFIXES = {
   browser: 'brw',
   organization: 'org',
   membership: 'mem',
+  invitation: 'inv',
 } as const;
 export type PublicIdKind = keyof typeof PREFIXES;
 const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';

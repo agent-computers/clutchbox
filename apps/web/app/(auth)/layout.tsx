@@ -1,4 +1,4 @@
-// Sign-in and consent: a plain page with the wordmark, outside the signed-in app's shell.
+// Sign-in, consent, and joining: a plain page with the wordmark, outside the signed-in app's shell.
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-svh flex-col">

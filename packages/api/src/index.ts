@@ -38,7 +38,26 @@ import { heartbeat, heartbeatSchema } from '@agent-computers/server/heartbeat';
 import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
 import { logError } from '@agent-computers/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@agent-computers/server/mcp';
+import {
+  acceptInvitation,
+  changeRole,
+  createInvitation,
+  INVITATION_ID_PATTERN,
+  joinableOrganizations,
+  joinByDomain,
+  leaveOrganization,
+  listInvitations,
+  MAX_JOIN_DOMAINS,
+  MEMBERSHIP_ID_PATTERN,
+  type MembersFailure,
+  ORGANIZATION_ID_PATTERN,
+  organizationView,
+  removeMember,
+  revokeInvitation,
+  setJoinDomains,
+} from '@agent-computers/server/members';
 import { currentMember } from '@agent-computers/server/organizations';
+import { MEMBER_ROLES } from '@agent-computers/server/schema';
 import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
 import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
 import { deleteToolCalls } from '@agent-computers/server/tool-calls';
@@ -79,6 +98,17 @@ function computerFailure(c: Context<Env>, { error, message, resetsAt }: Computer
   );
 }
 
+// What each refusal of members.ts answers.
+const MEMBERS_FAILURE_STATUS = {
+  forbidden: 403,
+  not_found: 404,
+  last_owner: 409,
+  already_member: 409,
+  invitation_invalid: 404,
+  invalid_domain: 400,
+  public_email_domain: 400,
+} as const;
+
 export function createApi({
   db,
   auth,
@@ -103,12 +133,11 @@ export function createApi({
   const { metering, operatorAdmin } = hooks;
   const running = { provider: computers, metering };
   // The member a request acts as: a sync token's browser's, or for app auth the person's current one (organizations.ts).
-  // An account the tenancy has not placed yet has none until the next migration run places it: the request fails like
-  // any unavailable service.
+  // A person in no organization here yet gets not_a_member, which our web app answers with its join page.
   const memberOf = async (c: Context<Env>) => {
     const principal = c.get('principal');
     const member = principal.member ?? (await currentMember(db, principal.id));
-    if (!member) throw new Error('account has no membership');
+    if (!member) throw new HTTPException(403, { res: Response.json({ error: 'not_a_member' }, { status: 403 }) });
     return member;
   };
   // The Agent Computers site is never synced or added.
@@ -183,6 +212,73 @@ export function createApi({
   app.post('/setup/notice/close', async c => {
     await closeSetupNotice(db, await memberOf(c));
     return c.json({ closed: true });
+  });
+  // Members and roles (members.ts, which checks who may do what). Any member sees the organization and who is in it;
+  // owners and admins invite, remove, change roles, and set the join domains.
+  const answer = (c: Context<Env>, result: object, status: 200 | 201 = 200) => {
+    const { error } = result as { error?: MembersFailure['error'] };
+    return error ? c.json({ error }, MEMBERS_FAILURE_STATUS[error]) : c.json(result, status);
+  };
+  const body = async <T extends z.ZodType>(c: Context<Env>, schema: T) =>
+    schema.safeParse(await c.req.json().catch(() => null));
+  const role = z.enum(MEMBER_ROLES);
+  app.get('/organization', async c => {
+    const view = await organizationView(db, await memberOf(c));
+    return view ? c.json(view) : c.json({ error: 'not_a_member' }, 403);
+  });
+  app.get('/organization/invitations', async c => {
+    return answer(c, await listInvitations(db, await memberOf(c)));
+  });
+  // The link is shown once: only its hash is kept.
+  app.post('/organization/invitations', async c => {
+    const parsed = await body(c, z.object({ role }).strict());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const result = await createInvitation(db, await memberOf(c), parsed.data.role);
+    if (!('token' in result)) return answer(c, result);
+    const { token, ...invitation } = result;
+    return answer(c, { invitation: { ...invitation, url: `${origin}/join/${token}` } }, 201);
+  });
+  app.delete('/organization/invitations/:id', async c => {
+    const id = c.req.param('id');
+    if (!INVITATION_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await revokeInvitation(db, await memberOf(c), id));
+  });
+  app.put('/organization/join-domains', async c => {
+    const parsed = await body(
+      c,
+      z.object({ domains: z.array(z.string().min(1).max(253)).max(MAX_JOIN_DOMAINS) }).strict(),
+    );
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await setJoinDomains(db, await memberOf(c), parsed.data.domains));
+  });
+  app.patch('/organization/members/:id', async c => {
+    const id = c.req.param('id');
+    const parsed = await body(c, z.object({ role }).strict());
+    if (!MEMBERSHIP_ID_PATTERN.test(id) || !parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await changeRole(db, await memberOf(c), id, parsed.data.role));
+  });
+  // Removing or leaving deletes everything the member had in the organization, its computer included.
+  app.delete('/organization/members/:id', async c => {
+    const id = c.req.param('id');
+    if (!MEMBERSHIP_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await removeMember(db, computers, await memberOf(c), id));
+  });
+  app.post('/organization/leave', async c => {
+    return answer(c, await leaveOrganization(db, computers, await memberOf(c)));
+  });
+  // Joining, for anyone signed in, in an organization here or not.
+  app.post('/invitations/accept', async c => {
+    const parsed = await body(c, z.object({ token: z.string().min(1).max(100) }).strict());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await acceptInvitation(db, c.get('principal'), parsed.data.token));
+  });
+  app.get('/organizations/joinable', async c =>
+    c.json({ organizations: await joinableOrganizations(db, c.get('principal')) }),
+  );
+  app.post('/organizations/join', async c => {
+    const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId));
   });
   // The browser's time zone, which the user's computer follows from its next open.
   app.put('/time-zone', async c => {

@@ -32,7 +32,8 @@ import {
   revokeMcpGrant,
   revokeMcpGrants,
 } from '../../server/src/mcp';
-import { createOrganization, currentMember, singleOrganization } from '../../server/src/organizations';
+import { inTheOrganization } from '../../server/src/member-fixtures';
+import { createOrganization, currentMember } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { createMcpEndpoint } from './mcp';
@@ -55,7 +56,7 @@ async function identity(id: string) {
   const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
   await db.insert(schema.user).values({ ...person, emailVerified: true });
   // Into the deployment's organization, as sign-up does.
-  await db.transaction(tx => singleOrganization.join(tx, person));
+  await inTheOrganization(db, person);
   const token = randomBytes(32).toString('base64url');
   const sessionId = randomUUID();
   await db

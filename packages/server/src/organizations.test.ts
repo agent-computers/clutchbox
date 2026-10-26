@@ -67,16 +67,16 @@ const membershipsOf = (userId: string) =>
     .where(eq(schema.memberships.userId, userId))
     .orderBy(asc(schema.memberships.id));
 describe('backfill for accounts made before organizations', () => {
-  it('puts everyone in one organization, owned by the oldest account', async () => {
+  it('makes the oldest account the owner of the one organization, and leaves the rest to join', async () => {
     for (const id of ['first', 'second', 'third']) await person(id);
     expect(await backfillMemberships(db, singleOrganization)).toBe(3);
     const [owner] = await membershipsOf('first');
     expect(owner).toMatchObject({ role: 'owner', personalUserId: null, name: 'acme.test' });
-    for (const id of ['second', 'third'])
-      expect(await membershipsOf(id)).toEqual([
-        expect.objectContaining({ role: 'member', organizationId: owner!.organizationId }),
-      ]);
+    for (const id of ['second', 'third']) expect(await membershipsOf(id)).toEqual([]);
     expect(await db.select().from(schema.organizations)).toHaveLength(1);
+    // Each run hands them over again, and they stay out until they join.
+    expect(await backfillMemberships(db, singleOrganization)).toBe(2);
+    expect(await db.select().from(schema.memberships)).toHaveLength(1);
   });
 
   it('gives everyone a personal organization they own under a personal tenancy', async () => {
@@ -115,14 +115,12 @@ describe('sign-up', () => {
     );
   }
 
-  it('joins the single organization by default: the first person owns it, later ones are members', async () => {
+  it('makes the first person the owner of the single organization by default, and nobody else a member', async () => {
     await signUp(undefined, 'first');
     await signUp(undefined, 'second');
     const [owner] = await membershipsOf('first');
     expect(owner).toMatchObject({ role: 'owner', personalUserId: null });
-    expect(await membershipsOf('second')).toEqual([
-      expect.objectContaining({ role: 'member', organizationId: owner!.organizationId }),
-    ]);
+    expect(await membershipsOf('second')).toEqual([]);
   });
 
   it('creates a personal organization under a personal tenancy', async () => {

@@ -1,6 +1,7 @@
+import { asc, isNull } from 'drizzle-orm';
 import type { Database } from './database';
 import { newPublicId } from './ids';
-import { createOrganization, type Member } from './organizations';
+import { createOrganization, type Member, type Person, singleOrganization } from './organizations';
 import * as schema from './schema';
 
 // People and memberships for tests only.
@@ -23,4 +24,16 @@ export async function membership(db: Database, userId: string, organizationId: n
     })
     .returning();
   return { userId, membershipId: row!.id, organizationId: row!.organizationId };
+}
+// Puts a person in the deployment's one organization, as sign-up does for its first person and an invitation for the
+// rest (organizations.ts, singleOrganization).
+export async function inTheOrganization(db: Database, person: Person) {
+  await db.transaction(tx => singleOrganization.join(tx, person));
+  const [organization] = await db
+    .select({ id: schema.organizations.id })
+    .from(schema.organizations)
+    .where(isNull(schema.organizations.personalUserId))
+    .orderBy(asc(schema.organizations.id))
+    .limit(1);
+  return membership(db, person.id, organization!.id);
 }

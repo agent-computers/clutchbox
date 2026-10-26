@@ -41,7 +41,7 @@ export function ProviderButton({
   // With a label, a signed-in visitor gets a link with it to where sign-in would have led, instead of sign-in.
   // The page renders signed out, then checks the session in the browser, so static pages stay static.
   signedIn?: string;
-  callbackURL?: string;
+  callbackURL?: string | undefined;
   className?: string | undefined;
 }) {
   const { authClient, baseURL, redirectTo, localization } = useAuth();

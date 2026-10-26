@@ -127,6 +127,13 @@
       "when": 1792985000759,
       "tag": "0017_drop_sync_user_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792985966174,
+      "tag": "0018_members_and_invitations",
+      "breakpoints": true
     }
   ]
 }

@@ -33,6 +33,7 @@
     "./rfb-filter": "./src/rfb-filter.ts",
     "./live-view-relay": "./src/live-view-relay.ts",
     "./hooks": "./src/hooks.ts",
+    "./members": "./src/members.ts",
     "./organizations": "./src/organizations.ts",
     "./migrator": "./src/migrator.ts",
     "./migrate": "./src/migrate.ts",

@@ -314,11 +314,12 @@ export function createAuth(
           page: `${config.BETTER_AUTH_URL}/consent`,
           shouldRedirect: () => false,
           consentReferenceId: async ({ user, scopes }) => {
-            if (scopes.includes(SYNC_SCOPE)) return undefined;
+            // Neither agents nor browsers connect for a person in no organization here: they would have nothing to
+            // act in or sync to. They join by invitation or email domain (members.ts) and connect again.
             const membership = await consentMembership(db, user.id);
-            // An account the tenancy has not placed yet has none until the next migration run places it.
-            if (!membership) throw oauthError('temporarily_unavailable', 'the account is not in an organization yet');
-            return membership;
+            if (!membership)
+              throw oauthError('access_denied', 'the account is not a member of an organization on this server');
+            return scopes.includes(SYNC_SCOPE) ? undefined : membership;
           },
         },
         customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),

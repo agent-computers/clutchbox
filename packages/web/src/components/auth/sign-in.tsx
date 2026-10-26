@@ -26,7 +26,16 @@ const failures: Record<string, string> = {
   INVALID_TOKEN: 'That sign-in link has expired or was already used. Request a new one.',
 };
 
-export function SignIn({ methods, error }: { methods: SignInMethods; error: string | undefined }) {
+// redirectTo replaces the app as where signing in lands, for an invitation link opened while signed out.
+export function SignIn({
+  methods,
+  error,
+  redirectTo,
+}: {
+  methods: SignInMethods;
+  error: string | undefined;
+  redirectTo?: string | undefined;
+}) {
   const { localization } = useAuth();
   return (
     <Card className="w-full max-w-sm">
@@ -48,13 +57,14 @@ export function SignIn({ methods, error }: { methods: SignInMethods; error: stri
               <ProviderButton
                 key={getProviderId(provider)}
                 provider={typeof provider === 'string' ? provider : { ...provider, icon: <KeyRound /> }}
+                callbackURL={redirectTo}
                 className="w-full"
               />
             ))}
           </div>
         )}
         {methods.providers.length > 0 && methods.emailLink && <Separator />}
-        {methods.emailLink && <EmailLink />}
+        {methods.emailLink && <EmailLink redirectTo={redirectTo} />}
         <p className="text-sm text-muted-foreground">
           Signing in identifies your account. Connecting the browser extension is a separate step; signing in does not
           give us your browsing sessions.
@@ -64,8 +74,8 @@ export function SignIn({ methods, error }: { methods: SignInMethods; error: stri
   );
 }
 
-function EmailLink() {
-  const { authClient, redirectTo } = useAuth<MagicLinkAuthClient>();
+function EmailLink({ redirectTo }: { redirectTo: string | undefined }) {
+  const { authClient, redirectTo: app } = useAuth<MagicLinkAuthClient>();
   const send = useSignInMagicLink(authClient);
   const [email, setEmail] = useState('');
   const fieldId = useId();
@@ -86,7 +96,7 @@ function EmailLink() {
       onSubmit={event => {
         event.preventDefault();
         // Mid-connect, the server sends the link back here instead, to continue (ResumeSignIn).
-        send.mutate({ email, callbackURL: redirectTo, errorCallbackURL: '/sign-in' });
+        send.mutate({ email, callbackURL: redirectTo ?? app, errorCallbackURL: '/sign-in' });
       }}
     >
       <Label htmlFor={fieldId}>Email</Label>

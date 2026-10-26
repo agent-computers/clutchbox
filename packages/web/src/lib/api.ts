@@ -3,6 +3,7 @@ import type { AgentKind } from '@agent-computers/server/agents';
 import type { ConnectedBrowser } from '@agent-computers/server/browsers';
 import { HEARTBEAT_MS } from '@agent-computers/server/computer-timing';
 import type { LiveViewStatus } from '@agent-computers/server/computers';
+import type { Role } from '@agent-computers/server/members';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
@@ -39,9 +40,19 @@ export type Browser = Omit<ConnectedBrowser, 'connectedAt' | 'lastSyncedAt'> & {
 };
 // The account's browser sync settings; null until an extension adopts them.
 export type SyncView = { settings: SyncSettings | null; disconnected: boolean };
-export type { SyncChange };
+export type { Role, SyncChange };
+// The organization the app acts in, who is in it, and your role there.
+export type OrganizationView = {
+  organization: { id: string; name: string; personal: boolean; joinDomains: string[] };
+  role: Role;
+  members: { id: string; name: string; email: string; role: Role; joinedAt: string; you: boolean }[];
+};
+export type Invitation = { id: string; role: Role; createdAt: string; expiresAt: string; invitedBy: string | null };
+// An organization you may join because it allows your email address's domain.
+export type JoinableOrganization = { id: string; name: string };
 
-// Calls /api/v1 and throws the server's message, or a generic one, so callers can show error.message.
+// Calls /api/v1 and throws the server's message, or a generic one, so callers can show error.message. The error
+// carries the server's error code too, for callers that word it themselves.
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
     method,
@@ -51,6 +62,7 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
   if (!response.ok)
     throw new ApiError(
       response.status,
+      data.error,
       data.message ||
         (data.error === 'invalid_request'
           ? 'Enter a full web address, like https://mail.google.com.'
@@ -61,6 +73,7 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
 export class ApiError extends Error {
   constructor(
     readonly status: number,
+    readonly code: string | undefined,
     message: string,
   ) {
     super(message);
@@ -79,6 +92,20 @@ export type BrowsersView = { browsers: Browser[] };
 export const browsersQuery = queryOptions({
   queryKey: ['browsers'],
   queryFn: () => api<BrowsersView>('/browsers'),
+});
+export const organizationQuery = queryOptions({
+  queryKey: ['organization'],
+  queryFn: () => api<OrganizationView>('/organization'),
+});
+export const invitationsQuery = queryOptions({
+  queryKey: ['organization', 'invitations'],
+  queryFn: () => api<{ invitations: Invitation[] }>('/organization/invitations'),
+  select: data => data.invitations,
+});
+export const joinableQuery = queryOptions({
+  queryKey: ['organizations', 'joinable'],
+  queryFn: () => api<{ organizations: JoinableOrganization[] }>('/organizations/joinable'),
+  select: data => data.organizations,
 });
 
 // --- Heartbeat ---

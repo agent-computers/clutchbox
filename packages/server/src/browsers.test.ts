@@ -28,8 +28,8 @@ import { bundle, cookie } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
-import { membership } from './member-fixtures';
-import { createOrganization, currentMember, singleOrganization } from './organizations';
+import { inTheOrganization, membership } from './member-fixtures';
+import { createOrganization, currentMember } from './organizations';
 import * as schema from './schema';
 
 const origin = 'http://localhost:3097';
@@ -49,7 +49,7 @@ async function identity(id: string) {
   const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
   await db.insert(schema.user).values({ ...person, emailVerified: true });
   // Into the deployment's organization, as sign-up does.
-  await db.transaction(tx => singleOrganization.join(tx, person));
+  await inTheOrganization(db, person);
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)

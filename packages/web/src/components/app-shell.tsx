@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Settings,
   TriangleAlert,
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -62,7 +63,10 @@ const pages: { href: string; label: string; icon: typeof Bot; step?: Step }[] = 
   { href: '/app/agents', label: 'Agents', icon: Bot, step: 'agents' },
   { href: '/app/computer', label: 'Computer', icon: Monitor, step: 'computer' },
 ];
-const settingsPage = { href: '/app/settings', label: 'Settings', icon: Settings };
+const lowerPages = [
+  { href: '/app/organization', label: 'Organization', icon: Users },
+  { href: '/app/settings', label: 'Settings', icon: Settings },
+];
 
 const POLL_MS = 5000;
 
@@ -194,7 +198,7 @@ function AppSidebar({
                   badge && <span className="rounded-full px-1.5 text-xs font-normal ring-1 ring-border">{badge}</span>,
                 ),
               )}
-              {item(settingsPage)}
+              {lowerPages.map(page => item(page))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

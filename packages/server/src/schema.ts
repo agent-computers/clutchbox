@@ -125,7 +125,8 @@ const timeZoneName = (column: AnyPgColumn) => sql`${column} ~ '^[A-Za-z][A-Za-z0
 export const MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
 // An organization: the tenant whose members sync to it and whose agents use their computers (organizations.ts). A
 // personal organization records the person it was made for, so each person has at most one; a deployment that serves
-// one organization leaves it null.
+// one organization leaves it null. joinDomains: email domains whose people may join it themselves (members.ts),
+// lowercase.
 export const organizations = pgTable(
   'organizations',
   {
@@ -135,6 +136,7 @@ export const organizations = pgTable(
     personalUserId: text('personal_user_id')
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
+    joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
     ...timestamps(),
   },
   table => [check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`)],
@@ -159,6 +161,31 @@ export const memberships = pgTable(
     unique('memberships_organization_user_unique').on(table.organizationId, table.userId),
     index('memberships_user_idx').on(table.userId),
     check('memberships_role', oneOf(table.role, MEMBER_ROLES)),
+  ],
+);
+// An invitation link to join an organization with a role (members.ts): single use, until it expires or is revoked.
+// Only the token's SHA-256 is stored; the link carries the token.
+export const invitations = pgTable(
+  'invitations',
+  {
+    id: id(),
+    publicId: text('public_id').notNull().unique(),
+    organizationId: key('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: MEMBER_ROLES }).notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    // The membership that made it; kept as null once that member has left.
+    invitedBy: key('invited_by').references(() => memberships.id, { onDelete: 'set null' }),
+    expiresAt: time('expires_at').notNull(),
+    acceptedAt: time('accepted_at'),
+    revokedAt: time('revoked_at'),
+    ...timestamps(),
+  },
+  table => [
+    index('invitations_organization_idx').on(table.organizationId),
+    index('invitations_invited_by_idx').on(table.invitedBy),
+    check('invitations_role', oneOf(table.role, MEMBER_ROLES)),
   ],
 );
 // The membership a per-user row belongs to; see memberships.

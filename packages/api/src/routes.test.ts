@@ -16,8 +16,8 @@ import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { type MeteringRefusal, noMetering, noOperatorAdmin } from '../../server/src/hooks';
-import { membership } from '../../server/src/member-fixtures';
-import { createOrganization, currentMember, singleOrganization } from '../../server/src/organizations';
+import { inTheOrganization, membership } from '../../server/src/member-fixtures';
+import { createOrganization, currentMember } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { recordSetupStep, setupView } from '../../server/src/setup';
 import { createApi } from './index';
@@ -42,7 +42,7 @@ async function identity(id: string) {
   const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
   await db.insert(schema.user).values({ ...person, emailVerified: true });
   // Into the deployment's organization, as sign-up does.
-  await db.transaction(tx => singleOrganization.join(tx, person));
+  await inTheOrganization(db, person);
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)
