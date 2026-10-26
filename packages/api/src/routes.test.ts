@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { builtInVerifiedServers } from '@agent-computers/capture';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -87,14 +88,14 @@ const member = async (userId: string) => (await currentMember(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, { migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)) });
   await ensureExtensionClient(templateDb as unknown as Database, extension);
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  const embedded = drizzle(pg, { schema });
+  const embedded = drizzle(pg, { schema: databaseSchema });
   db = embedded as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
   auth = createAuth(db, config);

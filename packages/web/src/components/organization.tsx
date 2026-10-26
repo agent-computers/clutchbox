@@ -34,7 +34,7 @@ import {
   type ApiKey,
   api,
   apiKeysQuery,
-  type Invitation,
+  authResult,
   invitationsQuery,
   joinableQuery,
   type OrganizationView,
@@ -42,6 +42,7 @@ import {
   organizationsQuery,
   type Role,
 } from '../lib/api';
+import { authClient } from '../lib/auth-client';
 import { AppPage } from './app-shell';
 import { ConnectApps } from './connect-apps';
 import { CopyButton } from './copy-button';
@@ -68,9 +69,9 @@ export function Organization() {
       {data && (
         <>
           <Members view={data} />
-          {manages(data.role) && <Invitations role={data.role} />}
+          {manages(data.role) && <Invitations organizationId={data.organization.id} role={data.role} />}
           {manages(data.role) && <JoinDomains domains={data.organization.joinDomains} />}
-          {manages(data.role) && <ApiKeys />}
+          {manages(data.role) && <ApiKeys organizationId={data.organization.id} />}
           {manages(data.role) && <ConnectApps />}
           <OtherOrganizations />
           <NewOrganization />
@@ -89,7 +90,10 @@ function Members({ view }: { view: OrganizationView }) {
   const refresh = () => queryClient.invalidateQueries({ queryKey: organizationQuery.queryKey });
   const [removing, setRemoving] = useState<OrganizationView['members'][number] | null>(null);
   const changeRole = useMutation({
-    mutationFn: ({ id, role }: { id: string; role: Role }) => api(`/organization/members/${id}`, 'PATCH', { role }),
+    mutationFn: ({ id, role }: { id: string; role: Role }) =>
+      authResult(
+        authClient.organization.updateMemberRole({ memberId: id, role, organizationId: view.organization.id }),
+      ),
     onSettled: refresh,
   });
   const remove = useMutation({
@@ -190,87 +194,116 @@ function Members({ view }: { view: OrganizationView }) {
   );
 }
 
-function Invitations({ role }: { role: Role }) {
+// Invitations name one email address, and only an account with that address can accept. They are emailed when the
+// server sends email; the link works either way.
+function Invitations({ organizationId, role }: { organizationId: string; role: Role }) {
   const queryClient = useQueryClient();
-  const { data: invitations } = useQuery(invitationsQuery);
+  const query = invitationsQuery(organizationId);
+  const { data: invitations } = useQuery(query);
+  const fieldId = useId();
+  const [email, setEmail] = useState('');
   const [inviteAs, setInviteAs] = useState<Role>('member');
-  const refresh = () => queryClient.invalidateQueries({ queryKey: invitationsQuery.queryKey });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: query.queryKey });
   const create = useMutation({
     mutationFn: () =>
-      api<{ invitation: Invitation & { url: string } }>('/organization/invitations', 'POST', { role: inviteAs }),
+      authResult(authClient.organization.inviteMember({ email: email.trim(), role: inviteAs, organizationId })),
+    onSuccess: () => setEmail(''),
     onSettled: refresh,
   });
-  const revoke = useMutation({
-    mutationFn: (id: string) => api(`/organization/invitations/${id}`, 'DELETE'),
+  const cancel = useMutation({
+    mutationFn: (invitationId: string) => authResult(authClient.organization.cancelInvitation({ invitationId })),
     onSettled: refresh,
   });
-  const link = create.data?.invitation;
+  const linkOf = (id: string) => `${window.location.origin}/join/${id}`;
+  const sent = create.data;
   return (
     <Card>
       <CardHeader>
         <CardTitle>
-          <h2>Invite by link</h2>
+          <h2>Invite</h2>
         </CardTitle>
-        <CardDescription>Each link lets one person join, with the role you choose, within 7 days.</CardDescription>
+        <CardDescription>
+          Invite someone by email address, with the role you choose. Only someone signed in with that address can join,
+          within 7 days.
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <ToggleGroup
-            aria-label="Role"
-            variant="outline"
-            spacing={0}
-            value={[inviteAs]}
-            onValueChange={([next]) => next && setInviteAs(next as Role)}
-          >
-            {[...grantable(role)].reverse().map(each => (
-              <ToggleGroupItem key={each} value={each}>
-                {roleNames[each]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <Button disabled={create.isPending} onClick={() => create.mutate()}>
-            {create.isPending ? 'Creating…' : 'Create invitation link'}
-          </Button>
-        </div>
-        {link && (
+        <form
+          className="grid gap-3"
+          onSubmit={event => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <Label htmlFor={fieldId}>Email address</Label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              id={fieldId}
+              type="email"
+              required
+              placeholder="name@example.com"
+              value={email}
+              onChange={event => setEmail(event.target.value)}
+              className="min-w-60 flex-1"
+            />
+            <ToggleGroup
+              aria-label="Role"
+              variant="outline"
+              spacing={0}
+              value={[inviteAs]}
+              onValueChange={([next]) => next && setInviteAs(next as Role)}
+            >
+              {[...grantable(role)].reverse().map(each => (
+                <ToggleGroupItem key={each} value={each}>
+                  {roleNames[each]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <Button type="submit" disabled={create.isPending || !email.trim()}>
+              {create.isPending ? 'Inviting…' : 'Invite'}
+            </Button>
+          </div>
+        </form>
+        {sent && (
           <div className="grid gap-2">
-            <p className="text-sm text-soft">
-              Send this {roleNames[link.role].toLowerCase()} invitation to one person. It is shown only now.
-            </p>
+            <p className="text-sm text-soft">Invited {sent.email}. If they don't get an email, send them this link.</p>
             <div className="flex flex-wrap gap-3">
-              <Input readOnly aria-label="Invitation link" value={link.url} className="min-w-60 flex-1" />
-              <CopyButton text={link.url} label="Copy the invitation link" />
+              <Input readOnly aria-label="Invitation link" value={linkOf(sent.id)} className="min-w-60 flex-1" />
+              <CopyButton text={linkOf(sent.id)} label="Copy the invitation link" />
             </div>
           </div>
         )}
         <Failure error={create.error} />
         {!!invitations?.length && (
           <div className="grid gap-2">
-            <h3 className="text-sm font-medium">Waiting to be used</h3>
+            <h3 className="text-sm font-medium">Waiting to join</h3>
             <ul className="grid divide-y">
               {invitations.map(invitation => (
                 <li key={invitation.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
-                  <p className="text-sm">
-                    {roleNames[invitation.role]}
+                  <p className="min-w-0 truncate text-sm">
+                    {invitation.email}
                     <span className="text-muted-foreground">
-                      {invitation.invitedBy && ` · from ${invitation.invitedBy}`} · until{' '}
-                      {day.format(new Date(invitation.expiresAt))}
+                      {' '}
+                      · {roleNames[invitation.role]} · until {day.format(new Date(invitation.expiresAt))}
                     </span>
                   </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={revoke.isPending && revoke.variables === invitation.id}
-                    onClick={() => revoke.mutate(invitation.id)}
-                  >
-                    Revoke
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <CopyButton text={linkOf(invitation.id)} label={`Copy the link for ${invitation.email}`} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={cancel.isPending && cancel.variables === invitation.id}
+                      onClick={() => cancel.mutate(invitation.id)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
           </div>
         )}
-        <Failure error={revoke.error} />
+        <Failure error={cancel.error} />
       </CardContent>
     </Card>
   );
@@ -330,28 +363,25 @@ function JoinDomains({ domains }: { domains: string[] }) {
 
 // Keys for the organization's developers' servers, which read every member's latest capture over REST. The secret is
 // shown once, right after creating it.
-function ApiKeys() {
+function ApiKeys({ organizationId }: { organizationId: string }) {
   const queryClient = useQueryClient();
-  const { data: keys } = useQuery(apiKeysQuery);
+  const query = apiKeysQuery(organizationId);
+  const { data: keys } = useQuery(query);
   const fieldId = useId();
   const [name, setName] = useState('');
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: apiKeysQuery.queryKey });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: query.queryKey });
   const create = useMutation({
-    mutationFn: () =>
-      api<{ key: { id: string; name: string; secret: string } }>('/organization/api-keys', 'POST', {
-        name,
-        scopes: ['captures'],
-      }),
+    mutationFn: () => authResult(authClient.apiKey.create({ name: name.trim(), organizationId })),
     onSuccess: () => setName(''),
     onSettled: refresh,
   });
   const revoke = useMutation({
-    mutationFn: (id: string) => api(`/organization/api-keys/${id}`, 'DELETE'),
+    mutationFn: (keyId: string) => authResult(authClient.apiKey.delete({ keyId })),
     onSuccess: () => setRevoking(null),
     onSettled: refresh,
   });
-  const made = create.data?.key;
+  const made = create.data;
   return (
     <Card>
       <CardHeader>
@@ -393,8 +423,8 @@ function ApiKeys() {
               Copy the key for {made.name} now. It is shown only once; if you lose it, revoke it and create another.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Input readOnly aria-label="New API key" value={made.secret} className="min-w-60 flex-1 font-mono" />
-              <CopyButton text={made.secret} label="Copy the API key" />
+              <Input readOnly aria-label="New API key" value={made.key} className="min-w-60 flex-1 font-mono" />
+              <CopyButton text={made.key} label="Copy the API key" />
             </div>
           </div>
         )}
@@ -406,8 +436,8 @@ function ApiKeys() {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{key.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    {key.createdBy ? `From ${key.createdBy} · ` : ''}
-                    {key.lastUsedAt ? `last used ${day.format(new Date(key.lastUsedAt))}` : 'never used'}
+                    {key.start ? `${key.start}… · ` : ''}
+                    {key.lastRequest ? `last used ${day.format(new Date(key.lastRequest))}` : 'never used'}
                   </p>
                 </div>
                 <Button
@@ -476,7 +506,8 @@ function NewOrganization() {
   const field = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const create = useMutation({
-    mutationFn: () => api<{ organization: { id: string; name: string } }>('/organizations', 'POST', { name }),
+    // The plugin wants a slug; the server replaces it with its own (organization-auth.ts).
+    mutationFn: () => authResult(authClient.organization.create({ name: name.trim(), slug: crypto.randomUUID() })),
     onSuccess: async () => {
       setName('');
       await queryClient.invalidateQueries();

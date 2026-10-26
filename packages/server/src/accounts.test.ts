@@ -9,6 +9,7 @@ import { createApi } from '../../api/src/index';
 import { createAuth, getPrincipal } from './auth';
 import { readConfig, type ServerConfig } from './config';
 import { assertDatabaseEnvironment, type Database } from './database';
+import { databaseSchema } from './database-schema';
 import { fakeComputerProvider } from './fake-computer-provider';
 import * as schema from './schema';
 
@@ -46,12 +47,12 @@ function request(path: string, cookie?: string, method = 'GET', requestOrigin = 
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), { migrationsFolder });
+  await migrate(drizzle(template, { schema: databaseSchema }), { migrationsFolder });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  const embedded = drizzle(pg, { schema });
+  const embedded = drizzle(pg, { schema: databaseSchema });
   // Same Postgres SQL/schema; the production driver uses a network pool.
   db = embedded as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
@@ -67,7 +68,7 @@ describe('account boundary', () => {
   it('applies the checked-in migration repeatedly without changing existing accounts', async () => {
     await identity('first');
     const before = await db.select().from(schema.user);
-    await migrate(drizzle(pg, { schema }), { migrationsFolder });
+    await migrate(drizzle(pg, { schema: databaseSchema }), { migrationsFolder });
     expect(await db.select().from(schema.user)).toEqual(before);
   });
   it('renews an active session cookie through API calls', async () => {

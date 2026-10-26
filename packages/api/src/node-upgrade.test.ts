@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { type AddressInfo, connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -28,7 +29,7 @@ let pg: PGlite;
 let server: Server | undefined;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), {
+  await migrate(drizzle(template, { schema: databaseSchema }), {
     migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)),
   });
 });
@@ -44,7 +45,7 @@ afterEach(async () => {
 
 // Better Auth's handler, as the framework runs it: a Node request in, its Response written out.
 async function listen(options?: { trustProxy?: boolean }) {
-  const db = drizzle(pg, { schema }) as unknown as Database;
+  const db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
   const auth = createAuth(db, config);
   const listener = async (request: IncomingMessage, response: ServerResponse) => {

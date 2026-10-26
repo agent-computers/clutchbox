@@ -1,21 +1,21 @@
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAuth } from './auth';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import {
+  actIn,
   backfillMemberships,
   createOrganization,
-  createOrganizationFor,
   currentMember,
   organizationsOf,
   singleOrganization,
-  switchOrganization,
   type Tenancy,
 } from './organizations';
 import * as schema from './schema';
@@ -41,12 +41,12 @@ let pg: PGlite;
 let db: Database;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), { migrationsFolder });
+  await migrate(drizzle(template, { schema: databaseSchema }), { migrationsFolder });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
 });
 afterEach(() => pg.close());
 
@@ -72,7 +72,7 @@ const membershipsOf = (userId: string) =>
       name: schema.organizations.name,
     })
     .from(schema.memberships)
-    .innerJoin(schema.organizations, eq(schema.organizations.id, schema.memberships.organizationId))
+    .innerJoin(schema.organizations, eq(schema.organizations.publicId, schema.memberships.organizationId))
     .where(eq(schema.memberships.userId, userId))
     .orderBy(asc(schema.memberships.id));
 describe('backfill for accounts made before organizations', () => {
@@ -153,17 +153,34 @@ describe('a person in two organizations', () => {
 });
 
 describe('switching organizations', () => {
-  const publicIdOf = async (organizationId: number) =>
+  const membershipIn = async (userId: string, organizationId: string) =>
     (
       await db
-        .select({ publicId: schema.organizations.publicId })
-        .from(schema.organizations)
-        .where(eq(schema.organizations.id, organizationId))
-    )[0]!.publicId;
+        .select({ id: schema.memberships.id })
+        .from(schema.memberships)
+        .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.organizationId, organizationId)))
+    )[0]!.id;
+  const sessionsOf = async (userId: string) =>
+    (
+      await db
+        .select({ active: schema.session.activeOrganizationId })
+        .from(schema.session)
+        .where(eq(schema.session.userId, userId))
+    ).map(row => row.active);
+  const signedIn = (userId: string, token: string) =>
+    db.insert(schema.session).values({
+      id: token,
+      token,
+      userId,
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
 
-  it('acts in the organization last switched to, and in the oldest again once that membership is gone', async () => {
+  it("acts in the organization last switched to, in every session, and in the oldest again once it's gone", async () => {
     await person('first');
     await person('other');
+    await signedIn('first', 'laptop');
+    await signedIn('first', 'phone');
+    await signedIn('other', 'theirs');
     const first = { id: 'first', name: 'First', email: 'first@acme.test' };
     const home = (await db.transaction(tx => createOrganization(tx, { name: 'Home', owner: first, personal: true })))!;
     const team = (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner: first })))!;
@@ -171,35 +188,19 @@ describe('switching organizations', () => {
       createOrganization(tx, { name: 'Theirs', owner: { id: 'other', name: 'Other', email: 'other@acme.test' } }),
     ))!;
     expect((await currentMember(db, 'first'))?.organizationId).toBe(home);
-    expect(await switchOrganization(db, 'first', await publicIdOf(theirs))).toBe(false);
-    expect(await switchOrganization(db, 'first', 'org_unknown')).toBe(false);
-    expect(await switchOrganization(db, 'first', await publicIdOf(team))).toBe(true);
+    await actIn(db, 'first', await membershipIn('first', team));
     expect((await currentMember(db, 'first'))?.organizationId).toBe(team);
+    expect(await sessionsOf('first')).toEqual([team, team]);
     // The other person is unaffected.
     expect((await currentMember(db, 'other'))?.organizationId).toBe(theirs);
+    expect(await sessionsOf('other')).toEqual([null]);
     expect(
       (await organizationsOf(db, 'first')).map(({ name, personal, role, current }) => [name, personal, role, current]),
     ).toEqual([
       ['Home', true, 'owner', false],
       ['Team', false, 'owner', true],
     ]);
-    await db.delete(schema.organizations).where(eq(schema.organizations.id, team));
+    await db.delete(schema.organizations).where(eq(schema.organizations.publicId, team));
     expect((await currentMember(db, 'first'))?.organizationId).toBe(home);
-  });
-
-  it("creates through the tenancy's create and acts in the new organization, or makes nothing when it refuses", async () => {
-    await person('first');
-    const first = { id: 'first', name: 'First', email: 'first@acme.test' };
-    await db.transaction(tx => createOrganization(tx, { name: 'Home', owner: first, personal: true }));
-    const created = await createOrganizationFor(
-      db,
-      (tx, owner, name) => createOrganization(tx, { name, owner }),
-      first,
-      'Team',
-    );
-    expect(created).toEqual({ id: expect.stringMatching(/^org_/), name: 'Team' });
-    expect((await organizationsOf(db, 'first')).find(organization => organization.current)?.id).toBe(created!.id);
-    expect(await createOrganizationFor(db, async () => null, first, 'Refused')).toBeNull();
-    expect(await membershipsOf('first')).toHaveLength(2);
   });
 });

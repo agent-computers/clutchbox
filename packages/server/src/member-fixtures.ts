@@ -1,7 +1,7 @@
-import { asc, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { Database } from './database';
 import { newPublicId } from './ids';
-import { createOrganization, type Member, type Person, singleOrganization } from './organizations';
+import { actIn, createOrganization, type Member, type Person, singleOrganization } from './organizations';
 import * as schema from './schema';
 
 // People and memberships for tests only.
@@ -14,7 +14,7 @@ export async function person(db: Database, id: string): Promise<Member> {
   return membership(db, id, organizationId!);
 }
 // The person's membership in an organization: their existing one, or a new one as a member.
-export async function membership(db: Database, userId: string, organizationId: number): Promise<Member> {
+export async function membership(db: Database, userId: string, organizationId: string): Promise<Member> {
   const [row] = await db
     .insert(schema.memberships)
     .values({ publicId: newPublicId('membership'), organizationId, userId, role: 'member' })
@@ -30,10 +30,19 @@ export async function membership(db: Database, userId: string, organizationId: n
 export async function inTheOrganization(db: Database, person: Person) {
   await db.transaction(tx => singleOrganization.join(tx, person));
   const [organization] = await db
-    .select({ id: schema.organizations.id })
+    .select({ id: schema.organizations.publicId })
     .from(schema.organizations)
     .where(isNull(schema.organizations.personalUserId))
     .orderBy(asc(schema.organizations.id))
     .limit(1);
   return membership(db, person.id, organization!.id);
+}
+// Switches the person to their organization, as the organization plugin's set-active does (organization-auth.ts).
+export async function switchTo(db: Database, userId: string, organizationId: string) {
+  const [row] = await db
+    .select({ id: schema.memberships.id })
+    .from(schema.memberships)
+    .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.organizationId, organizationId)));
+  if (!row) throw new Error('not a member');
+  await actIn(db, userId, row.id);
 }

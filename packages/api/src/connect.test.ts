@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -11,8 +12,8 @@ import { ensureExtensionClient } from '../../server/src/browsers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
-import { membership } from '../../server/src/member-fixtures';
-import { createOrganization, switchOrganization } from '../../server/src/organizations';
+import { membership, switchTo } from '../../server/src/member-fixtures';
+import { createOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 
@@ -33,18 +34,18 @@ let template: PGlite;
 let pg: PGlite;
 let db: Database;
 let auth: ReturnType<typeof createAuth>;
-let appCo: number;
+let appCo: string;
 let ownerCookie: string;
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, { migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)) });
   await ensureExtensionClient(templateDb as unknown as Database, extension);
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   auth = createAuth(db, config);
   await auth.$context;
   vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
@@ -180,11 +181,9 @@ describe('Connect', () => {
     expect(joined!.role).toBe('member');
     expect(body).toMatchObject({ member: joined!.publicId, external_user_id: 'user-42' });
     // The app's server finds them with an organization API key.
-    const key = (
-      await (await request(ownerCookie, 'POST', '/organization/api-keys', { name: 'K', scopes: ['captures'] })).json()
-    ).key;
+    const { key } = await auth.api.createApiKey({ body: { name: 'K', organizationId: appCo, userId: 'dev' } });
     const listed = await api().request(`${origin}/api/v1/connections`, {
-      headers: { authorization: `Bearer ${key.secret}` },
+      headers: { authorization: `Bearer ${key}` },
     });
     expect((await listed.json()).connections).toEqual([
       { app: app.id, member: joined!.publicId, externalUserId: 'user-42', connectedAt: expect.any(String) },
@@ -266,7 +265,7 @@ describe('Connect', () => {
       .select({ publicId: schema.organizations.publicId })
       .from(schema.organizations)
       .where(eq(schema.organizations.name, 'Elsewhere'));
-    await switchOrganization(db, 'person', elsewhere!.publicId);
+    await switchTo(db, 'person', elsewhere!.publicId);
     const redirect = await consent(cookie, consentAt);
     expect((await exchange(app, redirect.searchParams.get('code')!, verifier)).status).toBe(400);
     expect(await db.select().from(schema.connections)).toEqual([]);

@@ -1,5 +1,5 @@
 import { getPrincipal } from '@agent-computers/server/auth';
-import { invitationView } from '@agent-computers/server/members';
+import type { Role } from '@agent-computers/server/members';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -22,19 +22,22 @@ export const joinPage = (getServices: GetServices) =>
     );
   };
 
-// /join/<token>: an invitation link. Signing in first comes back here.
+// /join/<invitation>: an invitation, for the address it names. Signing in first comes back here. Better Auth shows it
+// only to an account with that address, while it is pending.
 export const invitationPage = (getServices: GetServices) =>
-  async function Invitation({ params }: { params: Promise<{ token: string }> }) {
-    const { token } = await params;
-    const { auth, db } = await getServices();
-    const principal = await getPrincipal(auth, await headers());
-    if (!principal) redirect(`/sign-in?${new URLSearchParams({ next: `/join/${token}` })}`);
-    const invitation = await invitationView(db, token);
+  async function Invitation({ params }: { params: Promise<{ invitation: string }> }) {
+    const { invitation: id } = await params;
+    const { auth } = await getServices();
+    const requestHeaders = await headers();
+    const principal = await getPrincipal(auth, requestHeaders);
+    if (!principal) redirect(`/sign-in?${new URLSearchParams({ next: `/join/${id}` })}`);
+    const invitation = await auth.api.getInvitation({ headers: requestHeaders, query: { id } }).catch(() => null);
     return (
       <main id="main" className={page}>
         <AcceptInvitation
-          token={token}
-          invitation={invitation && { organization: invitation.organization, role: invitation.role }}
+          id={id}
+          email={principal.email}
+          invitation={invitation && { organization: invitation.organizationName, role: invitation.role as Role }}
         />
       </main>
     );

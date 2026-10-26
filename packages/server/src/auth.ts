@@ -2,13 +2,15 @@ import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { cimd } from '@better-auth/cimd';
 import { fetchClientMetadataResource } from '@better-auth/cimd/node';
+import { generateId } from '@better-auth/core/utils/id';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { mcp } from '@better-auth/mcp';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import { betterAuth } from 'better-auth';
-import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { genericOAuth, jwt, magicLink } from 'better-auth/plugins';
 import { sql } from 'drizzle-orm';
+import { authInvitation, authMember, authOrganization } from './auth-schema';
 import {
   ACCESS_TOKEN_SECONDS,
   EXTENSION_CLIENT_ID,
@@ -23,15 +25,43 @@ import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
 import { noOperatorAdmin, type OperatorAdmin } from './hooks';
+import { newPublicId } from './ids';
 import { type SendEmail, smtpSender } from './mail';
 import { consentMembership, MCP_SCOPES, MEMBERSHIP_CLAIM } from './mcp';
 import * as oauthSchema from './oauth-schema';
-import { singleOrganization, type Tenancy } from './organizations';
-import { account, rateLimit, session, user, verification } from './schema';
+import {
+  actInOrganization,
+  apiKeyLimitReached,
+  organizationDisabledPaths,
+  organizationPlugins,
+} from './organization-auth';
+import { activeOrganizationOf, singleOrganization, type Tenancy } from './organizations';
+import { account, apikey, rateLimit, session, user, verification } from './schema';
 
-// The auth adapter (and so an operator dashboard's generic adapter endpoint) reaches only
-// auth tables, never captures, computers, or operations.
-const authSchema = { user, session, account, verification, rateLimit, ...oauthSchema };
+// The auth adapter (and so an operator dashboard's generic adapter endpoint) reaches only auth tables, and the
+// organization plugin's fields of ours (auth-schema.ts), never captures, computers, or operations.
+const authSchema = {
+  user,
+  session,
+  account,
+  verification,
+  rateLimit,
+  ...oauthSchema,
+  apikey,
+  organization: authOrganization,
+  member: authMember,
+  invitation: authInvitation,
+};
+// Better Auth's IDs for organizations, members, invitations, and API keys are the rows' TypeIDs (ids.ts), which the
+// API and web app already use; everything else keeps its default random IDs.
+const PUBLIC_ID_KINDS = {
+  organization: 'organization',
+  member: 'membership',
+  invitation: 'invitation',
+  apikey: 'apiKey',
+} as const;
+const authId = ({ model }: { model: string }) =>
+  model in PUBLIC_ID_KINDS ? newPublicId(PUBLIC_ID_KINDS[model as keyof typeof PUBLIC_ID_KINDS]) : generateId();
 
 // An OAuth error answer, shaped like the provider's own.
 const oauthError = (error: string, description: string) =>
@@ -76,6 +106,11 @@ async function allowEmailLink(db: Database, email: string) {
 // cannot express per client (browsers.ts). User hooks run before the plugins' own.
 const requestGuards = (db: Database) =>
   createAuthMiddleware(async ctx => {
+    if (ctx.path === '/api-key/create') {
+      const organizationId = bodyField(ctx.body, 'organizationId');
+      if (organizationId && (await apiKeyLimitReached(db, organizationId)))
+        throw new APIError('CONFLICT', { code: 'api_key_limit', message: 'This organization has too many API keys.' });
+    }
     if (ctx.path === '/sign-in/magic-link') {
       const email = bodyField(ctx.body, 'email');
       if (email && !(await allowEmailLink(db, email)))
@@ -130,8 +165,16 @@ const requestGuards = (db: Database) =>
 
 // Records the browser as soon as it exchanges its code, so the account page can list and disconnect it before it
 // makes its first API request.
-const recordExtensionBrowser = (db: Database) =>
+// After a request: the extension's browser, when it connects; and the person's current organization, when they switch
+// through the organization plugin (set-active), so agents and the extension follow (organizations.ts, actIn).
+const afterRequests = (db: Database) =>
   createAuthMiddleware(async ctx => {
+    if (ctx.path === '/organization/set-active') {
+      const organizationId = bodyField(ctx.body, 'organizationId');
+      const current = organizationId && !(ctx.context.returned instanceof Error) && (await getSessionFromCtx(ctx));
+      if (current) await actInOrganization(db, current.user.id, organizationId);
+      return;
+    }
     if (ctx.path !== '/oauth2/token' || bodyField(ctx.body, 'grant_type') !== 'authorization_code') return;
     if (requestClientId(ctx.body, ctx.request?.headers) !== EXTENSION_CLIENT_ID) return;
     const accessToken = bodyField(ctx.context.returned, 'access_token');
@@ -175,7 +218,7 @@ export function createAuth(
     baseURL: config.BETTER_AUTH_URL,
     secret: config.BETTER_AUTH_SECRET,
     trustedOrigins: [config.BETTER_AUTH_URL],
-    advanced: { disableOriginCheck: false, disableCSRFCheck: false, database: { joins: true } },
+    advanced: { disableOriginCheck: false, disableCSRFCheck: false, database: { joins: true, generateId: authId } },
     database: drizzleAdapter(db, { provider: 'pg', schema: authSchema, transaction: true }),
     emailAndPassword: { enabled: false },
     socialProviders: {
@@ -195,6 +238,14 @@ export function createAuth(
         : {}),
     },
     databaseHooks: {
+      // A new session acts in the person's current organization, which the organization plugin's endpoints use.
+      session: {
+        create: {
+          before: async created => ({
+            data: { ...created, activeOrganizationId: await activeOrganizationOf(db, created.userId) },
+          }),
+        },
+      },
       user: {
         create: {
           // Only an address its provider vouches for makes an account: an email link verifies its own, and OAuth
@@ -248,9 +299,15 @@ export function createAuth(
     // OAuth errors without a per-flow errorCallbackURL (lost or expired state, MCP authorize
     // errors) land on sign-in instead of Better Auth's development error page.
     onAPIError: { errorURL: `${config.BETTER_AUTH_URL}/sign-in` },
-    hooks: { before: requestGuards(db), after: recordExtensionBrowser(db) },
+    hooks: { before: requestGuards(db), after: afterRequests(db) },
     // OAuth is owned by Better Auth. Application grants (consents) are checked live by MCP.
-    disabledPaths: ['/token', '/oauth2/update-consent', '/oauth2/delete-consent', ...operatorAdmin.disabledPaths],
+    disabledPaths: [
+      '/token',
+      '/oauth2/update-consent',
+      '/oauth2/delete-consent',
+      ...organizationDisabledPaths,
+      ...operatorAdmin.disabledPaths,
+    ],
     plugins: [
       // The organization's identity provider over OIDC. Its ID token is verified against the discovery document's
       // keys, and only email_verified: true counts as verified.
@@ -345,6 +402,7 @@ export function createAuth(
         customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),
       }),
       cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
+      ...organizationPlugins(db, { baseURL: config.BETTER_AUTH_URL, tenancy, sendEmail: emailLinks }),
       ...operatorAdmin.plugins,
     ],
   });

@@ -10,6 +10,7 @@ import { authorizeBrowser } from './browser-fixtures';
 import { ensureExtensionClient } from './browsers';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import type { Email } from './mail';
 import * as schema from './schema';
 
@@ -92,7 +93,7 @@ let template: PGlite;
 const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, { migrationsFolder });
   await ensureExtensionClient(templateDb as unknown as Database, extension);
 });
@@ -100,7 +101,7 @@ afterAll(() => template.close());
 beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(issuerFetch));
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
   sent = [];
   auth = createAuth(db, config, { sendEmail: async email => void sent.push(email) });

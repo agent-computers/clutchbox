@@ -28,6 +28,7 @@ import { bundle, cookie } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import { inTheOrganization, membership } from './member-fixtures';
 import { createOrganization, currentMember } from './organizations';
 import * as schema from './schema';
@@ -125,14 +126,14 @@ const agentRows = async () => ({
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, { migrationsFolder: fileURLToPath(new URL('../migrations', import.meta.url)) });
   await ensureExtensionClient(templateDb as unknown as Database, extension);
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   auth = createAuth(db, config);
   await auth.$context;
   vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));

@@ -11,15 +11,11 @@ import {
   verifiedServersPath,
 } from '@agent-computers/capture';
 import {
-  API_KEY_ID_PATTERN,
   apiKeyPrincipal,
-  createApiKey,
   isApiKeyAuthorization,
   type KeyPrincipal,
   latestCaptureForKey,
-  listApiKeys,
   membersForKey,
-  revokeApiKey,
 } from '@agent-computers/server/api-keys';
 import { type Auth, getPrincipal, signedOAuthClient } from '@agent-computers/server/auth';
 import {
@@ -62,31 +58,17 @@ import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/ho
 import { logError } from '@agent-computers/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@agent-computers/server/mcp';
 import {
-  acceptInvitation,
-  changeRole,
-  createInvitation,
-  INVITATION_ID_PATTERN,
   joinableOrganizations,
   joinByDomain,
   leaveOrganization,
-  listInvitations,
   MAX_JOIN_DOMAINS,
   MEMBERSHIP_ID_PATTERN,
   ORGANIZATION_ID_PATTERN,
   organizationView,
   removeMember,
-  revokeInvitation,
   setJoinDomains,
 } from '@agent-computers/server/members';
-import {
-  createOrganizationFor,
-  currentMember,
-  organizationOf,
-  organizationsOf,
-  switchOrganization,
-  type Tenancy,
-} from '@agent-computers/server/organizations';
-import { API_KEY_SCOPES, MEMBER_ROLES } from '@agent-computers/server/schema';
+import { currentMember, organizationOf, organizationsOf, type Tenancy } from '@agent-computers/server/organizations';
 import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
 import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
 import { deleteToolCalls } from '@agent-computers/server/tool-calls';
@@ -135,10 +117,8 @@ const MEMBERS_FAILURE_STATUS = {
   not_found: 404,
   last_owner: 409,
   already_member: 409,
-  invitation_invalid: 404,
   invalid_domain: 400,
   public_email_domain: 400,
-  api_key_limit: 409,
   connect_app_limit: 409,
   invalid_redirect_uri: 400,
 } as const;
@@ -157,7 +137,7 @@ export function createApi({
   auth: Auth;
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & { tenancy?: Pick<Tenancy, 'create'> };
+  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & { tenancy?: Pick<Tenancy, 'canCreate'> };
   // The extension build this deployment offers for download.
   extensionVersion?: string | undefined;
   minExtensionVersion?: string;
@@ -209,7 +189,7 @@ export function createApi({
     // A request with Authorization is judged by its token alone, never by a cookie it also carries.
     // An API key is for a developer's server: read-only routes, so no origin applies.
     if (authorization !== undefined && isApiKeyAuthorization(authorization)) {
-      const key = KEY_PATH.test(c.req.path) ? await apiKeyPrincipal(db, authorization) : null;
+      const key = KEY_PATH.test(c.req.path) ? await apiKeyPrincipal(auth, authorization) : null;
       if (!key)
         return c.json({ error: 'unauthenticated' }, 401, { 'WWW-Authenticate': 'Bearer error="invalid_token"' });
       c.set('apiKey', key);
@@ -272,35 +252,18 @@ export function createApi({
     await closeSetupNotice(db, await memberOf(c));
     return c.json({ closed: true });
   });
-  // Members and roles (members.ts, which checks who may do what). Any member sees the organization and who is in it;
-  // owners and admins invite, remove, change roles, and set the join domains.
+  // Members (members.ts, which checks who may do what). Any member sees the organization and who is in it; owners and
+  // admins remove members and set the join domains. Invitations, accepting them, role changes, and API keys are Better
+  // Auth's organization and api-key plugins' endpoints, under /api/auth (organization-auth.ts).
   const answer = (c: Context<Env>, result: object, status: 200 | 201 = 200) => {
     const { error } = result as { error?: keyof typeof MEMBERS_FAILURE_STATUS };
     return error ? c.json({ error }, MEMBERS_FAILURE_STATUS[error]) : c.json(result, status);
   };
   const body = async <T extends z.ZodType>(c: Context<Env>, schema: T) =>
     schema.safeParse(await c.req.json().catch(() => null));
-  const role = z.enum(MEMBER_ROLES);
   app.get('/organization', async c => {
     const view = await organizationView(db, await memberOf(c));
     return view ? c.json(view) : c.json({ error: 'not_a_member' }, 403);
-  });
-  app.get('/organization/invitations', async c => {
-    return answer(c, await listInvitations(db, await memberOf(c)));
-  });
-  // The link is shown once: only its hash is kept.
-  app.post('/organization/invitations', async c => {
-    const parsed = await body(c, z.object({ role }).strict());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const result = await createInvitation(db, await memberOf(c), parsed.data.role);
-    if (!('token' in result)) return answer(c, result);
-    const { token, ...invitation } = result;
-    return answer(c, { invitation: { ...invitation, url: `${origin}/join/${token}` } }, 201);
-  });
-  app.delete('/organization/invitations/:id', async c => {
-    const id = c.req.param('id');
-    if (!INVITATION_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await revokeInvitation(db, await memberOf(c), id));
   });
   app.put('/organization/join-domains', async c => {
     const parsed = await body(
@@ -309,12 +272,6 @@ export function createApi({
     );
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await setJoinDomains(db, await memberOf(c), parsed.data.domains));
-  });
-  app.patch('/organization/members/:id', async c => {
-    const id = c.req.param('id');
-    const parsed = await body(c, z.object({ role }).strict());
-    if (!MEMBERSHIP_ID_PATTERN.test(id) || !parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await changeRole(db, await memberOf(c), id, parsed.data.role));
   });
   // Removing or leaving deletes everything the member had in the organization, its computer included.
   app.delete('/organization/members/:id', async c => {
@@ -325,12 +282,7 @@ export function createApi({
   app.post('/organization/leave', async c => {
     return answer(c, await leaveOrganization(db, computers, await memberOf(c)));
   });
-  // Joining, for anyone signed in, in an organization here or not.
-  app.post('/invitations/accept', async c => {
-    const parsed = await body(c, z.object({ token: z.string().min(1).max(100) }).strict());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await acceptInvitation(db, c.get('principal'), parsed.data.token));
-  });
+  // Joining by email domain, for anyone signed in, in an organization here or not.
   app.get('/organizations/joinable', async c =>
     c.json({ organizations: await joinableOrganizations(db, c.get('principal')) }),
   );
@@ -338,23 +290,6 @@ export function createApi({
     const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId));
-  });
-  // Organization API keys, which owners and admins manage (api-keys.ts). The secret is in the answer to POST alone.
-  app.get('/organization/api-keys', async c => answer(c, await listApiKeys(db, await memberOf(c))));
-  app.post('/organization/api-keys', async c => {
-    const parsed = await body(
-      c,
-      z
-        .object({ name: z.string().trim().min(1).max(100), scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).max(10) })
-        .strict(),
-    );
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await createApiKey(db, await memberOf(c), parsed.data), 201);
-  });
-  app.delete('/organization/api-keys/:id', async c => {
-    const id = c.req.param('id');
-    if (!API_KEY_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await revokeApiKey(db, await memberOf(c), id));
   });
   // Connect apps, which owners and admins register (connect.ts). The client secret is in the answer to POST alone.
   app.get('/organization/connect-apps', async c => answer(c, await listConnectApps(db, await memberOf(c))));
@@ -414,26 +349,11 @@ export function createApi({
       );
     return c.json(result);
   });
-  // The person's organizations and switching between them; creating one only where the deployment's tenancy offers it.
+  // The person's organizations, and whether the deployment's tenancy lets them create more. Switching and creating are
+  // the organization plugin's (set-active, create).
   app.get('/organizations', async c =>
-    c.json({ organizations: await organizationsOf(db, c.get('principal').id), canCreate: !!tenancy?.create }),
+    c.json({ organizations: await organizationsOf(db, c.get('principal').id), canCreate: !!tenancy?.canCreate }),
   );
-  app.put('/organizations/current', async c => {
-    const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    if (!(await switchOrganization(db, c.get('principal').id, parsed.data.organizationId)))
-      return c.json({ error: 'not_found' }, 404);
-    return c.json({ current: parsed.data.organizationId });
-  });
-  app.post('/organizations', async c => {
-    const create = tenancy?.create;
-    if (!create) return c.json({ error: 'not_found' }, 404);
-    const parsed = await body(c, z.object({ name: z.string().trim().min(1).max(100) }).strict());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const created = await createOrganizationFor(db, create, person(c), parsed.data.name);
-    if (!created) return c.json({ error: 'organization_limit' }, 409);
-    return c.json({ organization: created }, 201);
-  });
   // The browser's time zone, which the user's computer follows from its next open.
   app.put('/time-zone', async c => {
     const parsed = z

@@ -9,8 +9,8 @@ import {
   requestTokens,
   type TokenResult,
 } from '@agent-computers/capture';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
-import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,8 +22,8 @@ import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { consentMembership } from '../../server/src/mcp';
-import { inTheOrganization } from '../../server/src/member-fixtures';
-import { createOrganization, switchOrganization } from '../../server/src/organizations';
+import { inTheOrganization, switchTo } from '../../server/src/member-fixtures';
+import { createOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { extensionCors, tokenPreflight } from './origins';
@@ -96,14 +96,14 @@ const local = { sites: ['github.com'], excludedDomains: [], paused: false };
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, { migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)) });
   await ensureExtensionClient(templateDb as unknown as Database, extension);
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
   auth = createAuth(db, config);
   await auth.$context;
@@ -148,23 +148,21 @@ describe('extension routes over OAuth', () => {
   it("name each sync token's organization: the one the person acted in when the browser connected", async () => {
     const a = await identity('a');
     const first = await connect(a);
-    const theirs = await db.transaction(tx =>
-      createOrganization(tx, { name: 'Second', owner: { id: 'a', name: 'Fixture a', email: 'a@example.test' } }),
-    );
-    const [second] = await db
-      .select({ id: schema.organizations.publicId })
-      .from(schema.organizations)
-      .where(eq(schema.organizations.id, theirs!));
+    const second = {
+      id: (await db.transaction(tx =>
+        createOrganization(tx, { name: 'Second', owner: { id: 'a', name: 'Fixture a', email: 'a@example.test' } }),
+      ))!,
+    };
     const me = async (options: Options) => (await json(await request('GET', '/me', options))).body.organization;
     const deployment = await me({ token: first });
     expect(deployment).toEqual({ id: expect.stringMatching(/^org_/), name: expect.any(String) });
-    expect(deployment.id).not.toBe(second!.id);
+    expect(deployment.id).not.toBe(second.id);
     // Switching on the website moves the web session, not the browser already connected.
-    expect(await switchOrganization(db, 'a', second!.id)).toBe(true);
-    expect(await me({ cookie: a, from: origin })).toEqual({ id: second!.id, name: 'Second' });
+    await switchTo(db, 'a', second.id);
+    expect(await me({ cookie: a, from: origin })).toEqual({ id: second.id, name: 'Second' });
     expect(await me({ token: first })).toEqual(deployment);
     // A browser connected after switching acts in the new one.
-    expect(await me({ token: await connect(a) })).toEqual({ id: second!.id, name: 'Second' });
+    expect(await me({ token: await connect(a) })).toEqual({ id: second.id, name: 'Second' });
     // A person in no organization yet.
     await db.insert(schema.user).values({ id: 'n', name: 'N', email: 'n@example.test', emailVerified: true });
     const token = randomBytes(32).toString('base64url');

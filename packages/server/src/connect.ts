@@ -37,14 +37,6 @@ export function redirectUriAllowed(value: string) {
   return !url.hash && !url.username && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback));
 }
 
-const organizationPublicId = async (db: Pick<Database, 'select'>, organizationId: number) =>
-  (
-    await db
-      .select({ publicId: schema.organizations.publicId })
-      .from(schema.organizations)
-      .where(eq(schema.organizations.id, organizationId))
-  )[0]!.publicId;
-
 export async function createConnectApp(
   db: Database,
   member: Member,
@@ -53,7 +45,7 @@ export async function createConnectApp(
   const role = await roleOf(db, member);
   if (!role || !manages(role)) return { error: 'forbidden' } as const;
   if (!redirectUris.every(redirectUriAllowed)) return { error: 'invalid_redirect_uri' } as const;
-  const organization = await organizationPublicId(db, member.organizationId);
+  const organization = member.organizationId;
   const [existing] = await db
     .select({ count: count() })
     .from(schema.oauthClient)
@@ -89,7 +81,7 @@ export async function createConnectApp(
 export async function listConnectApps(db: Database, member: Member) {
   const role = await roleOf(db, member);
   if (!role || !manages(role)) return { error: 'forbidden' } as const;
-  const organization = await organizationPublicId(db, member.organizationId);
+  const organization = member.organizationId;
   const apps = await db
     .select({
       id: schema.oauthClient.clientId,
@@ -115,7 +107,7 @@ export async function listConnectApps(db: Database, member: Member) {
 export async function deleteConnectApp(db: Database, member: Member, clientId: string) {
   const role = await roleOf(db, member);
   if (!role || !manages(role)) return { error: 'forbidden' } as const;
-  const organization = await organizationPublicId(db, member.organizationId);
+  const organization = member.organizationId;
   const [deleted] = await db
     .delete(schema.oauthClient)
     .where(and(eq(schema.oauthClient.clientId, clientId), eq(schema.oauthClient.referenceId, organization)))
@@ -130,8 +122,7 @@ export async function connectApp(db: Pick<Database, 'select'>, clientId: string)
       clientId: schema.oauthClient.clientId,
       name: schema.oauthClient.name,
       disabled: schema.oauthClient.disabled,
-      organizationId: schema.organizations.id,
-      organizationPublicId: schema.organizations.publicId,
+      organizationId: schema.organizations.publicId,
       organization: schema.organizations.name,
     })
     .from(schema.oauthClient)
@@ -227,7 +218,7 @@ export async function recordConnection(
 }
 
 // The organization's connections, for an API key: which member each app's user is.
-export async function connectionsForOrganization(db: Database, organizationId: number) {
+export async function connectionsForOrganization(db: Database, organizationId: string) {
   return db
     .select({
       app: schema.connections.clientId,

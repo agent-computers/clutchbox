@@ -16,6 +16,7 @@
   "exports": {
     "./schema": "./src/schema.ts",
     "./database": "./src/database.ts",
+    "./database-schema": "./src/database-schema.ts",
     "./auth": "./src/auth.ts",
     "./config": "./src/config.ts",
     "./mcp": "./src/mcp.ts",
@@ -49,7 +50,9 @@
     "@agent-computers/capture": "workspace:*",
     "@agent-computers/computer": "workspace:*",
     "@agent-computers/e2b": "workspace:*",
+    "@better-auth/api-key": "1.7.11",
     "@better-auth/cimd": "1.7.11",
+    "@better-auth/core": "1.7.11",
     "@better-auth/drizzle-adapter": "1.7.11",
     "@better-auth/mcp": "1.7.11",
     "@better-auth/oauth-provider": "1.7.11",

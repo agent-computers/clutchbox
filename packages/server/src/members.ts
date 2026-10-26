@@ -1,6 +1,5 @@
 import 'server-only';
-import { createHash, randomBytes } from 'node:crypto';
-import { and, asc, count, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import { disconnectAllBrowsers } from './browsers';
 import type { ComputerProvider } from './computers';
 import type { Database } from './database';
@@ -9,24 +8,16 @@ import { revokeMcpGrants } from './mcp';
 import { actIn, type Member, type Person } from './organizations';
 import * as schema from './schema';
 
-// Members and roles: who is in an organization, how people join it, and how they leave. Owners and admins invite and
-// remove; only owners make owners. Anyone can leave, except an organization's last owner. Joining is the consent the
-// join screen asks for: the organization's API keys can use a member's synced sites.
+// Members: who is in an organization, joining by email domain, and leaving. Better Auth's organization plugin does the
+// rest (organization-auth.ts): invitations, accepting them, and role changes. Leaving and removing stay here, since
+// they must revoke the member's tokens first and delete its computer at the provider after, which the plugin's don't.
+// Joining is the consent the join screen asks for: the organization's API keys can use a member's synced sites.
 
 export type Role = (typeof schema.MEMBER_ROLES)[number];
 export type MembersFailure = {
-  error:
-    | 'forbidden'
-    | 'not_found'
-    | 'last_owner'
-    | 'already_member'
-    | 'invitation_invalid'
-    | 'invalid_domain'
-    | 'public_email_domain';
+  error: 'forbidden' | 'not_found' | 'last_owner' | 'already_member' | 'invalid_domain' | 'public_email_domain';
 };
 
-// How long an invitation link works. Long enough to reach someone over a weekend; a stale link is cheap to remake.
-export const INVITATION_TTL_MS = 7 * 24 * 3600_000;
 // At most this many join domains per organization: a company's few domains, not a list to grow.
 export const MAX_JOIN_DOMAINS = 10;
 // Domains anyone can get an address at. Allowing one would let any stranger join, and would show the organization to
@@ -59,15 +50,13 @@ const PUBLIC_EMAIL_DOMAINS = new Set([
   'tutanota.com',
 ]);
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-export const INVITATION_ID_PATTERN = publicIdPattern('invitation');
 export const MEMBERSHIP_ID_PATTERN = publicIdPattern('membership');
 export const ORGANIZATION_ID_PATTERN = publicIdPattern('organization');
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('base64url');
 const emailDomain = (email: string) => email.slice(email.lastIndexOf('@') + 1).toLowerCase();
 export const manages = (role: Role) => role === 'owner' || role === 'admin';
-// Admins grant and change only admin and member; owners anything.
-const mayGrant = (actor: Role, role: Role) => actor === 'owner' || role !== 'owner';
+// Admins remove only admins and members; owners anyone.
+const mayRemove = (actor: Role, role: Role) => actor === 'owner' || role !== 'owner';
 
 export async function roleOf(db: Pick<Database, 'select'>, member: Member): Promise<Role | null> {
   const [row] = await db
@@ -76,7 +65,7 @@ export async function roleOf(db: Pick<Database, 'select'>, member: Member): Prom
     .where(eq(schema.memberships.id, member.membershipId));
   return row?.role ?? null;
 }
-const ownerCount = async (db: Pick<Database, 'select'>, organizationId: number) =>
+const ownerCount = async (db: Pick<Database, 'select'>, organizationId: string) =>
   (
     await db
       .select({ owners: count() })
@@ -85,8 +74,8 @@ const ownerCount = async (db: Pick<Database, 'select'>, organizationId: number) 
   )[0]?.owners ?? 0;
 // Membership rows of one organization serialize role changes, removals, and leaving, so two of them can never leave
 // it without an owner.
-const lockOrganization = (tx: Pick<Database, 'execute'>, organizationId: number) =>
-  tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('agent-computers-organization'), ${organizationId}::int)`);
+const lockOrganization = (tx: Pick<Database, 'execute'>, organizationId: string) =>
+  tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('agent-computers-organization'), hashtext(${organizationId}))`);
 
 // The member's organization, their role, and everyone in it.
 export async function organizationView(db: Database, member: Member) {
@@ -98,7 +87,7 @@ export async function organizationView(db: Database, member: Member) {
       joinDomains: schema.organizations.joinDomains,
     })
     .from(schema.organizations)
-    .where(eq(schema.organizations.id, member.organizationId));
+    .where(eq(schema.organizations.publicId, member.organizationId));
   const members = await db
     .select({
       id: schema.memberships.publicId,
@@ -121,116 +110,10 @@ export async function organizationView(db: Database, member: Member) {
   };
 }
 
-// An invitation link for the member's organization; the token is returned once and stored only hashed.
-export async function createInvitation(db: Database, member: Member, role: Role, now = new Date()) {
-  const actor = await roleOf(db, member);
-  if (!actor || !manages(actor) || !mayGrant(actor, role)) return { error: 'forbidden' } as const;
-  const token = randomBytes(24).toString('base64url');
-  const [row] = await db
-    .insert(schema.invitations)
-    .values({
-      publicId: newPublicId('invitation', now.getTime()),
-      organizationId: member.organizationId,
-      role,
-      tokenHash: hashToken(token),
-      invitedBy: member.membershipId,
-      expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
-    })
-    .returning({
-      id: schema.invitations.publicId,
-      role: schema.invitations.role,
-      expiresAt: schema.invitations.expiresAt,
-    });
-  return { ...row!, token };
-}
-
-const pending = (now: Date) =>
-  and(
-    isNull(schema.invitations.acceptedAt),
-    isNull(schema.invitations.revokedAt),
-    gt(schema.invitations.expiresAt, now),
-  );
-
-// The organization's invitations still waiting to be used, for those who may invite.
-export async function listInvitations(db: Database, member: Member, now = new Date()) {
-  const actor = await roleOf(db, member);
-  if (!actor || !manages(actor)) return { error: 'forbidden' } as const;
-  const invitations = await db
-    .select({
-      id: schema.invitations.publicId,
-      role: schema.invitations.role,
-      createdAt: schema.invitations.createdAt,
-      expiresAt: schema.invitations.expiresAt,
-      invitedBy: schema.user.name,
-    })
-    .from(schema.invitations)
-    .leftJoin(schema.memberships, eq(schema.memberships.id, schema.invitations.invitedBy))
-    .leftJoin(schema.user, eq(schema.user.id, schema.memberships.userId))
-    .where(and(eq(schema.invitations.organizationId, member.organizationId), pending(now)))
-    .orderBy(asc(schema.invitations.id));
-  return { invitations };
-}
-
-export async function revokeInvitation(db: Database, member: Member, invitationId: string, now = new Date()) {
-  const actor = await roleOf(db, member);
-  if (!actor || !manages(actor)) return { error: 'forbidden' } as const;
-  const [row] = await db
-    .update(schema.invitations)
-    .set({ revokedAt: now, updatedAt: now })
-    .where(
-      and(
-        eq(schema.invitations.publicId, invitationId),
-        eq(schema.invitations.organizationId, member.organizationId),
-        pending(now),
-      ),
-    )
-    .returning({ id: schema.invitations.id });
-  return row ? { revoked: true as const } : ({ error: 'not_found' } as const);
-}
-
-// What an invitation link offers, for the join screen: null when it is unknown, used, revoked, or expired.
-export async function invitationView(db: Database, token: string, now = new Date()) {
-  const [row] = await db
-    .select({
-      organization: schema.organizations.name,
-      organizationId: schema.organizations.publicId,
-      role: schema.invitations.role,
-      expiresAt: schema.invitations.expiresAt,
-    })
-    .from(schema.invitations)
-    .innerJoin(schema.organizations, eq(schema.organizations.id, schema.invitations.organizationId))
-    .where(and(eq(schema.invitations.tokenHash, hashToken(token)), pending(now)));
-  return row ?? null;
-}
-
-// Joins with the invitation's role and uses it up. A person already in the organization keeps their membership and
-// the link stays unused.
-export async function acceptInvitation(db: Database, person: Person, token: string, now = new Date()) {
-  return db.transaction(async tx => {
-    const [invitation] = await tx
-      .select({
-        id: schema.invitations.id,
-        organizationId: schema.invitations.organizationId,
-        role: schema.invitations.role,
-      })
-      .from(schema.invitations)
-      .where(and(eq(schema.invitations.tokenHash, hashToken(token)), pending(now)))
-      .for('update');
-    if (!invitation) return { error: 'invitation_invalid' } as const;
-    const joined = await join(tx, person.id, invitation.organizationId, invitation.role);
-    if ('error' in joined) return joined;
-    await tx
-      .update(schema.invitations)
-      .set({ acceptedAt: now, updatedAt: now })
-      .where(eq(schema.invitations.id, invitation.id));
-    return joined;
-  });
-}
-
 export async function join(
-  tx: Pick<Database, 'insert' | 'select'>,
+  tx: Pick<Database, 'insert' | 'select' | 'update'>,
   userId: string,
-  organizationId: number,
+  organizationId: string,
   role: Role,
 ) {
   const [membership] = await tx
@@ -244,7 +127,7 @@ export async function join(
   const [organization] = await tx
     .select({ id: schema.organizations.publicId, name: schema.organizations.name })
     .from(schema.organizations)
-    .where(eq(schema.organizations.id, organizationId));
+    .where(eq(schema.organizations.publicId, organizationId));
   return { joined: true as const, organization: organization! };
 }
 
@@ -260,7 +143,7 @@ export async function setJoinDomains(db: Database, member: Member, domains: stri
   await db
     .update(schema.organizations)
     .set({ joinDomains: cleaned, updatedAt: new Date() })
-    .where(eq(schema.organizations.id, member.organizationId));
+    .where(eq(schema.organizations.publicId, member.organizationId));
   return { joinDomains: cleaned };
 }
 
@@ -274,7 +157,7 @@ export async function joinableOrganizations(db: Database, person: Pick<Person, '
     .where(
       and(
         sql`${domain} = ANY(${schema.organizations.joinDomains})`,
-        sql`NOT EXISTS (SELECT 1 FROM ${schema.memberships} WHERE ${schema.memberships.organizationId} = ${schema.organizations.id} AND ${schema.memberships.userId} = ${person.id})`,
+        sql`NOT EXISTS (SELECT 1 FROM ${schema.memberships} WHERE ${schema.memberships.organizationId} = ${schema.organizations.publicId} AND ${schema.memberships.userId} = ${person.id})`,
       ),
     )
     .orderBy(asc(schema.organizations.id));
@@ -282,7 +165,7 @@ export async function joinableOrganizations(db: Database, person: Pick<Person, '
 
 export async function joinByDomain(db: Database, person: Pick<Person, 'id' | 'email'>, organizationId: string) {
   const [organization] = await db
-    .select({ id: schema.organizations.id })
+    .select({ id: schema.organizations.publicId })
     .from(schema.organizations)
     .where(
       and(
@@ -295,32 +178,12 @@ export async function joinByDomain(db: Database, person: Pick<Person, 'id' | 'em
 }
 
 // The member a membership ID names, in the actor's organization.
-async function memberIn(tx: Pick<Database, 'select'>, organizationId: number, membershipId: string) {
+async function memberIn(tx: Pick<Database, 'select'>, organizationId: string, membershipId: string) {
   const [row] = await tx
     .select({ id: schema.memberships.id, userId: schema.memberships.userId, role: schema.memberships.role })
     .from(schema.memberships)
     .where(and(eq(schema.memberships.publicId, membershipId), eq(schema.memberships.organizationId, organizationId)));
   return row ?? null;
-}
-
-// An owner sets anyone's role; an admin moves people between admin and member. The last owner stays one until another
-// is made.
-export async function changeRole(db: Database, actor: Member, membershipId: string, role: Role) {
-  return db.transaction(async tx => {
-    await lockOrganization(tx, actor.organizationId);
-    const actorRole = await roleOf(tx, actor);
-    const target = await memberIn(tx, actor.organizationId, membershipId);
-    if (!actorRole || !manages(actorRole)) return { error: 'forbidden' } as const;
-    if (!target) return { error: 'not_found' } as const;
-    if (!mayGrant(actorRole, target.role) || !mayGrant(actorRole, role)) return { error: 'forbidden' } as const;
-    if (target.role === 'owner' && role !== 'owner' && (await ownerCount(tx, actor.organizationId)) <= 1)
-      return { error: 'last_owner' } as const;
-    await tx
-      .update(schema.memberships)
-      .set({ role, updatedAt: new Date() })
-      .where(eq(schema.memberships.id, target.id));
-    return { role };
-  });
 }
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
@@ -371,7 +234,7 @@ export async function removeMember(db: Database, provider: ComputerProvider, act
     const row = await memberIn(tx, actor.organizationId, membershipId);
     if (!actorRole || !manages(actorRole)) return { error: 'forbidden' };
     if (!row) return { error: 'not_found' };
-    if (row.id === actor.membershipId || !mayGrant(actorRole, row.role)) return { error: 'forbidden' };
+    if (row.id === actor.membershipId || !mayRemove(actorRole, row.role)) return { error: 'forbidden' };
     return null;
   });
   return refused ?? { removed: true as const };

@@ -26,6 +26,7 @@ import {
   useComputerSession,
 } from './computers';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import { fakeComputerProvider } from './fake-computer-provider';
 import { heartbeat, heartbeatSchema } from './heartbeat';
 import { type Metering, type MeteringRefusal, noMetering } from './hooks';
@@ -51,7 +52,7 @@ const metering: Metering = {
 };
 let computers: Computers;
 const user = (id: string) => person(db, id);
-const join = (userId: string, organizationId: number) => membership(db, userId, organizationId);
+const join = (userId: string, organizationId: string) => membership(db, userId, organizationId);
 // The member's consent for an agent, bound to their membership as the consent page binds it.
 const grant = async (member: Member, clientId: string) => {
   const [membership] = await db
@@ -102,14 +103,14 @@ const at = (iso: string) => vi.setSystemTime(new Date(iso));
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), {
+  await migrate(drizzle(template, { schema: databaseSchema }), {
     migrationsFolder: fileURLToPath(new URL('../migrations', import.meta.url)),
   });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   fake = fakeComputerProvider();
   charges = [];
   refusal = null;

@@ -3,8 +3,8 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { PoolClient } from 'pg';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import { backfillMemberships, type Tenancy } from './organizations';
-import * as schema from './schema';
 
 export const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
 
@@ -56,7 +56,7 @@ export async function runMigrations({
       "INSERT INTO installation (id, data_class) VALUES ('singleton', $1) ON CONFLICT (id) DO NOTHING",
       [dataClass],
     );
-    const db = drizzle(client, { schema }) as unknown as Database;
+    const db = drizzle(client, { schema: databaseSchema }) as unknown as Database;
     await backfillMemberships(db, tenancy);
     if (afterMigrate) {
       const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).rows.map(

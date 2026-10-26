@@ -69,7 +69,7 @@ export const consentPage = (getServices: GetServices) =>
     const connect = query.get('scope')?.split(' ').includes(CONNECT_SCOPE) ? await connectApp(db, clientId) : null;
     if (
       connect &&
-      !organizations.find(organization => organization.current && organization.id === connect.organizationPublicId)
+      !organizations.find(organization => organization.current && organization.id === connect.organizationId)
     )
       return <InvalidRequest />;
     const scopes: OAuthScopeMetadataMap = connect

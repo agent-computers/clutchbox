@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import type { Database } from '@agent-computers/server/database';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { defaultServerHooks, noMetering } from '@agent-computers/server/hooks';
 import { migrationsFolder } from '@agent-computers/server/migrator';
 import * as schema from '@agent-computers/server/schema';
@@ -25,12 +26,12 @@ let pg: PGlite;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), { migrationsFolder });
+  await migrate(drizzle(template, { schema: databaseSchema }), { migrationsFolder });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   vi.stubEnv('APP_ENV', 'test');
   vi.stubEnv('DATABASE_URL', 'postgresql://localhost/synthetic');
   vi.stubEnv('BETTER_AUTH_URL', origin);

@@ -1,8 +1,8 @@
-// Better Auth 1.7.11 plugin schema. Keep in sync with the pinned MCP and JWT plugins.
+// Better Auth 1.7.11 plugin schema. Keep in sync with the pinned MCP, JWT, and API key plugins.
 import { sql } from 'drizzle-orm';
 import { boolean, check, index, integer, jsonb, pgTable, text, unique } from 'drizzle-orm/pg-core';
 import { time } from './columns';
-import { session, user } from './schema';
+import { organizations, session, user } from './schema';
 
 export const oauthClient = pgTable(
   'oauth_client',
@@ -185,3 +185,40 @@ export const jwks = pgTable('jwks', {
   alg: text('alg'),
   crv: text('crv'),
 });
+// The api-key plugin's keys, each owned by an organization (referenceId, its public ID): what a developer's server
+// presents on the developer REST routes (api-keys.ts). The ID is a TypeID (auth.ts, generateId); only the key's SHA-256
+// is kept, with its first characters (start) to tell keys apart.
+export const apikey = pgTable(
+  'apikey',
+  {
+    id: text('id').primaryKey(),
+    configId: text('config_id').notNull().default('default'),
+    name: text('name'),
+    start: text('start'),
+    referenceId: text('reference_id')
+      .notNull()
+      .references(() => organizations.publicId, { onDelete: 'cascade' }),
+    prefix: text('prefix'),
+    key: text('key').notNull(),
+    refillInterval: integer('refill_interval'),
+    refillAmount: integer('refill_amount'),
+    lastRefillAt: time('last_refill_at'),
+    enabled: boolean('enabled').default(true),
+    rateLimitEnabled: boolean('rate_limit_enabled').default(true),
+    rateLimitTimeWindow: integer('rate_limit_time_window'),
+    rateLimitMax: integer('rate_limit_max'),
+    requestCount: integer('request_count').default(0),
+    remaining: integer('remaining'),
+    lastRequest: time('last_request'),
+    expiresAt: time('expires_at'),
+    createdAt: time('created_at').notNull(),
+    updatedAt: time('updated_at').notNull(),
+    permissions: text('permissions'),
+    metadata: text('metadata'),
+  },
+  table => [
+    index('apikey_config_id_idx').on(table.configId),
+    index('apikey_reference_id_idx').on(table.referenceId),
+    unique('apikey_key_unique').on(table.key),
+  ],
+);

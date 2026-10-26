@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { bundle, cookie, siteBundle } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import { membership, person } from './member-fixtures';
 import type { Member } from './organizations';
 import * as schema from './schema';
@@ -31,14 +32,14 @@ const row = async (member: Member) =>
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), {
+  await migrate(drizzle(template, { schema: databaseSchema }), {
     migrationsFolder: fileURLToPath(new URL('../migrations', import.meta.url)),
   });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
 });
 afterEach(async () => {

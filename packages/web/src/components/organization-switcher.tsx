@@ -15,7 +15,8 @@ import { Spinner } from '@agent-computers/ui/components/spinner';
 import { cn } from '@agent-computers/ui/lib/utils';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronsUpDown, Plus } from 'lucide-react';
-import { api, organizationsQuery } from '../lib/api';
+import { authResult, organizationsQuery } from '../lib/api';
+import { authClient } from '../lib/auth-client';
 
 // Switches the organization the app acts in. Every page's data is that organization's, so a switch refetches it all.
 // Shown only to someone in several organizations, or who can create one.
@@ -23,7 +24,7 @@ export function OrganizationSwitcher({ onCreate }: { onCreate: () => void }) {
   const queryClient = useQueryClient();
   const { data } = useQuery(organizationsQuery);
   const change = useMutation({
-    mutationFn: (organizationId: string) => api('/organizations/current', 'PUT', { organizationId }),
+    mutationFn: (organizationId: string) => authResult(authClient.organization.setActive({ organizationId })),
     onSettled: () => queryClient.invalidateQueries(),
   });
   const current = data?.organizations.find(organization => organization.current);

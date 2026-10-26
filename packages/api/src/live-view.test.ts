@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type AddressInfo, connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -66,14 +67,14 @@ const member = async (userId: string) => (await currentMember(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), {
+  await migrate(drizzle(template, { schema: databaseSchema }), {
     migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)),
   });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  db = drizzle(pg, { schema }) as unknown as Database;
+  db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   await db.insert(schema.installation).values({ dataClass: 'nonproduction' });
   auth = createAuth(db, config);
   await auth.$context;

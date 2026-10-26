@@ -36,7 +36,8 @@ import { useOAuthConsent } from '@better-auth-ui/react/plugins/oauth-provider';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AppWindow, Check, ChevronsUpDown, Ellipsis, Link as LinkIcon, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { api } from '../lib/api';
+import { authResult } from '../lib/api';
+import { authClient as appAuthClient } from '../lib/auth-client';
 import { UserAvatar } from './auth/user-avatar';
 
 type OAuthConsentProps = {
@@ -84,7 +85,7 @@ export function OAuthConsent({
   // A grant is for one organization: the one the person acts in, which they can switch here before allowing.
   const router = useRouter();
   const switchOrganization = useMutation({
-    mutationFn: (organizationId: string) => api('/organizations/current', 'PUT', { organizationId }),
+    mutationFn: (organizationId: string) => authResult(appAuthClient.organization.setActive({ organizationId })),
     onSuccess: () => router.refresh(),
   });
   const current = organizations.find(organization => organization.current);

@@ -23,6 +23,7 @@ import {
   syncView,
 } from './captures';
 import type { Database } from './database';
+import { databaseSchema } from './database-schema';
 import { membership, person } from './member-fixtures';
 import * as schema from './schema';
 
@@ -34,14 +35,14 @@ const user = (id: string) => person(db, id);
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  await migrate(drizzle(template, { schema }), {
+  await migrate(drizzle(template, { schema: databaseSchema }), {
     migrationsFolder: fileURLToPath(new URL('../migrations', import.meta.url)),
   });
 });
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  const embedded = drizzle(pg, { schema });
+  const embedded = drizzle(pg, { schema: databaseSchema });
   db = embedded as unknown as Database;
   vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
 });

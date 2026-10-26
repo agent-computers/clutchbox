@@ -95,7 +95,7 @@ export const routeManifest: RouteEntry[] = [
   },
   {
     id: 'invitation',
-    dir: 'join/[token]',
+    dir: 'join/[invitation]',
     file: 'page.tsx',
     module: 'join',
     reexport: ['metadata'],

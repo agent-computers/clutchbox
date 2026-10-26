@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, isNull, notExists, sql } from 'drizzle-orm';
+import { asc, desc, eq, isNull, notExists, sql } from 'drizzle-orm';
 import type { Database } from './database';
 import { newPublicId } from './ids';
-import { memberships, organizations, user, userSettings } from './schema';
+import { memberships, organizations, session, user, userSettings } from './schema';
 
 // Organizations and the memberships that put people in them. No 'server-only' here: the migration runner, a plain
 // Node script, backfills memberships through it.
@@ -11,17 +11,20 @@ export type Person = { id: string; name: string; email: string };
 
 // Where a person goes when their account is made: the deployment's choice (ServerHooks.tenancy), which may be nowhere
 // until they join one (members.ts). join is called in a transaction at sign-up, and again by each migration run for
-// accounts still without a membership, so it must be safe to repeat. A deployment that lets people create further
-// organizations also gives create, which makes one the person owns and returns its ID; without it, they can't.
+// accounts still without a membership, so it must be safe to repeat. It stays ours rather than Better Auth's
+// organization plugin's, which creates organizations only in a request. A deployment that lets people create further
+// organizations (through the plugin, organization-auth.ts) also gives canCreate, which says whether this person may
+// create one now; without it, nobody can.
 export type Tenancy = {
   join(tx: Transaction, person: Person): Promise<void>;
-  create?(tx: Transaction, person: Person, name: string): Promise<number | null>;
+  canCreate?(db: Pick<Database, 'select'>, userId: string): Promise<boolean>;
 };
 
 // A person acting in one organization: what membership-scoped data (schema.ts, memberships) is read and written for.
-export type Member = { userId: string; membershipId: number; organizationId: number };
+// organizationId is the organization's public ID, which memberships reference it by.
+export type Member = { userId: string; membershipId: number; organizationId: string };
 
-// The membership a signed-in person acts in: the one they last switched to (switchOrganization), or else their oldest.
+// The membership a signed-in person acts in: the one they last switched to (actIn), or else their oldest.
 // An MCP grant acts in the membership it names instead (mcp.ts), and a sync token in its browser's. Null for a person
 // in no organization here yet: one who has not joined (members.ts), or whose sign-up hook failed (auth.ts) and whom
 // the next migration run places.
@@ -48,7 +51,7 @@ export async function organizationsOf(db: Pick<Database, 'select'>, userId: stri
       membershipId: memberships.id,
     })
     .from(memberships)
-    .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
+    .innerJoin(organizations, eq(organizations.publicId, memberships.organizationId))
     .where(eq(memberships.userId, userId))
     .orderBy(asc(memberships.id));
   return rows.map(({ membershipId, ...row }) => ({ ...row, current: membershipId === current?.membershipId }));
@@ -59,53 +62,29 @@ export async function organizationOf(db: Pick<Database, 'select'>, member: Membe
   const [organization] = await db
     .select({ id: organizations.publicId, name: organizations.name })
     .from(organizations)
-    .where(eq(organizations.id, member.organizationId));
+    .where(eq(organizations.publicId, member.organizationId));
   return organization ?? null;
 }
 
-// Makes the person act in one of their organizations, by its public ID, from their next request on. False when they
-// are not a member of it.
-export async function switchOrganization(
-  db: Pick<Database, 'select' | 'insert'>,
-  userId: string,
-  organizationPublicId: string,
-) {
-  const [membership] = await db
-    .select({ id: memberships.id })
-    .from(memberships)
-    .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
-    .where(and(eq(memberships.userId, userId), eq(organizations.publicId, organizationPublicId)));
-  if (!membership) return false;
-  await actIn(db, userId, membership.id);
-  return true;
-}
-// Records the membership the person acts in; joining and creating an organization switch to it this way.
-export async function actIn(db: Pick<Database, 'insert'>, userId: string, membershipId: number) {
+// Records the membership the person acts in, and makes their sessions act in its organization too, so Better Auth's
+// organization endpoints, which use the session's active organization, agree with ours. Switching (the plugin's
+// set-active), joining, and creating an organization all come here (organization-auth.ts, members.ts).
+export async function actIn(db: Pick<Database, 'insert' | 'update' | 'select'>, userId: string, membershipId: number) {
   await db
     .insert(userSettings)
     .values({ userId, currentMembershipId: membershipId })
     .onConflictDoUpdate({ target: userSettings.userId, set: { currentMembershipId: membershipId } });
+  const [membership] = await db
+    .select({ organizationId: memberships.organizationId })
+    .from(memberships)
+    .where(eq(memberships.id, membershipId));
+  if (membership)
+    await db.update(session).set({ activeOrganizationId: membership.organizationId }).where(eq(session.userId, userId));
 }
-
-// Creates an organization through the tenancy's create and makes the person act in it. Null when it refused.
-export async function createOrganizationFor(
-  db: Database,
-  create: NonNullable<Tenancy['create']>,
-  person: Person,
-  name: string,
-) {
-  return db.transaction(async tx => {
-    const organizationId = await create(tx, person, name);
-    if (organizationId === null) return null;
-    const [row] = await tx
-      .select({ membershipId: memberships.id, id: organizations.publicId, name: organizations.name })
-      .from(memberships)
-      .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
-      .where(and(eq(memberships.organizationId, organizationId), eq(memberships.userId, person.id)));
-    if (!row) throw new Error('the tenancy created an organization the person is not in');
-    await actIn(tx, person.id, row.membershipId);
-    return { id: row.id, name: row.name };
-  });
+// The organization a new session starts in: the person's current one (Better Auth's session create hook, auth.ts).
+export async function activeOrganizationOf(db: Pick<Database, 'select'>, userId: string) {
+  const member = await currentMember(db, userId);
+  return member?.organizationId ?? null;
 }
 
 // Within the name CHECK on organizations (1 to 100 characters).
@@ -115,20 +94,22 @@ export async function createOrganization(
   tx: Transaction,
   { name, owner, personal = false }: { name: string; owner: Person; personal?: boolean },
 ) {
+  const publicId = newPublicId('organization');
   const [organization] = await tx
     .insert(organizations)
     .values({
-      publicId: newPublicId('organization'),
+      publicId,
       name: organizationName(name, owner.email),
+      slug: publicId,
       personalUserId: personal ? owner.id : null,
     })
     .onConflictDoNothing({ target: organizations.personalUserId })
-    .returning({ id: organizations.id });
+    .returning({ publicId: organizations.publicId });
   if (!organization) return null;
   await tx
     .insert(memberships)
-    .values({ publicId: newPublicId('membership'), organizationId: organization.id, userId: owner.id, role: 'owner' });
-  return organization.id;
+    .values({ publicId: newPublicId('membership'), organizationId: publicId, userId: owner.id, role: 'owner' });
+  return publicId;
 }
 
 // The default: a deployment that serves one organization. The first person to sign up creates it and owns it, named

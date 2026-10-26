@@ -48,6 +48,10 @@ export const session = pgTable(
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
     impersonatedBy: text('impersonated_by'),
+    // Better Auth's organization plugin: the organization's public ID its endpoints act in. Kept in step with the
+    // person's current membership (organizations.ts, actIn); the plugin checks membership whenever it uses it, so a
+    // stale one grants nothing.
+    activeOrganizationId: text('active_organization_id'),
   },
   table => [index('auth_session_user_idx').on(table.userId)],
 );
@@ -126,13 +130,18 @@ export const MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
 // An organization: the tenant whose members sync to it and whose agents use their computers (organizations.ts). A
 // personal organization records the person it was made for, so each person has at most one; a deployment that serves
 // one organization leaves it null. joinDomains: email domains whose people may join it themselves (members.ts),
-// lowercase.
+// lowercase. Better Auth's organization plugin sees this table through auth-schema.ts: public_id is its ID, and slug,
+// logo, and metadata are its fields.
 export const organizations = pgTable(
   'organizations',
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
     name: text('name').notNull(),
+    // Better Auth's: unique, and the public ID unless someone changes it.
+    slug: text('slug').unique(),
+    logo: text('logo'),
+    metadata: text('metadata'),
     personalUserId: text('personal_user_id')
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
@@ -147,15 +156,16 @@ export const organizations = pgTable(
   ],
 );
 // A person's place in one organization. Every app table below belongs to one, as membership_id, except user_settings,
-// which is the person's in every organization.
+// which is the person's in every organization. Better Auth's organization plugin sees it through auth-schema.ts, as
+// its member: public_id is its ID, and the organization is referenced by its public ID, the one key the plugin knows.
 export const memberships = pgTable(
   'memberships',
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
-    organizationId: key('organization_id')
+    organizationId: text('organization_public_id')
       .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+      .references(() => organizations.publicId, { onDelete: 'cascade' }),
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
@@ -168,61 +178,37 @@ export const memberships = pgTable(
     check('memberships_role', oneOf(table.role, MEMBER_ROLES)),
   ],
 );
-// An invitation link to join an organization with a role (members.ts): single use, until it expires or is revoked.
-// Only the token's SHA-256 is stored; the link carries the token.
-export const invitations = pgTable(
-  'invitations',
+export const INVITATION_STATUSES = ['pending', 'accepted', 'rejected', 'canceled'] as const;
+// An invitation to join an organization with a role, for one email address: Better Auth's organization plugin's
+// invitation (auth-schema.ts), which only an account with that verified address accepts. Its lifecycle is the plugin's
+// status rather than *_at columns.
+export const organizationInvitations = pgTable(
+  'organization_invitations',
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
-    organizationId: key('organization_id')
+    organizationId: text('organization_public_id')
       .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+      .references(() => organizations.publicId, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
     role: text('role', { enum: MEMBER_ROLES }).notNull(),
-    tokenHash: text('token_hash').notNull().unique(),
-    // The membership that made it; kept as null once that member has left.
-    invitedBy: key('invited_by').references(() => memberships.id, { onDelete: 'set null' }),
+    status: text('status', { enum: INVITATION_STATUSES }).notNull(),
     expiresAt: time('expires_at').notNull(),
-    acceptedAt: time('accepted_at'),
-    revokedAt: time('revoked_at'),
-    ...timestamps(),
-  },
-  table => [
-    index('invitations_organization_idx').on(table.organizationId),
-    index('invitations_invited_by_idx').on(table.invitedBy),
-    check('invitations_role', oneOf(table.role, MEMBER_ROLES)),
-  ],
-);
-// What an organization API key may do. captures: read any member's latest capture.
-export const API_KEY_SCOPES = ['captures'] as const;
-// An organization's key for its developers' servers (api-keys.ts). Only the secret's SHA-256 is kept.
-export const apiKeys = pgTable(
-  'api_keys',
-  {
-    id: id(),
-    publicId: text('public_id').notNull().unique(),
-    organizationId: key('organization_id')
+    inviterId: text('inviter_id')
       .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
-    name: text('name').notNull(),
-    scopes: text('scopes').array().notNull(),
-    tokenHash: text('token_hash').notNull().unique(),
-    // The membership that made it; kept as null once that member has left.
-    createdBy: key('created_by').references(() => memberships.id, { onDelete: 'set null' }),
-    lastUsedAt: time('last_used_at'),
-    revokedAt: time('revoked_at'),
-    ...timestamps(),
+      .references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
   },
   table => [
-    index('api_keys_organization_idx').on(table.organizationId),
-    index('api_keys_created_by_idx').on(table.createdBy),
-    check('api_keys_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
-    check(
-      'api_keys_scopes',
-      sql`cardinality(${table.scopes}) >= 1 AND ${table.scopes} <@ ARRAY[${sql.raw(API_KEY_SCOPES.map(scope => `'${scope}'`).join(', '))}]::text[]`,
-    ),
+    index('organization_invitations_organization_idx').on(table.organizationId),
+    index('organization_invitations_inviter_idx').on(table.inviterId),
+    index('organization_invitations_email_idx').on(table.email),
+    check('organization_invitations_role', oneOf(table.role, MEMBER_ROLES)),
+    check('organization_invitations_status', oneOf(table.status, INVITATION_STATUSES)),
   ],
 );
+// What an organization API key may do (api-keys.ts), as its permissions. captures: read any member's latest capture.
+export const API_KEY_SCOPES = ['captures'] as const;
 // A person connected to an organization's app through Connect (connect.ts): the app's OAuth client, the member, and
 // the app's own ID for them. It goes with either.
 export const connections = pgTable(

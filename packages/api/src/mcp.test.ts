@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { e2bComputerProvider } from '@agent-computers/e2b';
+import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -32,8 +33,8 @@ import {
   revokeMcpGrant,
   revokeMcpGrants,
 } from '../../server/src/mcp';
-import { inTheOrganization } from '../../server/src/member-fixtures';
-import { createOrganization, currentMember, switchOrganization } from '../../server/src/organizations';
+import { inTheOrganization, switchTo } from '../../server/src/member-fixtures';
+import { createOrganization, currentMember } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { createMcpEndpoint } from './mcp';
@@ -200,7 +201,7 @@ const membershipOf = async (userId: string) => (await consentMembership(db, user
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
-  const templateDb = drizzle(template, { schema });
+  const templateDb = drizzle(template, { schema: databaseSchema });
   await migrate(templateDb, {
     migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)),
   });
@@ -212,7 +213,7 @@ beforeAll(async () => {
 afterAll(() => template.close());
 beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
-  const embedded = drizzle(pg, { schema });
+  const embedded = drizzle(pg, { schema: databaseSchema });
   db = embedded as unknown as Database;
   auth = createAuth(db, config, { fetchClientMetadata });
   await auth.$context;
@@ -1120,18 +1121,10 @@ describe('agent connections and setup', () => {
       .select()
       .from(schema.memberships)
       .where(and(eq(schema.memberships.userId, a.id), eq(schema.memberships.organizationId, team!)));
-    const [teamOrganization] = await db
-      .select({ publicId: schema.organizations.publicId })
-      .from(schema.organizations)
-      .where(eq(schema.organizations.id, team!));
-    expect(await switchOrganization(db, a.id, teamOrganization!.publicId)).toBe(true);
+    await switchTo(db, a.id, team!);
     const ay = (await authorize(a.cookie, y))!;
     expect(claims(ay.access_token).membership).toBe(inTeam!.publicId);
-    const [homeOrganization] = await db
-      .select({ publicId: schema.organizations.publicId })
-      .from(schema.organizations)
-      .where(eq(schema.organizations.id, home.organizationId));
-    await switchOrganization(db, a.id, homeOrganization!.publicId);
+    await switchTo(db, a.id, home.organizationId);
     const refreshed = await authRequest('/oauth2/token', {
       body: { grant_type: 'refresh_token', client_id: y, refresh_token: ay.refresh_token, resource },
     });

@@ -4,7 +4,8 @@ import { Button } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { ApiError, api, joinableQuery, type Role } from '../lib/api';
+import { ApiError, api, authResult, joinableQuery, type Role } from '../lib/api';
+import { authClient } from '../lib/auth-client';
 
 export const roleNames: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 export const aRole: Record<Role, string> = { owner: 'an owner', admin: 'an admin', member: 'a member' };
@@ -23,16 +24,16 @@ export function JoinDisclosure({ organization }: { organization: string }) {
 const joinFailure = (error: Error) =>
   error instanceof ApiError && error.code === 'already_member'
     ? 'You are already a member of this organization.'
-    : error instanceof ApiError && (error.code === 'invitation_invalid' || error.code === 'not_found')
-      ? 'This invitation has expired, was used, or was revoked. Ask for a new one.'
+    : error instanceof ApiError && error.code === 'not_found'
+      ? 'This organization no longer lets your email address join.'
       : 'Joining did not finish. Please try again.';
 
-// Joins, then opens the app; the server answers with the organization joined.
-function useJoin(path: string, body: unknown) {
+// Joins, then opens the app.
+function useJoin(join: () => Promise<unknown>) {
   const router = useRouter();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api<{ joined: true }>(path, 'POST', body),
+    mutationFn: join,
     onSuccess: async () => {
       await queryClient.invalidateQueries();
       router.push('/app');
@@ -40,15 +41,17 @@ function useJoin(path: string, body: unknown) {
   });
 }
 
-// /join/<token>: an invitation, for the person signed in to accept.
+// /join/<invitation>: an invitation, for the person signed in with its address to accept.
 export function AcceptInvitation({
-  token,
+  id,
+  email,
   invitation,
 }: {
-  token: string;
+  id: string;
+  email: string;
   invitation: { organization: string; role: Role } | null;
 }) {
-  const join = useJoin('/invitations/accept', { token });
+  const join = useJoin(() => authResult(authClient.organization.acceptInvitation({ invitationId: id })));
   if (!invitation)
     return (
       <Card className="w-full">
@@ -56,7 +59,10 @@ export function AcceptInvitation({
           <CardTitle className="text-3xl">
             <h1>Invitation not found</h1>
           </CardTitle>
-          <CardDescription>This invitation has expired, was used, or was revoked. Ask for a new one.</CardDescription>
+          <CardDescription>
+            This invitation is not for {email}, has expired, or was cancelled. Sign in with the address it was sent to,
+            or ask for a new one.
+          </CardDescription>
         </CardHeader>
       </Card>
     );
@@ -77,7 +83,7 @@ export function AcceptInvitation({
         </div>
         {join.isError && (
           <Alert variant="destructive">
-            <AlertDescription>{joinFailure(join.error)}</AlertDescription>
+            <AlertDescription>{join.error.message}</AlertDescription>
           </Alert>
         )}
       </CardContent>
@@ -86,7 +92,7 @@ export function AcceptInvitation({
 }
 
 function JoinByDomain({ organization }: { organization: { id: string; name: string } }) {
-  const join = useJoin('/organizations/join', { organizationId: organization.id });
+  const join = useJoin(() => api('/organizations/join', 'POST', { organizationId: organization.id }));
   return (
     <li className="grid gap-3 rounded-lg border p-4">
       <p className="font-medium">{organization.name}</p>
@@ -130,7 +136,7 @@ export function JoinPage({ email }: { email: string }) {
         <CardDescription>
           {isPending || data?.length
             ? `Signed in as ${email}.`
-            : `${email} is not in an organization here yet. Ask an owner or admin of yours for an invitation link, or to allow your email address's domain.`}
+            : `${email} is not in an organization here yet. Ask an owner or admin of yours to invite this address, or to allow your email address's domain.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
