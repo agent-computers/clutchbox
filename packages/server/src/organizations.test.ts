@@ -9,6 +9,7 @@ import { createAuth } from './auth';
 import { EXTENSION_CLIENT_ID } from './browsers';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { newPublicId } from './ids';
 import { backfillMemberships, createOrganization, singleOrganization, type Tenancy } from './organizations';
 import * as schema from './schema';
 
@@ -123,6 +124,7 @@ describe('backfill for accounts made before organizations', () => {
     const now = new Date();
     for (const clientId of [agent, EXTENSION_CLIENT_ID]) {
       await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId, redirectUris: [] });
+      // The consent has no reference; its tokens have one from an earlier scheme that names no membership.
       await db.insert(schema.oauthConsent).values({
         id: randomUUID(),
         clientId,
@@ -131,7 +133,14 @@ describe('backfill for accounts made before organizations', () => {
         createdAt: now,
         updatedAt: now,
       });
-      const tokens = { clientId, userId: 'first', scopes: ['offline_access'], expiresAt: now, createdAt: now };
+      const tokens = {
+        clientId,
+        userId: 'first',
+        referenceId: randomUUID(),
+        scopes: ['offline_access'],
+        expiresAt: now,
+        createdAt: now,
+      };
       await db.insert(schema.oauthRefreshToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
       await db.insert(schema.oauthAccessToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
     }
@@ -149,7 +158,14 @@ describe('backfill for accounts made before organizations', () => {
         ),
       );
     expect(await references(agent)).toEqual([[membership!.publicId], [membership!.publicId], [membership!.publicId]]);
-    expect(await references(EXTENSION_CLIENT_ID)).toEqual([[null], [null], [null]]);
+    // A grant for a membership since removed stays out of the person's remaining one.
+    const removed = newPublicId('membership');
+    await db.update(schema.oauthConsent).set({ referenceId: removed }).where(eq(schema.oauthConsent.clientId, agent));
+    await backfillMemberships(db, personal);
+    expect((await references(agent))[0]).toEqual([removed]);
+    const extension = await references(EXTENSION_CLIENT_ID);
+    expect(extension[0]).toEqual([null]);
+    expect(extension.slice(1).flat()).not.toContain(membership!.publicId);
   });
 
   it('changes nothing when run again', async () => {

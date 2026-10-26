@@ -1,7 +1,7 @@
 import { extensionClientId } from '@agent-computers/capture';
 import { asc, eq, isNull, notExists, sql } from 'drizzle-orm';
 import type { Database } from './database';
-import { newPublicId } from './ids';
+import { newPublicId, publicIdPattern } from './ids';
 import { memberships, organizations, user } from './schema';
 
 // Organizations and the memberships that put people in them. No 'server-only' here: the migration runner, a plain
@@ -89,8 +89,11 @@ export const MEMBERSHIP_SCOPED_TABLES = [
   'setups',
 ] as const;
 
-// Better Auth's tables whose reference_id names the membership an agent's grant is for (mcp.ts).
+// Better Auth's tables whose reference_id names the membership an agent's grant is for (mcp.ts). Grants made before
+// that hold none, or a reference from an earlier scheme that names no membership. One that names a membership, even
+// one since removed, is never rebound: its grant was for that organization alone.
 const GRANT_TABLES = ['oauth_consent', 'oauth_refresh_token', 'oauth_access_token'] as const;
+const membershipId = publicIdPattern('membership').source;
 
 // Puts every person without a membership into an organization, oldest account first, so a single organization's first
 // owner is its first user; then fills membership_id on older rows, and binds older agent grants and their tokens to a
@@ -112,6 +115,7 @@ export async function backfillMemberships(db: Database, tenancy: Tenancy) {
     await db.execute(sql`
       UPDATE ${sql.identifier(table)} AS granted SET reference_id = sole.public_id
       FROM (SELECT min(public_id) AS public_id, user_id FROM memberships GROUP BY user_id HAVING count(*) = 1) AS sole
-      WHERE granted.user_id = sole.user_id AND granted.reference_id IS NULL AND granted.client_id <> ${extensionClientId}`);
+      WHERE granted.user_id = sole.user_id AND granted.client_id <> ${extensionClientId}
+        AND (granted.reference_id IS NULL OR granted.reference_id !~ ${membershipId})`);
   return people.length;
 }
