@@ -18,7 +18,7 @@ const style = `
   .tagline { line-height: 1.3; color: #c9bec6; }
   .arrow { color: #ff488b; }`;
 const headline = 'Your agents, <span class="mark">already signed in</span>';
-const tagline = 'Clutchbox syncs your browser states to browsers your agents use.';
+const tagline = 'Sync your browser sign-ins to your agents’ browsers, so they never need your password.';
 const banner = `<div class="ground" style="justify-content:center;padding:0 80px">
   <p class="mark" style="font-size:30px;margin-bottom:36px">clutchbox</p>
   <h1 style="font-size:84px">${headline}</h1>
