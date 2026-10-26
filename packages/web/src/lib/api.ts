@@ -53,6 +53,15 @@ export type OrganizationsView = {
   organizations: { id: string; name: string; personal: boolean; role: Role; current: boolean }[];
   canCreate: boolean;
 };
+// An organization API key, never with its secret, which only creating it returns.
+export type ApiKey = {
+  id: string;
+  name: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  createdBy: string | null;
+};
 // An organization you may join because it allows your email address's domain.
 export type JoinableOrganization = { id: string; name: string };
 
@@ -101,6 +110,11 @@ export const browsersQuery = queryOptions({
 export const organizationQuery = queryOptions({
   queryKey: ['organization'],
   queryFn: () => api<OrganizationView>('/organization'),
+});
+export const apiKeysQuery = queryOptions({
+  queryKey: ['organization', 'api-keys'],
+  queryFn: () => api<{ keys: ApiKey[] }>('/organization/api-keys'),
+  select: data => data.keys,
 });
 export const organizationsQuery = queryOptions({
   queryKey: ['organizations'],

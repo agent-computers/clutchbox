@@ -8,6 +8,17 @@ import {
   syncChangeSchema,
   syncSettingsSchema,
 } from '@agent-computers/capture';
+import {
+  API_KEY_ID_PATTERN,
+  apiKeyPrincipal,
+  createApiKey,
+  isApiKeyAuthorization,
+  type KeyPrincipal,
+  latestCaptureForKey,
+  listApiKeys,
+  membersForKey,
+  revokeApiKey,
+} from '@agent-computers/server/api-keys';
 import { type Auth, getPrincipal } from '@agent-computers/server/auth';
 import {
   BROWSER_ID_PATTERN,
@@ -49,7 +60,6 @@ import {
   listInvitations,
   MAX_JOIN_DOMAINS,
   MEMBERSHIP_ID_PATTERN,
-  type MembersFailure,
   ORGANIZATION_ID_PATTERN,
   organizationView,
   removeMember,
@@ -63,7 +73,7 @@ import {
   switchOrganization,
   type Tenancy,
 } from '@agent-computers/server/organizations';
-import { MEMBER_ROLES } from '@agent-computers/server/schema';
+import { API_KEY_SCOPES, MEMBER_ROLES } from '@agent-computers/server/schema';
 import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
 import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
 import { deleteToolCalls } from '@agent-computers/server/tool-calls';
@@ -85,7 +95,9 @@ type Principal = {
   browser?: SyncPrincipal['browser'];
   member?: SyncPrincipal['member'];
 };
-type Env = { Variables: { principal: Principal } };
+// Or, on the developer REST routes alone (KEY_PATH), an organization API key, which acts for its organization.
+type Env = { Variables: { principal: Principal; apiKey?: KeyPrincipal } };
+const KEY_PATH = /^\/api\/v1\/members(\/[^/]+\/capture)?$/;
 // A deployment's own routes, added after the shared middleware so they get its session, origin, and header handling.
 export type ApiExtension = (app: Hono<Env>, services: { db: Database }) => void;
 // Vercel Functions refuse request bodies over 4.5 MB with their own FUNCTION_PAYLOAD_TOO_LARGE. This limit sits
@@ -104,7 +116,7 @@ function computerFailure(c: Context<Env>, { error, message, resetsAt }: Computer
   );
 }
 
-// What each refusal of members.ts answers.
+// What each refusal of members.ts and api-keys.ts answers.
 const MEMBERS_FAILURE_STATUS = {
   forbidden: 403,
   not_found: 404,
@@ -113,6 +125,7 @@ const MEMBERS_FAILURE_STATUS = {
   invitation_invalid: 404,
   invalid_domain: 400,
   public_email_domain: 400,
+  api_key_limit: 409,
 } as const;
 
 export function createApi({
@@ -170,6 +183,14 @@ export function createApi({
     const authorization = c.req.header('authorization');
     let principal: Principal | null;
     // A request with Authorization is judged by its token alone, never by a cookie it also carries.
+    // An API key is for a developer's server: read-only routes, so no origin applies.
+    if (authorization !== undefined && isApiKeyAuthorization(authorization)) {
+      const key = KEY_PATH.test(c.req.path) ? await apiKeyPrincipal(db, authorization) : null;
+      if (!key)
+        return c.json({ error: 'unauthenticated' }, 401, { 'WWW-Authenticate': 'Bearer error="invalid_token"' });
+      c.set('apiKey', key);
+      return next();
+    }
     if (authorization !== undefined) {
       if (!SYNC_PATHS.includes(c.req.path)) return c.json({ error: 'unauthenticated' }, 401);
       principal = await syncPrincipal(db, { authorization, userAgent: c.req.header('user-agent') });
@@ -227,7 +248,7 @@ export function createApi({
   // Members and roles (members.ts, which checks who may do what). Any member sees the organization and who is in it;
   // owners and admins invite, remove, change roles, and set the join domains.
   const answer = (c: Context<Env>, result: object, status: 200 | 201 = 200) => {
-    const { error } = result as { error?: MembersFailure['error'] };
+    const { error } = result as { error?: keyof typeof MEMBERS_FAILURE_STATUS };
     return error ? c.json({ error }, MEMBERS_FAILURE_STATUS[error]) : c.json(result, status);
   };
   const body = async <T extends z.ZodType>(c: Context<Env>, schema: T) =>
@@ -290,6 +311,42 @@ export function createApi({
     const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId));
+  });
+  // Organization API keys, which owners and admins manage (api-keys.ts). The secret is in the answer to POST alone.
+  app.get('/organization/api-keys', async c => answer(c, await listApiKeys(db, await memberOf(c))));
+  app.post('/organization/api-keys', async c => {
+    const parsed = await body(
+      c,
+      z
+        .object({ name: z.string().trim().min(1).max(100), scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).max(10) })
+        .strict(),
+    );
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await createApiKey(db, await memberOf(c), parsed.data), 201);
+  });
+  app.delete('/organization/api-keys/:id', async c => {
+    const id = c.req.param('id');
+    if (!API_KEY_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await revokeApiKey(db, await memberOf(c), id));
+  });
+  // The developer REST API, under an organization API key only.
+  const keyOf = (c: Context<Env>) => {
+    const key = c.get('apiKey');
+    if (!key) throw new HTTPException(401, { res: Response.json({ error: 'api_key_required' }, { status: 401 }) });
+    return key;
+  };
+  app.get('/members', async c => c.json({ members: await membersForKey(db, keyOf(c)) }));
+  app.get('/members/:id/capture', async c => {
+    const key = keyOf(c);
+    const id = c.req.param('id');
+    if (!MEMBERSHIP_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
+    const result = await latestCaptureForKey(db, key, id);
+    if ('error' in result)
+      return c.json(
+        { error: result.error },
+        result.error === 'insufficient_scope' ? 403 : result.error === 'capture_unreadable' ? 503 : 404,
+      );
+    return c.json(result);
   });
   // The person's organizations and switching between them; creating one only where the deployment's tenancy offers it.
   app.get('/organizations', async c =>

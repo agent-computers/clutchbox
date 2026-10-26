@@ -32,7 +32,9 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   ApiError,
+  type ApiKey,
   api,
+  apiKeysQuery,
   type Invitation,
   invitationsQuery,
   joinableQuery,
@@ -52,6 +54,7 @@ const refusals: Record<string, string> = {
   not_found: 'That is no longer here. Reload to see the latest.',
   invalid_domain: 'Enter domains only, like acme.com.',
   organization_limit: 'You have created as many organizations as you can.',
+  api_key_limit: 'This organization has as many API keys as it can. Revoke one first.',
   public_email_domain:
     'Anyone can get an address at that domain, so it cannot let people join. Use your own domain, or invite by link.',
 };
@@ -87,6 +90,7 @@ export function Organization() {
           <Members view={data} />
           {manages(data.role) && <Invitations role={data.role} />}
           {manages(data.role) && <JoinDomains domains={data.organization.joinDomains} />}
+          {manages(data.role) && <ApiKeys />}
           <OtherOrganizations />
           <NewOrganization />
           <Leave
@@ -339,6 +343,128 @@ function JoinDomains({ domains }: { domains: string[] }) {
           <Failure error={save.error} />
         </form>
       </CardContent>
+    </Card>
+  );
+}
+
+// Keys for the organization's developers' servers, which read every member's latest capture over REST. The secret is
+// shown once, right after creating it.
+function ApiKeys() {
+  const queryClient = useQueryClient();
+  const { data: keys } = useQuery(apiKeysQuery);
+  const fieldId = useId();
+  const [name, setName] = useState('');
+  const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const refresh = () => queryClient.invalidateQueries({ queryKey: apiKeysQuery.queryKey });
+  const create = useMutation({
+    mutationFn: () =>
+      api<{ key: { id: string; name: string; secret: string } }>('/organization/api-keys', 'POST', {
+        name,
+        scopes: ['captures'],
+      }),
+    onSuccess: () => setName(''),
+    onSettled: refresh,
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api(`/organization/api-keys/${id}`, 'DELETE'),
+    onSuccess: () => setRevoking(null),
+    onSettled: refresh,
+  });
+  const made = create.data?.key;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <h2>API keys</h2>
+        </CardTitle>
+        <CardDescription>
+          A key lets your servers read any member's latest synced sign-ins over the REST API, to use in your own
+          browsers. Members agreed to this when they joined. Keep keys secret, and revoke one you no longer use.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <form
+          className="grid gap-3"
+          onSubmit={event => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <Label htmlFor={fieldId}>Name</Label>
+          <div className="flex flex-wrap gap-3">
+            <Input
+              id={fieldId}
+              placeholder="Production server"
+              required
+              maxLength={100}
+              value={name}
+              onChange={event => setName(event.target.value)}
+              className="min-w-60 flex-1"
+            />
+            <Button type="submit" disabled={create.isPending || !name.trim()}>
+              {create.isPending ? 'Creating…' : 'Create key'}
+            </Button>
+          </div>
+        </form>
+        {made && (
+          <div className="grid gap-2">
+            <p className="text-sm text-soft">
+              Copy the key for {made.name} now. It is shown only once; if you lose it, revoke it and create another.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Input readOnly aria-label="New API key" value={made.secret} className="min-w-60 flex-1 font-mono" />
+              <CopyButton text={made.secret} label="Copy the API key" />
+            </div>
+          </div>
+        )}
+        <Failure error={create.error} />
+        {!!keys?.length && (
+          <ul className="grid divide-y">
+            {keys.map(key => (
+              <li key={key.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{key.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {key.createdBy ? `From ${key.createdBy} · ` : ''}
+                    {key.lastUsedAt ? `last used ${day.format(new Date(key.lastUsedAt))}` : 'never used'}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    revoke.reset();
+                    setRevoking(key);
+                  }}
+                >
+                  Revoke
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+      <AlertDialog open={!!revoking} onOpenChange={open => !open && !revoke.isPending && setRevoking(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke {revoking?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Servers using this key are refused from their next request. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Failure error={revoke.error} />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revoke.isPending}>Keep it</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={revoke.isPending}
+              onClick={() => revoking && revoke.mutate(revoking.id)}
+            >
+              {revoke.isPending ? 'Revoking…' : 'Revoke'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

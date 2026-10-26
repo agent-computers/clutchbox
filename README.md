@@ -124,7 +124,7 @@ With [Bun](https://bun.sh), Node 24, and your own Postgres: `bun install`, copy 
 
 ### Your own browser: Playwright, browser-use, and Stagehand
 
-[`@agent-computers/playwright`](packages/playwright) applies a capture to any Chromium that Playwright drives, including a Chrome that browser-use or Stagehand attach to by CDP URL; [`@agent-computers/apply`](packages/apply) does the same over a raw CDP connection. Reading a member's latest capture from the web app over REST, with an organization API key, is [planned](https://github.com/agent-computers/agent-computers/issues/7). Until then, agents get synced sign-ins on the web app's computers, whose Chrome they can also drive over CDP.
+[`@agent-computers/playwright`](packages/playwright) applies a capture to any Chromium that Playwright drives, including a Chrome that browser-use or Stagehand attach to by CDP URL; [`@agent-computers/apply`](packages/apply) does the same over a raw CDP connection. Your servers read a member's latest capture from the web app over REST with an organization API key, which owners and admins create on the Organization page (see the [Playwright adapter](packages/playwright#readme)). Agents connected over MCP get synced sign-ins on the web app's computers instead, whose Chrome they can also drive over CDP.
 
 ## Packages
 
@@ -195,7 +195,7 @@ Install the extension, add the sites the agent needs, and connect the agent to t
 
 ### Does it work with browser-use, Stagehand, or Playwright MCP?
 
-Agents connected over MCP can drive their computer's Chrome over CDP. For your own Chrome, the adapters apply a capture to its default context, and you hand the agent the same CDP URL; reading the latest capture for them over REST is [planned](https://github.com/agent-computers/agent-computers/issues/7).
+Agents connected over MCP can drive their computer's Chrome over CDP. For your own Chrome, the adapters apply a capture to its default context, and you hand the agent the same CDP URL; read the latest capture for them over REST with an organization API key (`fetchCapture` in the [Playwright adapter](packages/playwright#readme)).
 
 ### Which sites work?
 

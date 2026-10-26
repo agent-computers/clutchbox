@@ -1,5 +1,5 @@
 import { applyCookies, cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
-import { type Capture, type CapturedCookie, siteOfCookie } from '@agent-computers/capture';
+import { type Capture, type CapturedCookie, captureSchema, siteOfCookie } from '@agent-computers/capture';
 import type { BrowserContext } from 'playwright-core';
 
 // What was last applied to a browser context: pass it to the next applyCapture so only what changed is written, and
@@ -37,4 +37,41 @@ export async function applyCapture(context: BrowserContext, capture: Capture, pr
   } finally {
     await page.close();
   }
+}
+
+// Reading captures from an Agent Computers server with an organization API key (`ack_…`), made by an owner or admin
+// on its Organization page. `server` is its origin, such as https://www.agent-computers.com. Pass `fetch` to use your
+// own. Errors carry the server's error code as `code`: unauthenticated (a wrong or revoked key), insufficient_scope,
+// not_found (no such member in the key's organization), no_capture (the member hasn't synced yet).
+export type ServerOptions = { server: string; apiKey: string; fetch?: typeof fetch };
+export class CaptureRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(`Agent Computers answered ${status} ${code}`);
+  }
+}
+async function get(options: ServerOptions, path: string) {
+  const response = await (options.fetch ?? fetch)(new URL(`/api/v1${path}`, options.server), {
+    headers: { authorization: `Bearer ${options.apiKey}` },
+  });
+  const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+  if (!response.ok)
+    throw new CaptureRequestError(response.status, typeof body.error === 'string' ? body.error : 'error');
+  return body;
+}
+// The key's organization's members, with when each last synced; null for one who hasn't.
+export async function listMembers(options: ServerOptions) {
+  const { members } = (await get(options, '/members')) as {
+    members: { id: string; name: string; email: string; role: string; lastSyncedAt: string | null }[];
+  };
+  return members;
+}
+// A member's latest capture, checked against the capture format. Needs a key with the captures scope.
+export async function fetchCapture(options: ServerOptions & { member: string }): Promise<Capture> {
+  const { capture } = (await get(options, `/members/${encodeURIComponent(options.member)}/capture`)) as {
+    capture: unknown;
+  };
+  return captureSchema.parse(capture);
 }

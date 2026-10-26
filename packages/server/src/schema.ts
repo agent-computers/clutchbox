@@ -193,6 +193,36 @@ export const invitations = pgTable(
     check('invitations_role', oneOf(table.role, MEMBER_ROLES)),
   ],
 );
+// What an organization API key may do. captures: read any member's latest capture.
+export const API_KEY_SCOPES = ['captures'] as const;
+// An organization's key for its developers' servers (api-keys.ts). Only the secret's SHA-256 is kept.
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: id(),
+    publicId: text('public_id').notNull().unique(),
+    organizationId: key('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    scopes: text('scopes').array().notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    // The membership that made it; kept as null once that member has left.
+    createdBy: key('created_by').references(() => memberships.id, { onDelete: 'set null' }),
+    lastUsedAt: time('last_used_at'),
+    revokedAt: time('revoked_at'),
+    ...timestamps(),
+  },
+  table => [
+    index('api_keys_organization_idx').on(table.organizationId),
+    index('api_keys_created_by_idx').on(table.createdBy),
+    check('api_keys_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
+    check(
+      'api_keys_scopes',
+      sql`cardinality(${table.scopes}) >= 1 AND ${table.scopes} <@ ARRAY[${sql.raw(API_KEY_SCOPES.map(scope => `'${scope}'`).join(', '))}]::text[]`,
+    ),
+  ],
+);
 // The membership a per-user row belongs to; see memberships.
 const membershipId = () => key('membership_id').references(() => memberships.id, { onDelete: 'cascade' });
 

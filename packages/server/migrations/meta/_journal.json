@@ -141,6 +141,13 @@
       "when": 1792987390788,
       "tag": "0019_organization_switching_and_quotas",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792988343863,
+      "tag": "0020_organization_api_keys",
+      "breakpoints": true
     }
   ]
 }

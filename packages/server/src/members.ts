@@ -65,11 +65,11 @@ export const ORGANIZATION_ID_PATTERN = publicIdPattern('organization');
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('base64url');
 const emailDomain = (email: string) => email.slice(email.lastIndexOf('@') + 1).toLowerCase();
-const manages = (role: Role) => role === 'owner' || role === 'admin';
+export const manages = (role: Role) => role === 'owner' || role === 'admin';
 // Admins grant and change only admin and member; owners anything.
 const mayGrant = (actor: Role, role: Role) => actor === 'owner' || role !== 'owner';
 
-async function roleOf(db: Pick<Database, 'select'>, member: Member): Promise<Role | null> {
+export async function roleOf(db: Pick<Database, 'select'>, member: Member): Promise<Role | null> {
   const [row] = await db
     .select({ role: schema.memberships.role })
     .from(schema.memberships)
