@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://www.clutchbox.dev">
-    <img src=".github/assets/banner.png" alt="Clutchbox: your agents, already signed in. Sync your sign-ins to where your agents run." width="100%">
+    <img src="brand/readme-banner.png" alt="Clutchbox: your agents, already signed in. Sync your sign-ins to where your agents run." width="100%">
   </a>
 
   <p>
@@ -159,7 +159,7 @@ Product routes come from the route manifest ([`packages/web/src/route-manifest.t
 
 Syncing sessions is sensitive, so the defaults are narrow and the code is open for you to audit.
 
-<img src="apps/extension/store/screenshot-2-control.png" alt="The extension's popup: you choose what syncs. Only the sites you add, each with its own Chrome permission; remove one, exclude domains, pause, or disconnect to delete the uploaded copy." width="640">
+<img src="brand/chrome-web-store/screenshot-2-control.png" alt="The extension's popup: you choose what syncs. Only the sites you add, each with its own Chrome permission; remove one, exclude domains, pause, or disconnect to delete the uploaded copy." width="640">
 
 - **Opt-in per site.** No host permissions at install. Each site you add asks Chrome for its own permission, and only those sites' cookies are read. Capturing every site takes an explicit **Allow all sites**, which only builds outside the Chrome Web Store offer. Excluded domains are never captured.
 - **One way.** Captures flow from your browser to your agents, never back.

@@ -2,7 +2,7 @@
 
 The Chrome extension (Manifest V3) that keeps your agents signed in to the sites you choose. It captures those sites' cookies with their full metadata and syncs them, one way, to your server: the [web app](../web) when you self-host, or [clutchbox.dev](https://www.clutchbox.dev) from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi).
 
-<img src="store/screenshot-2-control.png" alt="The extension's popup: github.com synced, with Sync now, Pause, Remove this site, and Add another site." width="640">
+<img src="../../brand/chrome-web-store/screenshot-2-control.png" alt="The extension's popup: github.com synced, with Sync now, Pause, Remove this site, and Add another site." width="640">
 
 - **Only the sites you add,** each behind its own Chrome permission; it requests no host permissions at install. Builds outside the Chrome Web Store also offer **Allow all sites**, as an explicit choice.
 - **Excluded domains** are never captured, even under Allow all sites.

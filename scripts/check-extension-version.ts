@@ -1,6 +1,6 @@
 // CI: extension code changed since the base commit needs a new version in apps/extension/package.json.
 // Users install builds by hand, so two different builds sharing a version would hide an update from them.
-// Usage: check-extension-version <base commit>. The store listing (apps/extension/store) and docs are not counted.
+// Usage: check-extension-version <base commit>. Docs are not counted.
 import { execFileSync } from 'node:child_process';
 import { compareVersions } from '../packages/capture/src/index';
 
@@ -29,7 +29,7 @@ if (!before) {
 // The capture package ships inside the extension.
 const changed = git('diff', '--name-only', base, 'HEAD', '--', 'apps/extension', 'packages/capture/src')
   .split('\n')
-  .filter(file => file && !/\.(test\.ts|md)$/.test(file) && !file.startsWith('apps/extension/store/'));
+  .filter(file => file && !/\.(test\.ts|md)$/.test(file));
 // YY.MDD.PATCH: 26.1016.0 is the first release on October 16, 2026 (January 1 is 101); PATCH counts up within a day.
 const calendar = /^\d{2}\.(?:[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\.(?:0|[1-9]\d*)$/;
 if (before !== after && (!calendar.test(after) || compareVersions(after, before) <= 0)) {

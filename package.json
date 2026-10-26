@@ -24,7 +24,6 @@
     "test": "vitest run",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "render:readme-images": "node --import tsx scripts/render-readme-images.ts",
     "db:generate": "bun run --cwd packages/server drizzle-kit generate",
     "db:migrate": "node --import tsx packages/server/src/migrate.ts",
     "test:accounts": "vitest run packages/server/src/accounts.test.ts",
