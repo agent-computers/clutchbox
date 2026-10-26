@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { asc, eq } from 'drizzle-orm';
@@ -6,10 +6,8 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAuth } from './auth';
-import { EXTENSION_CLIENT_ID } from './browsers';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
-import { newPublicId } from './ids';
 import { backfillMemberships, createOrganization, singleOrganization, type Tenancy } from './organizations';
 import * as schema from './schema';
 
@@ -58,7 +56,9 @@ async function person(id: string) {
 // A row in one table of each kind: one row per person, and many rows per person.
 async function rows(userId: string) {
   await db.insert(schema.syncSettings).values({ userId, sealed: 'sealed' });
-  await db.insert(schema.computerUsage).values({ userId, month: '2026-10-01' });
+  await db
+    .insert(schema.connectedBrowsers)
+    .values({ userId, publicId: `brw_${userId}`, authorizationCodeId: `code-${userId}` });
 }
 const membershipsOf = (userId: string) =>
   db
@@ -79,9 +79,9 @@ const scopedRows = async (userId: string) => [
     .from(schema.syncSettings)
     .where(eq(schema.syncSettings.userId, userId))),
   ...(await db
-    .select({ membershipId: schema.computerUsage.membershipId })
-    .from(schema.computerUsage)
-    .where(eq(schema.computerUsage.userId, userId))),
+    .select({ membershipId: schema.connectedBrowsers.membershipId })
+    .from(schema.connectedBrowsers)
+    .where(eq(schema.connectedBrowsers.userId, userId))),
 ];
 
 describe('backfill for accounts made before organizations', () => {
@@ -116,56 +116,6 @@ describe('backfill for accounts made before organizations', () => {
     expect(second).toMatchObject({ role: 'owner', personalUserId: 'second' });
     expect(first!.organizationId).not.toBe(second!.organizationId);
     expect(await scopedRows('second')).toEqual([{ membershipId: second!.id }, { membershipId: second!.id }]);
-  });
-
-  it("binds agents' grants and their tokens to the person's membership, and leaves the extension's", async () => {
-    await person('first');
-    const agent = 'https://client.example.test/agent.json';
-    const now = new Date();
-    for (const clientId of [agent, EXTENSION_CLIENT_ID]) {
-      await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId, redirectUris: [] });
-      // The consent has no reference; its tokens have one from an earlier scheme that names no membership.
-      await db.insert(schema.oauthConsent).values({
-        id: randomUUID(),
-        clientId,
-        userId: 'first',
-        scopes: ['offline_access'],
-        createdAt: now,
-        updatedAt: now,
-      });
-      const tokens = {
-        clientId,
-        userId: 'first',
-        referenceId: randomUUID(),
-        scopes: ['offline_access'],
-        expiresAt: now,
-        createdAt: now,
-      };
-      await db.insert(schema.oauthRefreshToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
-      await db.insert(schema.oauthAccessToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
-    }
-    await backfillMemberships(db, personal);
-    const [membership] = await db
-      .select({ publicId: schema.memberships.publicId })
-      .from(schema.memberships)
-      .where(eq(schema.memberships.userId, 'first'));
-    const references = async (clientId: string) =>
-      Promise.all(
-        [schema.oauthConsent, schema.oauthRefreshToken, schema.oauthAccessToken].map(async table =>
-          (await db.select({ referenceId: table.referenceId }).from(table).where(eq(table.clientId, clientId))).map(
-            row => row.referenceId,
-          ),
-        ),
-      );
-    expect(await references(agent)).toEqual([[membership!.publicId], [membership!.publicId], [membership!.publicId]]);
-    // A grant for a membership since removed stays out of the person's remaining one.
-    const removed = newPublicId('membership');
-    await db.update(schema.oauthConsent).set({ referenceId: removed }).where(eq(schema.oauthConsent.clientId, agent));
-    await backfillMemberships(db, personal);
-    expect((await references(agent))[0]).toEqual([removed]);
-    const extension = await references(EXTENSION_CLIENT_ID);
-    expect(extension[0]).toEqual([null]);
-    expect(extension.slice(1).flat()).not.toContain(membership!.publicId);
   });
 
   it('changes nothing when run again', async () => {
@@ -243,18 +193,9 @@ describe('a person in two organizations', () => {
     const [oldest, team] = await membershipsOf('first');
     expect(team).toMatchObject({ organizationId: shared, role: 'member' });
 
-    await db.insert(schema.oauthClient).values({ id: 'agent', clientId: 'agent', redirectUris: [] });
-    const now = new Date();
-    await db
-      .insert(schema.oauthConsent)
-      .values({ id: 'grant', clientId: 'agent', userId: 'first', scopes: [], createdAt: now, updatedAt: now });
-    // Rows and grants from before the person had any membership could belong to either organization: the backfill
-    // leaves them.
+    // Rows from before the person had any membership could belong to either organization: the backfill leaves them.
     await backfillMemberships(db, personal);
     expect(await scopedRows('first')).toEqual([{ membershipId: null }, { membershipId: null }]);
-    expect(await db.select({ referenceId: schema.oauthConsent.referenceId }).from(schema.oauthConsent)).toEqual([
-      { referenceId: null },
-    ]);
 
     await db.insert(schema.setups).values({ userId: 'first' });
     const [setup] = await db.select().from(schema.setups).where(eq(schema.setups.userId, 'first'));

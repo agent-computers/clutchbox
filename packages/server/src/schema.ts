@@ -141,8 +141,9 @@ export const organizations = pgTable(
 );
 // A person's place in one organization. Per-user tables below carry it as membership_id beside user_id while data
 // moves from per-user to per-membership: a trigger fills it on insert from the person's membership, and the migration
-// runner fills older rows (organizations.ts, backfillMemberships). Everything below is read by it; user_id stays beside
-// it until the contract step, and user_settings stays the person's.
+// runner fills older rows (organizations.ts, backfillMemberships). Everything below is read by it, and computers, their
+// sessions, tool calls, and usage have no user_id; on the rest it stays beside it until the contract step, and
+// user_settings stays the person's.
 export const memberships = pgTable(
   'memberships',
   {
@@ -174,10 +175,7 @@ export const computers = pgTable(
     id: id(),
     // Also the provider's idempotency key and the applied capture's associated data, so it never changes.
     publicId: text('public_id').notNull().unique(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId().unique(),
+    membershipId: membershipId().notNull().unique(),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
     sandboxId: text('sandbox_id'),
     // The last applied capture, the sites it wrote (cleared when absent later), and its cookies sealed
@@ -222,7 +220,6 @@ export const computers = pgTable(
     ...timestamps(),
   },
   table => [
-    index('computers_user_idx').on(table.userId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
     check('computers_time_zone', timeZoneName(table.timeZone)),
     check(
@@ -243,10 +240,7 @@ export const computerSessions = pgTable(
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId(),
+    membershipId: membershipId().notNull(),
     clientId: text('client_id')
       .notNull()
       .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
@@ -264,7 +258,6 @@ export const computerSessions = pgTable(
     index('computer_sessions_membership_idx').on(table.membershipId),
     uniqueIndex('computer_sessions_live_unique').on(table.computerId).where(sql`${table.endedAt} IS NULL`),
     index('computer_sessions_computer_idx').on(table.computerId),
-    index('computer_sessions_user_client_idx').on(table.userId, table.clientId),
     index('computer_sessions_client_idx').on(table.clientId),
     check('computer_sessions_end_reason', oneOf(table.endReason, SESSION_END_REASONS)),
     check('computer_sessions_ended', sql`(${table.endedAt} IS NULL) = (${table.endReason} IS NULL)`),
@@ -278,10 +271,7 @@ export const toolCalls = pgTable(
   'tool_calls',
   {
     id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId(),
+    membershipId: membershipId().notNull(),
     clientId: text('client_id')
       .notNull()
       .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
@@ -296,7 +286,6 @@ export const toolCalls = pgTable(
   },
   table => [
     index('tool_calls_membership_idx').on(table.membershipId),
-    index('tool_calls_user_started_idx').on(table.userId, table.startedAt),
     index('tool_calls_started_idx').on(table.startedAt),
     index('tool_calls_client_idx').on(table.clientId),
     index('tool_calls_computer_session_idx').on(table.computerSessionId),
@@ -391,24 +380,17 @@ export const syncSettings = pgTable('sync_settings', {
   sealed: text('sealed').notNull(),
   ...timestamps(),
 });
-// Computer seconds charged per member per UTC calendar month, against the free allowance. The unique user_id and month
-// stays until the code that wrote it is gone, so a person charges one membership a month until then.
+// Computer seconds charged per member per UTC calendar month, against the free allowance.
 export const computerUsage = pgTable(
   'computer_usage',
   {
     id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId(),
+    membershipId: membershipId().notNull(),
     month: date('month', { mode: 'string' }).notNull(),
     usedSeconds: integer('used_seconds').notNull().default(0),
     ...timestamps(),
   },
-  table => [
-    unique('computer_usage_membership_month_unique').on(table.membershipId, table.month),
-    unique('computer_usage_user_month_unique').on(table.userId, table.month),
-  ],
+  table => [unique('computer_usage_membership_month_unique').on(table.membershipId, table.month)],
 );
 // Setup progress, one row per member. First-completion times and
 // firstSetUpAt are never cleared, so they record the funnel; Delete everything clears only

@@ -151,7 +151,11 @@ describe('main computer', () => {
     const a = await user('a');
     const [row] = await db
       .insert(schema.computers)
-      .values({ userId: a.userId, publicId: newPublicId('computer'), updatedAt: new Date(Date.now() - 10 * 60_000) })
+      .values({
+        membershipId: a.membershipId,
+        publicId: newPublicId('computer'),
+        updatedAt: new Date(Date.now() - 10 * 60_000),
+      })
       .returning();
     await fake.provider.create(row!.publicId, 60_000);
     await open(a);
@@ -227,7 +231,6 @@ describe('memberships', () => {
     expect(fake.calls.create).toBe(2);
     const rows = await db.select().from(schema.computers);
     expect(rows.map(row => row.membershipId).sort()).toEqual([a.membershipId, team.membershipId].sort());
-    expect(rows.every(row => row.userId === a.userId)).toBe(true);
     // A session works only for the membership that opened it, though the person and the agent are the same.
     for (const [member, sessionId] of [
       [team, personal.sessionId],
@@ -255,20 +258,6 @@ describe('memberships', () => {
     expect((await db.select().from(schema.computers)).map(row => row.membershipId)).toEqual([a.membershipId]);
     expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
     expect(await computerView(db, metering, team)).toMatchObject({ computer: null });
-  });
-  it('keeps using a computer made before memberships, with no new create', async () => {
-    const a = await user('a');
-    // Written by code that named only the person: the membership comes from the insert trigger and the backfill.
-    const [row] = await db
-      .insert(schema.computers)
-      .values({ userId: a.userId, publicId: newPublicId('computer') })
-      .returning();
-    const sandboxId = await fake.provider.create(row!.publicId, 60_000);
-    await db.update(schema.computers).set({ status: 'ready', sandboxId }).where(eq(schema.computers.id, row!.id));
-    const opened = await open(a);
-    expect(fake.calls.create).toBe(1);
-    expect(await computerRow()).toMatchObject({ id: row!.id, membershipId: a.membershipId, sandboxId });
-    expect(await sessionRow(opened.sessionId)).toMatchObject({ computerId: row!.id, membershipId: a.membershipId });
   });
 });
 
@@ -984,7 +973,7 @@ describe('live view', () => {
     // The MCP layer records the agent's user_in_control call; the page names the waiting agent from it.
     const { id: sessionKey } = await sessionRow(agent.sessionId);
     await db.insert(schema.toolCalls).values({
-      userId: a.userId,
+      membershipId: a.membershipId,
       clientId: claudeCode,
       computerSessionId: sessionKey,
       tool: 'computer_screenshot',

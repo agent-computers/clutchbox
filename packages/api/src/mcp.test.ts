@@ -877,9 +877,7 @@ describe('main computer tools', () => {
       null,
     ]);
     const { membershipId } = await member(a.id);
-    expect(
-      rows.every(row => row.userId === a.id && row.membershipId === membershipId && row.endedAt >= row.startedAt),
-    ).toBe(true);
+    expect(rows.every(row => row.membershipId === membershipId && row.endedAt >= row.startedAt)).toBe(true);
     expect(session!.membershipId).toBe(membershipId);
     expect(JSON.stringify(rows)).not.toContain('hunter2');
   });
@@ -889,8 +887,9 @@ describe('main computer tools', () => {
     const client = await register();
     const token = (await authorize(a.cookie, client))!.access_token;
     const day = 24 * 3600_000;
+    const { membershipId } = await member(a.id);
     const record = (daysAgo: number) => ({
-      userId: a.id,
+      membershipId,
       clientId: client,
       tool: 'account_identity',
       startedAt: new Date(Date.now() - daysAgo * day),
@@ -1141,8 +1140,7 @@ describe('agent connections and setup', () => {
       { clientId: x, membershipId: home.membershipId, endReason: null },
       { clientId: y, membershipId: inTeam!.id, endReason: null },
     ]);
-    // A token naming a membership its grant is not for, another person's, or none from a grant not in the person's
-    // oldest membership, acts nowhere.
+    // A token naming a membership its grant is not for, another person's, or none, acts nowhere.
     const b = await identity('b');
     const iat = Math.floor(Date.now() / 1000) + 1;
     for (const membership of [consent!.referenceId, await membershipOf(b.id), 42, undefined])
@@ -1160,9 +1158,6 @@ describe('agent connections and setup', () => {
       { clientId: x, membershipId: home.membershipId, endReason: 'revoked' },
       { clientId: y, membershipId: inTeam!.id, endReason: null },
     ]);
-    // A token from before grants named a membership acts in the person's oldest one.
-    await authorize(a.cookie, x);
-    expect((await liveMcpPrincipal(db, { sub: a.id, client_id: x, iat: iat + 1 }))?.member).toEqual(home);
     // Leaving an organization ends the grants made there.
     await db.delete(schema.memberships).where(eq(schema.memberships.id, inTeam!.id));
     expect((await call(teamToken)).status).toBe(401);
@@ -1271,7 +1266,10 @@ describe('agent connections and setup', () => {
       release();
       expect((await open).result.structuredContent.error, user).toBe('access_revoked');
       expect(
-        await db.select().from(schema.computerSessions).where(eq(schema.computerSessions.userId, id)),
+        await db
+          .select()
+          .from(schema.computerSessions)
+          .where(eq(schema.computerSessions.membershipId, (await member(id)).membershipId)),
         user,
       ).toEqual([]);
     }

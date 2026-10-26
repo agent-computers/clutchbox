@@ -107,14 +107,17 @@ export async function earliestLiveConsentAt(
 }
 
 // A valid JWT is necessary, but never sufficient for application access.
-// The principal acts as the membership its token names. A token without the claim was issued before grants named
-// one, when every grant was the person's in their oldest membership, and the migration run bound those grants to it
-// (organizations.ts, backfillMemberships).
+// The principal acts as the membership its token names.
 export async function liveMcpPrincipal(db: Pick<Database, 'select'>, claims: Claims): Promise<McpPrincipal | null> {
-  if (!claims.sub || typeof claims.client_id !== 'string' || typeof claims.iat !== 'number') return null;
   const named = claims[MEMBERSHIP_CLAIM];
-  if (named !== undefined && typeof named !== 'string') return null;
-  const membership = named === undefined ? oldestMembership(claims.sub) : eq(schema.memberships.publicId, named);
+  if (
+    !claims.sub ||
+    typeof claims.client_id !== 'string' ||
+    typeof claims.iat !== 'number' ||
+    typeof named !== 'string'
+  )
+    return null;
+  const membership = eq(schema.memberships.publicId, named);
   const [grant] = await liveGrant(db, claims.sub, claims.client_id, membership);
   // Tokens issued before this consent belong to a revoked earlier grant and never revive.
   if (!grant?.scopes.includes(MCP_SCOPE) || claims.iat < Math.floor(grant.createdAt.getTime() / 1000)) return null;

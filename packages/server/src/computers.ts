@@ -142,7 +142,7 @@ async function ensureComputer(
 ): Promise<ComputerRow | ComputerFailure> {
   const [inserted] = await db
     .insert(schema.computers)
-    .values({ userId: member.userId, membershipId: member.membershipId, publicId: newPublicId('computer') })
+    .values({ membershipId: member.membershipId, publicId: newPublicId('computer') })
     .onConflictDoNothing()
     .returning(computerColumns);
   let row = inserted;
@@ -538,7 +538,6 @@ export async function openComputerSession(
         .insert(schema.computerSessions)
         .values({
           publicId,
-          userId: caller.userId,
           membershipId: caller.membershipId,
           clientId: caller.clientId,
           computerId: computer.id,
@@ -899,7 +898,8 @@ async function applyTimeZone(db: Database, computerId: number, session: Computer
     const [row] = await db
       .select({ wanted: schema.userSettings.timeZone, applied: schema.computers.timeZone })
       .from(schema.computers)
-      .leftJoin(schema.userSettings, eq(schema.userSettings.userId, schema.computers.userId))
+      .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computers.membershipId))
+      .leftJoin(schema.userSettings, eq(schema.userSettings.userId, schema.memberships.userId))
       .where(eq(schema.computers.id, computerId));
     if (!row?.wanted || row.wanted === row.applied) return;
     await session.setTimeZone(row.wanted);

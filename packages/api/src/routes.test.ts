@@ -248,9 +248,10 @@ describe('API routes', () => {
       { ...(await member('a')), clientId: 'agent-client' },
     );
     const now = new Date();
+    const [ma, mb] = [await member('a'), await member('b')];
     await db.insert(schema.toolCalls).values(
-      ['a', 'b'].map(userId => ({
-        userId,
+      [ma, mb].map(({ membershipId }) => ({
+        membershipId,
         clientId: 'agent-client',
         tool: 'computer_open',
         startedAt: now,
@@ -259,8 +260,10 @@ describe('API routes', () => {
     );
     expect((await request('DELETE', '/computer', { cookie: a })).status).toBe(200);
     expect(
-      (await db.select({ userId: schema.toolCalls.userId }).from(schema.toolCalls)).map(row => row.userId),
-    ).toEqual(['b']);
+      (await db.select({ membershipId: schema.toolCalls.membershipId }).from(schema.toolCalls)).map(
+        row => row.membershipId,
+      ),
+    ).toEqual([mb.membershipId]);
     expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
       capture: null,
       computer: null,
@@ -671,7 +674,9 @@ describe('API routes', () => {
     const a = await identity('a');
     const b = await identity('b');
     const page = randomUUID();
-    await db.insert(schema.computers).values({ userId: 'a', publicId: 'computer_creating' });
+    await db
+      .insert(schema.computers)
+      .values({ membershipId: (await member('a')).membershipId, publicId: 'computer_creating' });
     const starting = await client()('POST', '/computer/takeover', { cookie: a, body: { lease: page } });
     expect(starting.status).toBe(409);
     expect(await starting.json()).toMatchObject({ error: 'starting' });

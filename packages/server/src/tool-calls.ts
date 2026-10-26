@@ -49,7 +49,6 @@ export async function recordToolCall(
     const { member, sessionId, trace, ...row } = call;
     await db.insert(schema.toolCalls).values({
       ...row,
-      userId: member.userId,
       membershipId: member.membershipId,
       computerSessionId:
         sessionId && SESSION_ID_PATTERN.test(sessionId)

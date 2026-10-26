@@ -92,6 +92,13 @@
       "when": 1792975884323,
       "tag": "0012_sync_by_membership",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792977415841,
+      "tag": "0013_computers_membership_required",
+      "breakpoints": true
     }
   ]
 }
