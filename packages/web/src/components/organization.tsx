@@ -29,7 +29,7 @@ import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/tog
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ellipsis } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   ApiError,
   api,
@@ -38,6 +38,7 @@ import {
   joinableQuery,
   type OrganizationView,
   organizationQuery,
+  organizationsQuery,
   type Role,
 } from '../lib/api';
 import { AppPage } from './app-shell';
@@ -50,6 +51,7 @@ const refusals: Record<string, string> = {
   last_owner: 'An organization needs an owner. Make someone else an owner first.',
   not_found: 'That is no longer here. Reload to see the latest.',
   invalid_domain: 'Enter domains only, like acme.com.',
+  organization_limit: 'You have created as many organizations as you can.',
   public_email_domain:
     'Anyone can get an address at that domain, so it cannot let people join. Use your own domain, or invite by link.',
 };
@@ -86,6 +88,7 @@ export function Organization() {
           {manages(data.role) && <Invitations role={data.role} />}
           {manages(data.role) && <JoinDomains domains={data.organization.joinDomains} />}
           <OtherOrganizations />
+          <NewOrganization />
           <Leave
             name={data.organization.name}
             onlyOwner={data.role === 'owner' && data.members.filter(member => member.role === 'owner').length === 1}
@@ -149,7 +152,7 @@ function Members({ view }: { view: OrganizationView }) {
                           onValueChange={role => changeRole.mutate({ id: member.id, role: role as Role })}
                         >
                           {grantable(view.role).map(role => (
-                            <DropdownMenuRadioItem key={role} value={role} className="min-h-11">
+                            <DropdownMenuRadioItem closeOnClick key={role} value={role} className="min-h-11">
                               {roleNames[role]}
                             </DropdownMenuRadioItem>
                           ))}
@@ -353,6 +356,70 @@ function OtherOrganizations() {
       </CardHeader>
       <CardContent>
         <JoinableOrganizations />
+      </CardContent>
+    </Card>
+  );
+}
+
+// Offered only where the deployment lets people create organizations. The new one is where the person acts next.
+function NewOrganization() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery(organizationsQuery);
+  const fieldId = useId();
+  const field = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState('');
+  const create = useMutation({
+    mutationFn: () => api<{ organization: { id: string; name: string } }>('/organizations', 'POST', { name }),
+    onSuccess: async () => {
+      setName('');
+      await queryClient.invalidateQueries();
+      window.scrollTo({ top: 0 });
+    },
+  });
+  // The switcher's New organization comes here.
+  const canCreate = !!data?.canCreate;
+  useEffect(() => {
+    if (canCreate && window.location.hash === '#new') {
+      field.current?.scrollIntoView({ block: 'center' });
+      field.current?.focus();
+    }
+  }, [canCreate]);
+  if (!canCreate) return null;
+  return (
+    <Card id="new" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>
+          <h2>New organization</h2>
+        </CardTitle>
+        <CardDescription>
+          For a team or an app of yours. You own it, invite others to it, and switch to it from the menu at the top.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          className="grid gap-3"
+          onSubmit={event => {
+            event.preventDefault();
+            create.mutate();
+          }}
+        >
+          <Label htmlFor={fieldId}>Name</Label>
+          <div className="flex flex-wrap gap-3">
+            <Input
+              id={fieldId}
+              ref={field}
+              required
+              maxLength={100}
+              value={name}
+              onChange={event => setName(event.target.value)}
+              className="min-w-60 flex-1"
+            />
+            <Button type="submit" disabled={create.isPending || !name.trim()}>
+              {create.isPending ? 'Creating…' : 'Create organization'}
+            </Button>
+          </div>
+          <Failure error={create.error} />
+        </form>
       </CardContent>
     </Card>
   );

@@ -137,9 +137,14 @@ export const organizations = pgTable(
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
     joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
+    // Computer minutes a month the deployment allows this organization, for its metering hook; null for its default.
+    computerMinutes: integer('computer_minutes'),
     ...timestamps(),
   },
-  table => [check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`)],
+  table => [
+    check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
+    check('organizations_computer_minutes', sql`${table.computerMinutes} >= 0`),
+  ],
 );
 // A person's place in one organization. Every app table below belongs to one, as membership_id, except user_settings,
 // which is the person's in every organization.
@@ -428,7 +433,12 @@ export const userSettings = pgTable(
     developerUpdatesAt: time('developer_updates_at'),
     // The IANA time zone the user's browser last reported (time-zones.ts); their computer follows it.
     timeZone: text('time_zone'),
+    // The membership the person last switched to (organizations.ts, currentMember); null for their oldest.
+    currentMembershipId: key('current_membership_id').references(() => memberships.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
-  table => [check('user_settings_time_zone', timeZoneName(table.timeZone))],
+  table => [
+    check('user_settings_time_zone', timeZoneName(table.timeZone)),
+    index('user_settings_current_membership_idx').on(table.currentMembershipId),
+  ],
 );

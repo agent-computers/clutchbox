@@ -14,6 +14,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@agent-computers/ui/components/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@agent-computers/ui/components/dropdown-menu';
 import { Separator } from '@agent-computers/ui/components/separator';
 import { Spinner } from '@agent-computers/ui/components/spinner';
 import {
@@ -26,8 +33,10 @@ import {
 } from '@better-auth-ui/core/plugins/oauth-provider';
 import { useAuth, useSignOut } from '@better-auth-ui/react';
 import { useOAuthConsent } from '@better-auth-ui/react/plugins/oauth-provider';
-import { useQueryClient } from '@tanstack/react-query';
-import { AppWindow, Check, Ellipsis, Link as LinkIcon, Shield } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AppWindow, Check, ChevronsUpDown, Ellipsis, Link as LinkIcon, Shield } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { api } from '../lib/api';
 import { UserAvatar } from './auth/user-avatar';
 
 type OAuthConsentProps = {
@@ -38,9 +47,19 @@ type OAuthConsentProps = {
   scopeMetadata: OAuthScopeMetadataMap;
   loopback: boolean;
   clientHost: string;
+  // The person's organizations; the grant is for the current one, which they may switch first.
+  organizations: { id: string; name: string; current: boolean }[];
 };
 
-export function OAuthConsent({ oauthQuery, client, user, scopeMetadata, loopback, clientHost }: OAuthConsentProps) {
+export function OAuthConsent({
+  oauthQuery,
+  client,
+  user,
+  scopeMetadata,
+  loopback,
+  clientHost,
+  organizations,
+}: OAuthConsentProps) {
   // The server supplies verified request and user data; all auth controls share one client configuration.
   const { authClient } = useAuth<OAuthProviderAuthClient>();
   const request = parseOAuthAuthorizationRequest(oauthQuery);
@@ -62,7 +81,19 @@ export function OAuthConsent({ oauthQuery, client, user, scopeMetadata, loopback
   const logoUrl = sanitizeOAuthClientUrl(client.logo);
   const policyUrl = sanitizeOAuthClientUrl(client.policy);
   const termsUrl = sanitizeOAuthClientUrl(client.terms);
-  const pending = consent.isPending || consent.isSuccess || switchAccount.isPending || switchAccount.isSuccess;
+  // A grant is for one organization: the one the person acts in, which they can switch here before allowing.
+  const router = useRouter();
+  const switchOrganization = useMutation({
+    mutationFn: (organizationId: string) => api('/organizations/current', 'PUT', { organizationId }),
+    onSuccess: () => router.refresh(),
+  });
+  const current = organizations.find(organization => organization.current);
+  const pending =
+    consent.isPending ||
+    consent.isSuccess ||
+    switchAccount.isPending ||
+    switchAccount.isSuccess ||
+    switchOrganization.isPending;
 
   return (
     <Card className="max-h-[calc(100dvh-8rem)] w-full gap-0 py-0">
@@ -100,6 +131,44 @@ export function OAuthConsent({ oauthQuery, client, user, scopeMetadata, loopback
               {switchAccount.isPending && <Spinner />}
               Not you? Use another account
             </Button>
+            {current && organizations.length > 1 && (
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+                For
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    disabled={pending}
+                    aria-label={`Organization: ${current.name}. Change`}
+                    render={<Button variant="secondary" size="sm" />}
+                  >
+                    {switchOrganization.isPending && <Spinner />}
+                    <span className="max-w-48 truncate">{current.name}</span>
+                    <ChevronsUpDown aria-hidden />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center" className="min-w-48">
+                    <DropdownMenuRadioGroup
+                      value={current.id}
+                      onValueChange={id => id !== current.id && switchOrganization.mutate(id as string)}
+                    >
+                      {organizations.map(organization => (
+                        <DropdownMenuRadioItem
+                          closeOnClick
+                          key={organization.id}
+                          value={organization.id}
+                          className="min-h-11"
+                        >
+                          {organization.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+            {switchOrganization.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                The organization did not change. Please try again.
+              </p>
+            )}
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-6 sm:px-6">

@@ -48,6 +48,11 @@ export type OrganizationView = {
   members: { id: string; name: string; email: string; role: Role; joinedAt: string; you: boolean }[];
 };
 export type Invitation = { id: string; role: Role; createdAt: string; expiresAt: string; invitedBy: string | null };
+// Every organization you are in, and whether this deployment lets you create more.
+export type OrganizationsView = {
+  organizations: { id: string; name: string; personal: boolean; role: Role; current: boolean }[];
+  canCreate: boolean;
+};
 // An organization you may join because it allows your email address's domain.
 export type JoinableOrganization = { id: string; name: string };
 
@@ -96,6 +101,10 @@ export const browsersQuery = queryOptions({
 export const organizationQuery = queryOptions({
   queryKey: ['organization'],
   queryFn: () => api<OrganizationView>('/organization'),
+});
+export const organizationsQuery = queryOptions({
+  queryKey: ['organizations'],
+  queryFn: () => api<OrganizationsView>('/organizations'),
 });
 export const invitationsQuery = queryOptions({
   queryKey: ['organization', 'invitations'],

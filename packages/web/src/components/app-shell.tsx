@@ -35,6 +35,7 @@ import { shellIcons, useShell } from '../deployment';
 import { api, browsersQuery, computerQuery, grantsQuery, type SetupView, setupQuery, syncQuery } from '../lib/api';
 import { computerStatus } from '../lib/computer';
 import { UserButton } from './auth/user-button';
+import { OrganizationSwitcher } from './organization-switcher';
 
 export type AppUser = { id: string; name: string; email: string; image?: string | null };
 const UserContext = createContext<AppUser | null>(null);
@@ -173,7 +174,7 @@ function AppSidebar({
   };
   return (
     <Sidebar>
-      <SidebarHeader className="px-4 pt-6 pb-4">
+      <SidebarHeader className="gap-4 px-4 pt-6 pb-4">
         <Link
           href={home}
           onClick={follow(home)}
@@ -182,6 +183,13 @@ function AppSidebar({
         >
           agent computers
         </Link>
+        <OrganizationSwitcher
+          onCreate={() => {
+            setOpenMobile(false);
+            const href = '/app/organization#new';
+            if (!guard.current?.(() => router.push(href))) router.push(href);
+          }}
+        />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

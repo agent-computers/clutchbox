@@ -4,7 +4,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { agentOf, clientHost } from './agents';
 import { EXTENSION_CLIENT_ID } from './browsers';
 import type { Database } from './database';
-import type { Member } from './organizations';
+import { currentMember, type Member } from './organizations';
 import * as schema from './schema';
 
 // The MCP grant. The MCP endpoint and its tools are in packages/api/src/mcp.ts.
@@ -30,9 +30,6 @@ const boundMembership = and(
   eq(schema.memberships.userId, schema.oauthConsent.userId),
   eq(schema.memberships.publicId, schema.oauthConsent.referenceId),
 );
-// The person's oldest membership, the one currentMember (organizations.ts) picks.
-const oldestMembership = (userId: string) =>
-  sql`${schema.memberships.id} = (select min(id) from memberships where user_id = ${userId})`;
 // A row of an OAuth table that belongs to the member's grants.
 const boundTo = (table: { userId: AnyPgColumn; referenceId: AnyPgColumn }, member: Member) =>
   and(
@@ -40,13 +37,15 @@ const boundTo = (table: { userId: AnyPgColumn; referenceId: AnyPgColumn }, membe
     sql`${table.referenceId} = (select public_id from memberships where id = ${member.membershipId})`,
   );
 
-// The membership a new grant is for: the person's current one, as currentMember (organizations.ts) resolves it, until
-// the consent page lets them choose. Null for an account the tenancy has not placed yet.
+// The membership a new grant is for: the person's current one (currentMember in organizations.ts), which they can
+// switch on the consent page first. Null for a person in no organization here.
 export async function consentMembership(db: Pick<Database, 'select'>, userId: string): Promise<string | null> {
+  const member = await currentMember(db, userId);
+  if (!member) return null;
   const [membership] = await db
     .select({ publicId: schema.memberships.publicId })
     .from(schema.memberships)
-    .where(oldestMembership(userId));
+    .where(eq(schema.memberships.id, member.membershipId));
   return membership?.publicId ?? null;
 }
 const liveAccount = and(

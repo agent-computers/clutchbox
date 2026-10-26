@@ -134,6 +134,13 @@
       "when": 1792985966174,
       "tag": "0018_members_and_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792987390788,
+      "tag": "0019_organization_switching_and_quotas",
+      "breakpoints": true
     }
   ]
 }

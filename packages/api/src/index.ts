@@ -56,7 +56,13 @@ import {
   revokeInvitation,
   setJoinDomains,
 } from '@agent-computers/server/members';
-import { currentMember } from '@agent-computers/server/organizations';
+import {
+  createOrganizationFor,
+  currentMember,
+  organizationsOf,
+  switchOrganization,
+  type Tenancy,
+} from '@agent-computers/server/organizations';
 import { MEMBER_ROLES } from '@agent-computers/server/schema';
 import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
 import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
@@ -123,14 +129,14 @@ export function createApi({
   auth: Auth;
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'>;
+  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & { tenancy?: Pick<Tenancy, 'create'> };
   // The extension build this deployment offers for download.
   extensionVersion?: string | undefined;
   minExtensionVersion?: string;
   extend?: ApiExtension;
 }) {
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
-  const { metering, operatorAdmin } = hooks;
+  const { metering, operatorAdmin, tenancy } = hooks;
   const running = { provider: computers, metering };
   // The member a request acts as: a sync token's browser's, or for app auth the person's current one (organizations.ts).
   // A person in no organization here yet gets not_a_member, which our web app answers with its join page.
@@ -139,6 +145,11 @@ export function createApi({
     const member = principal.member ?? (await currentMember(db, principal.id));
     if (!member) throw new HTTPException(403, { res: Response.json({ error: 'not_a_member' }, { status: 403 }) });
     return member;
+  };
+  // The signed-in person, without what a sync token adds.
+  const person = (c: Context<Env>) => {
+    const { id, name, email } = c.get('principal');
+    return { id, name, email };
   };
   // The Agent Computers site is never synced or added.
   const serverSite = siteOfHost(new URL(origin).hostname);
@@ -279,6 +290,26 @@ export function createApi({
     const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId));
+  });
+  // The person's organizations and switching between them; creating one only where the deployment's tenancy offers it.
+  app.get('/organizations', async c =>
+    c.json({ organizations: await organizationsOf(db, c.get('principal').id), canCreate: !!tenancy?.create }),
+  );
+  app.put('/organizations/current', async c => {
+    const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    if (!(await switchOrganization(db, c.get('principal').id, parsed.data.organizationId)))
+      return c.json({ error: 'not_found' }, 404);
+    return c.json({ current: parsed.data.organizationId });
+  });
+  app.post('/organizations', async c => {
+    const create = tenancy?.create;
+    if (!create) return c.json({ error: 'not_found' }, 404);
+    const parsed = await body(c, z.object({ name: z.string().trim().min(1).max(100) }).strict());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const created = await createOrganizationFor(db, create, person(c), parsed.data.name);
+    if (!created) return c.json({ error: 'organization_limit' }, 409);
+    return c.json({ organization: created }, 201);
   });
   // The browser's time zone, which the user's computer follows from its next open.
   app.put('/time-zone', async c => {

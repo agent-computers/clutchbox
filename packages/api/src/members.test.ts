@@ -14,10 +14,10 @@ import { openComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
-import { noMetering } from '../../server/src/hooks';
+import { defaultServerHooks, noMetering } from '../../server/src/hooks';
 import { membership } from '../../server/src/member-fixtures';
 import { invitationView, type Role } from '../../server/src/members';
-import { createOrganization, currentMember, type Member } from '../../server/src/organizations';
+import { createOrganization, currentMember, type Member, type Tenancy } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 
@@ -59,7 +59,16 @@ async function inOrganization(id: string, role: Role) {
   await db.update(schema.memberships).set({ role }).where(eq(schema.memberships.id, joined.membershipId));
   return { cookie: session, member: joined };
 }
-const api = () => createApi({ db, auth, origin, computers: fake.provider });
+// The deployment's tenancy may let people create organizations; by default it doesn't.
+let tenancy: Pick<Tenancy, 'create'> = {};
+const api = () =>
+  createApi({
+    db,
+    auth,
+    origin,
+    computers: fake.provider,
+    hooks: { ...defaultServerHooks, tenancy },
+  });
 function request(cookie: string, method: string, path: string, body?: unknown, from = origin) {
   return api().request(`${origin}/api/v1${path}`, {
     method,
@@ -105,6 +114,7 @@ beforeEach(async () => {
   vi.stubEnv('EXTENSION_ORIGINS', extension);
 });
 afterEach(async () => {
+  tenancy = {};
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   await pg.close();
@@ -335,5 +345,87 @@ describe('members and roles', () => {
     await db.update(schema.memberships).set({ role: 'member' }).where(eq(schema.memberships.id, founder.membershipId));
     const solo = await inOrganization('solo', 'owner');
     expect(await (await request(solo.cookie, 'POST', '/organization/leave')).json()).toEqual({ error: 'last_owner' });
+  });
+});
+
+describe('switching and creating organizations', () => {
+  it('list your organizations, switch only to your own, and act in the one switched to', async () => {
+    const { cookie } = await inOrganization('person', 'member');
+    expect((await request('', 'GET', '/organizations')).status).toBe(401);
+    expect(
+      (await request(cookie, 'PUT', '/organizations/current', { organizationId: 'org_x' }, 'https://evil.test')).status,
+    ).toBe(403);
+    await db.insert(schema.user).values({ id: 'other', name: 'Other', email: 'other@b.test', emailVerified: true });
+    const theirs = (await db.transaction(tx =>
+      createOrganization(tx, { name: 'Theirs', owner: { id: 'other', name: 'Other', email: 'other@b.test' } }),
+    ))!;
+    const own = (await db.transaction(tx =>
+      createOrganization(tx, { name: 'Own', owner: { id: 'person', name: 'P', email: 'person@acme.test' } }),
+    ))!;
+    const publicId = async (id: number) =>
+      (
+        await db
+          .select({ publicId: schema.organizations.publicId })
+          .from(schema.organizations)
+          .where(eq(schema.organizations.id, id))
+      )[0]!.publicId;
+    const listed = await (await request(cookie, 'GET', '/organizations')).json();
+    expect(listed).toEqual({
+      organizations: [
+        expect.objectContaining({ name: 'Acme', role: 'member', personal: false, current: true }),
+        expect.objectContaining({ name: 'Own', role: 'owner', personal: false, current: false }),
+      ],
+      canCreate: false,
+    });
+    for (const body of [{}, { organizationId: 'nope' }, { organizationId: 'org_x', extra: 1 }])
+      expect((await request(cookie, 'PUT', '/organizations/current', body)).status).toBe(400);
+    expect(
+      (await request(cookie, 'PUT', '/organizations/current', { organizationId: await publicId(theirs) })).status,
+    ).toBe(404);
+    const switched = await request(cookie, 'PUT', '/organizations/current', { organizationId: await publicId(own) });
+    expect(await switched.json()).toEqual({ current: await publicId(own) });
+    expect(await (await request(cookie, 'GET', '/organization')).json()).toMatchObject({
+      organization: { name: 'Own' },
+      role: 'owner',
+    });
+  });
+
+  it('create one only where the tenancy offers it, and act in it', async () => {
+    const { cookie } = await inOrganization('person', 'member');
+    expect((await request(cookie, 'POST', '/organizations', { name: 'Team' })).status).toBe(404);
+    let refuse = false;
+    tenancy = {
+      create: async (tx, owner, name) => (refuse ? null : createOrganization(tx, { name, owner })),
+    };
+    expect((await (await request(cookie, 'GET', '/organizations')).json()).canCreate).toBe(true);
+    expect((await request(cookie, 'POST', '/organizations', { name: 'Team' }, 'https://evil.test')).status).toBe(403);
+    for (const body of [{}, { name: '   ' }, { name: 'x'.repeat(101) }, { name: 'Team', extra: 1 }])
+      expect((await request(cookie, 'POST', '/organizations', body)).status, JSON.stringify(body)).toBe(400);
+    const created = await request(cookie, 'POST', '/organizations', { name: '  Team  ' });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ organization: { id: expect.stringMatching(/^org_/), name: 'Team' } });
+    expect(await (await request(cookie, 'GET', '/organization')).json()).toMatchObject({
+      organization: { name: 'Team' },
+      role: 'owner',
+    });
+    refuse = true;
+    expect(await (await request(cookie, 'POST', '/organizations', { name: 'More' })).json()).toEqual({
+      error: 'organization_limit',
+    });
+  });
+
+  it('act in an organization once you join it', async () => {
+    const admin = await inOrganization('admin', 'admin');
+    const { invitation } = await (
+      await request(admin.cookie, 'POST', '/organization/invitations', { role: 'member' })
+    ).json();
+    await db.insert(schema.user).values({ id: 'other', name: 'Other', email: 'other@b.test', emailVerified: true });
+    await db.transaction(tx =>
+      createOrganization(tx, { name: 'Theirs', owner: { id: 'other', name: 'Other', email: 'other@b.test' } }),
+    );
+    const other = await sessionFor('other');
+    expect((await (await request(other, 'GET', '/organization')).json()).organization.name).toBe('Theirs');
+    await request(other, 'POST', '/invitations/accept', { token: tokenOf(invitation.url) });
+    expect((await (await request(other, 'GET', '/organization')).json()).organization.name).toBe('Acme');
   });
 });

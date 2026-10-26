@@ -33,7 +33,7 @@ import {
   revokeMcpGrants,
 } from '../../server/src/mcp';
 import { inTheOrganization } from '../../server/src/member-fixtures';
-import { createOrganization, currentMember } from '../../server/src/organizations';
+import { createOrganization, currentMember, switchOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { createMcpEndpoint } from './mcp';
@@ -1111,8 +1111,8 @@ describe('agent connections and setup', () => {
     expect(consent!.referenceId).toBe(await membershipOf(a.id));
     const claims = (token: string) => JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
     expect(claims(ax.access_token).membership).toBe(consent!.referenceId);
-    // The person joins a second organization. There is no page to choose it at consent yet, so its grant is made by
-    // moving one there, tokens and all.
+    // The person joins a second organization and switches to it, so their next consent is for it; its tokens keep it
+    // when refreshed, and switching back doesn't move the grant.
     const team = await db.transaction(tx =>
       createOrganization(tx, { name: 'Team', owner: { id: a.id, name: 'A', email: 'a@example.test' } }),
     );
@@ -1120,9 +1120,18 @@ describe('agent connections and setup', () => {
       .select()
       .from(schema.memberships)
       .where(and(eq(schema.memberships.userId, a.id), eq(schema.memberships.organizationId, team!)));
+    const [teamOrganization] = await db
+      .select({ publicId: schema.organizations.publicId })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, team!));
+    expect(await switchOrganization(db, a.id, teamOrganization!.publicId)).toBe(true);
     const ay = (await authorize(a.cookie, y))!;
-    for (const table of [schema.oauthConsent, schema.oauthRefreshToken])
-      await db.update(table).set({ referenceId: inTeam!.publicId }).where(eq(table.clientId, y));
+    expect(claims(ay.access_token).membership).toBe(inTeam!.publicId);
+    const [homeOrganization] = await db
+      .select({ publicId: schema.organizations.publicId })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, home.organizationId));
+    await switchOrganization(db, a.id, homeOrganization!.publicId);
     const refreshed = await authRequest('/oauth2/token', {
       body: { grant_type: 'refresh_token', client_id: y, refresh_token: ay.refresh_token, resource },
     });

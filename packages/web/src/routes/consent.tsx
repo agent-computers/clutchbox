@@ -1,5 +1,5 @@
 import { getPrincipal } from '@agent-computers/server/auth';
-import { currentMember } from '@agent-computers/server/organizations';
+import { organizationsOf } from '@agent-computers/server/organizations';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import type { OAuthScopeMetadataMap } from '@better-auth-ui/core/plugins/oauth-provider';
 import { APIError } from 'better-auth/api';
@@ -52,7 +52,8 @@ export const consentPage = (getServices: GetServices) =>
     const principal = await getPrincipal(auth, requestHeaders);
     if (!principal) redirect(`/sign-in?${oauthQuery}`);
     // A grant is for a membership, so someone in no organization here joins one first, then connects again.
-    if (!(await currentMember(db, principal.id))) redirect('/join');
+    const organizations = await organizationsOf(db, principal.id);
+    if (!organizations.length) redirect('/join');
     const clientId = query.get('client_id');
     if (!clientId) return <InvalidRequest />;
     // Fetch public metadata only after signature and session validation; never serialize a client secret.
@@ -80,6 +81,7 @@ export const consentPage = (getServices: GetServices) =>
           scopeMetadata={scopeMetadata}
           loopback={loopback}
           clientHost={hostOf(clientId) ?? clientId}
+          organizations={organizations.map(({ id, name, current }) => ({ id, name, current }))}
         />
       </main>
     );

@@ -6,7 +6,7 @@ import type { ComputerProvider } from './computers';
 import type { Database } from './database';
 import { newPublicId, publicIdPattern } from './ids';
 import { revokeMcpGrants } from './mcp';
-import type { Member, Person } from './organizations';
+import { actIn, type Member, type Person } from './organizations';
 import * as schema from './schema';
 
 // Members and roles: who is in an organization, how people join it, and how they leave. Owners and admins invite and
@@ -234,6 +234,8 @@ async function join(tx: Pick<Database, 'insert' | 'select'>, userId: string, org
     .onConflictDoNothing()
     .returning({ id: schema.memberships.id });
   if (!membership) return { error: 'already_member' } as const;
+  // Someone who joins acts there next.
+  await actIn(tx, userId, membership.id);
   const [organization] = await tx
     .select({ id: schema.organizations.publicId, name: schema.organizations.name })
     .from(schema.organizations)
