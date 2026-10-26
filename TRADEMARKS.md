@@ -7,7 +7,7 @@ Clutchbox handles people's signed-in sessions. Its name has to mean code from th
 ## The marks
 
 - The name **Clutchbox**, alone or in other names ("Clutchbox Browser Sync").
-- The lowercase italic **clutchbox** wordmark and the italic **a** icon, including the extension's icons.
+- The lowercase italic **clutchbox** wordmark and the italic **c** icon, including the extension's icons.
 
 ## Without asking
 
