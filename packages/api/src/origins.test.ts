@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { allowedMutationOrigin, extensionOrigins } from './origins';
 
-const web = 'https://www.agent-computers.com';
+const web = 'https://www.clutchbox.dev';
 const ext = `chrome-extension://${'a'.repeat(32)}`;
 const other = `chrome-extension://${'b'.repeat(32)}`;
 describe('allowedMutationOrigin', () => {

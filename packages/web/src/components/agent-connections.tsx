@@ -19,7 +19,7 @@ const otherWhere = (grant: Grant) => grant.host ?? grant.clientId;
 // A grant the agent can use. Others are still listed so they can be disconnected.
 const live = (grant: Grant) => grant.mcp && !grant.disabled;
 const status = (grant: Grant) =>
-  grant.disabled ? 'Disabled by Agent Computers' : grant.mcp ? 'Connected' : 'Account info only';
+  grant.disabled ? 'Disabled by Clutchbox' : grant.mcp ? 'Connected' : 'Account info only';
 // Shows whether the agent uses this account's computer: one connected under another account never does.
 const lastUsed = (grant: Pick<Grant, 'lastUsedAt'>) =>
   grant.lastUsedAt

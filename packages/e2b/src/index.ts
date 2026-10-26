@@ -35,7 +35,7 @@ import {
 // older computers by refresh.
 export const HELPER_DIR = '/opt/agent-computers';
 // The template's name. E2B looks a bare name up in the caller's own team first, so a team that built its own
-// (template.ts) gets that one; any other team gets the public one Agent Computers builds from this repository's main
+// (template.ts) gets that one; any other team gets the public one Clutchbox builds from this repository's main
 // branch, weekly for current Chrome. Refresh brings either's helpers to this checkout's REVISION on open.
 export const TEMPLATE = 'agent-computers-desktop';
 const OUTPUT_LIMIT = 32_000;

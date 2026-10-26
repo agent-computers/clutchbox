@@ -46,7 +46,7 @@ export function App({ url }: { url: string }) {
   const error = exchange.error?.message;
   return (
     <main className="mx-auto grid w-full max-w-md gap-4 px-6 py-16 font-sans text-sm leading-relaxed">
-      <span className="font-serif text-lg font-medium italic">agent computers</span>
+      <span className="font-serif text-lg font-medium italic">clutchbox</span>
       <p role="status" aria-live="polite">
         {exchange.isSuccess
           ? `Connected. This browser syncs to ${exchange.data.email}${exchange.data.organization ? ` in ${exchange.data.organization}` : ''}.`
@@ -55,7 +55,7 @@ export function App({ url }: { url: string }) {
             : error === 'denied'
               ? 'Connecting was canceled.'
               : error
-                ? "Couldn't connect to Agent Computers. Open the extension and try again."
+                ? "Couldn't connect to Clutchbox. Open the extension and try again."
                 : 'Connecting…'}
       </p>
       {exchange.isError && (

@@ -478,7 +478,7 @@ describe('added sites', () => {
     expect(await add(test, ['capture.test', 'other.test'])).toEqual({ ok: false, error: 'unavailable' });
     expect(test.grants.has(siteGrants('other.test')[0]!)).toBe(false);
   });
-  it("refuses excluded sites and the Agent Computers site, and the account's exclusion removes an added site", async () => {
+  it("refuses excluded sites and the Clutchbox site, and the account's exclusion removes an added site", async () => {
     const test = await connected();
     await test.fromAccount({ excludedDomains: ['other.test'] });
     expect(await add(test, ['other.test'])).toEqual({ ok: false, error: 'excluded' });
@@ -1402,7 +1402,7 @@ describe("the account's settings", () => {
         ],
       },
     });
-    // Icons only from the Agent Computers site.
+    // Icons only from the Clutchbox site.
     expect((status as { config: { suggestedSites: { icon?: string }[] } }).config.suggestedSites[1]!.icon).toBe(
       undefined,
     );
@@ -2141,11 +2141,11 @@ describe('another server', () => {
     test.verified.mockRejectedValueOnce(new TypeError('network'));
     expect(await trust(test, elsewhere)).toMatchObject({ trust: 'unverified' });
     test.verified.mockResolvedValueOnce(answer(503, { error: 'service_unavailable' }));
-    expect(await trust(test, 'https://www.agent-computers.com')).toEqual({
+    expect(await trust(test, 'https://www.clutchbox.dev')).toEqual({
       ok: true,
-      origin: 'https://www.agent-computers.com',
+      origin: 'https://www.clutchbox.dev',
       trust: 'verified',
-      name: 'Agent Computers',
+      name: 'Clutchbox',
     });
     test.verified.mockResolvedValueOnce(answer(200, { servers: [{ origin: 'http://plain.test', name: 'Plain' }] }));
     expect(await trust(test, 'http://plain.test')).toEqual({ ok: false, error: 'invalid_request' });

@@ -1,7 +1,7 @@
 {
   "name": "@agent-computers/e2b",
   "version": "0.1.0",
-  "description": "AI agent computers on E2B: a Linux desktop sandbox with Chrome that stays signed in to your sites.",
+  "description": "Computers for AI agents on E2B: a Linux desktop sandbox with Chrome that stays signed in to your sites.",
   "keywords": [
     "e2b",
     "computer-use",
@@ -11,9 +11,9 @@
     "chrome",
     "cdp"
   ],
-  "homepage": "https://www.agent-computers.com",
+  "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

@@ -568,7 +568,7 @@ describe('main computer tools', () => {
     expect(opened.result.structuredContent.sign_in_help).toContain(`${origin}/app`);
     expect(opened.result.structuredContent.account_email).toBe('a@example.test');
     expect(opened.result.structuredContent.browser_sync).toContain(
-      'No browser has synced to the Agent Computers account a@example.test',
+      'No browser has synced to the Clutchbox account a@example.test',
     );
     // The default hooks have no allowance, so no free minutes.
     expect(opened.result.structuredContent).not.toHaveProperty('free_minutes_remaining');

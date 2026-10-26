@@ -60,7 +60,7 @@ export function App() {
 
   const header = (
     <header>
-      <span className="font-serif text-lg font-medium italic">agent computers</span>
+      <span className="font-serif text-lg font-medium italic">clutchbox</span>
     </header>
   );
   if (warning)
@@ -82,7 +82,7 @@ export function App() {
     <main className="mx-auto grid w-full max-w-2xl gap-8 px-6 py-12 font-sans text-sm leading-relaxed">
       {header}
       <h1 className="font-heading text-[40px] leading-[1.05] font-medium tracking-[-0.015em]">
-        Keep your agent computer signed in.
+        Keep your agents signed in.
       </h1>
 
       <Connections
@@ -117,10 +117,8 @@ export function App() {
               another && (
                 <p className={hint}>
                   Connects the organization you are using on{' '}
-                  {another.server
-                    ? `${host}${another.name ? ` (verified as ${another.name})` : ''}`
-                    : 'Agent Computers'}
-                  , so switch to the one you want there first.
+                  {another.server ? `${host}${another.name ? ` (verified as ${another.name})` : ''}` : 'Clutchbox'}, so
+                  switch to the one you want there first.
                 </p>
               )
             )}

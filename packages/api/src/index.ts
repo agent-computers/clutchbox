@@ -179,7 +179,7 @@ export function createApi({
     const { id, name, email } = c.get('principal');
     return { id, name, email };
   };
-  // The Agent Computers site is never synced or added.
+  // The Clutchbox site is never synced or added.
   const serverSite = siteOfHost(new URL(origin).hostname);
   const app = new Hono<Env>().basePath('/api/v1');
   // CORS for the pinned extension origins on the extension's routes alone (exact paths, so not /sync/disconnect), without

@@ -143,7 +143,7 @@ export function useCaptureActions({
   );
   const blocked = (site: string) =>
     serverSites.includes(site)
-      ? 'Agent Computers itself is never synced.'
+      ? 'Clutchbox itself is never synced.'
       : settings?.excludedDomains.some(domain => within(site, domain))
         ? 'This site is excluded.'
         : '';

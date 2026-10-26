@@ -5,7 +5,7 @@ export interface SuggestedSite {
   detail?: string | undefined;
   category: string;
   sites: string[];
-  // A path on the Agent Computers site, such as /site-icons/github.png.
+  // A path on the Clutchbox site, such as /site-icons/github.png.
   icon?: string | undefined;
 }
 export const suggestedSites: readonly SuggestedSite[] = [

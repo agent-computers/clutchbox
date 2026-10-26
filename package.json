@@ -6,7 +6,7 @@
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git"
   },
-  "homepage": "https://www.agent-computers.com",
+  "homepage": "https://www.clutchbox.dev",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "bun@1.3.14",

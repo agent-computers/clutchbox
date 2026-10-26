@@ -3,7 +3,7 @@ import { BrowserSync } from '../components/browser-sync';
 import { extensionDownloadUrl, extensionDownloadVersion } from '../lib/extension-download';
 import { siteOrigin } from '../lib/site';
 
-export const metadata: Metadata = { title: 'Browser sync · Agent Computers' };
+export const metadata: Metadata = { title: 'Browser sync · Clutchbox' };
 export default function SyncPage() {
   return (
     <BrowserSync

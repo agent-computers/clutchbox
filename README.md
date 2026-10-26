@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://www.agent-computers.com">
+  <a href="https://www.clutchbox.dev">
     <img src=".github/assets/banner.png" alt="Clutchbox: your agents, already signed in. Clutchbox syncs your browser states to browsers your agents use." width="100%">
   </a>
 
@@ -10,7 +10,7 @@
   </p>
 
   <p>
-    <a href="https://www.agent-computers.com">Website</a>
+    <a href="https://www.clutchbox.dev">Website</a>
     ·
     <a href="https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi">Chrome extension</a>
     ·
@@ -24,7 +24,7 @@
 
 **Clutchbox syncs your browser states to browsers your agents use.** A Chrome extension captures the sites you choose and keeps them current in the background, one way. Your agent's browser (Playwright, browser-use, Stagehand, an E2B sandbox, or any Chrome over CDP) then starts signed in instead of blank. No passwords typed, no 2FA prompts, and no signing in again in every sandbox.
 
-Everything here is Apache-2.0: the extension, the capture format, the apply runtime, the provider adapters, and the whole web app for one organization, with sign-in, browser sync, agent computers with live view and takeover, and the MCP server agents connect to. Run all of it yourself, or use the hosted service at [agent-computers.com](https://www.agent-computers.com).
+Everything here is Apache-2.0: the extension, the capture format, the apply runtime, the provider adapters, and the whole web app for one organization, with sign-in, browser sync, computers for agents with live view and takeover, and the MCP server agents connect to. Run all of it yourself, or use the hosted service at [clutchbox.dev](https://www.clutchbox.dev).
 
 ## Why
 
@@ -57,7 +57,7 @@ Nothing flows back: an agent's actions never change your own browser.
 
 ### Hosted
 
-Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi), choose the sites to sync, and connect Claude, ChatGPT, or Codex at [agent-computers.com](https://www.agent-computers.com). Your agents get a cloud Linux desktop with Chrome that is already signed in, with live view and takeover.
+Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi), choose the sites to sync, and connect Claude, ChatGPT, or Codex at [clutchbox.dev](https://www.clutchbox.dev). Your agents get a cloud Linux desktop with Chrome that is already signed in, with live view and takeover.
 
 ### Self-hosted: the whole product for your organization
 
@@ -88,7 +88,7 @@ You need Docker with Compose, Chrome, and an [E2B API key](https://e2b.dev/dashb
 
 4. Connect your browser. The Browser sync page offers the manual build of the extension, made for this app's origin: unzip it, load it unpacked from `chrome://extensions` (Developer mode), choose the sites to sync, and connect.
 
-5. Connect an agent to `http://localhost:3000/api/mcp`; the Agents page has the steps for each. Claude Code, on the same machine, takes `claude mcp add --transport http agent-computers http://localhost:3000/api/mcp`. Then ask it to open your computer: it starts signed in to the sites you sync.
+5. Connect an agent to `http://localhost:3000/api/mcp`; the Agents page has the steps for each. Claude Code, on the same machine, takes `claude mcp add --transport http clutchbox http://localhost:3000/api/mcp`. Then ask it to open your computer: it starts signed in to the sites you sync.
 
 Claude, ChatGPT, and other agents that run in the cloud need the app on a public HTTPS origin. On a server, set these in `.env` too, then run `docker compose up -d --build` again:
 
@@ -138,9 +138,9 @@ To link your own users to members, register your app under **Connect apps** on t
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
 | [`packages/computer`](packages/computer) | The interface an agent computer provider implements: create, pause, resume, screenshot, act, exec, and CDP. |
-| [`packages/e2b`](packages/e2b) | Agent computers on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
+| [`packages/e2b`](packages/e2b) | Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
-| [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations. |
+| [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres with its migrations. |
 | [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay. |
 | [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node server. |
 
@@ -163,7 +163,7 @@ Syncing sessions is sensitive, so the defaults are narrow and the code is open f
 
 - **Opt-in per site.** No host permissions at install. Each site you add asks Chrome for its own permission, and only those sites' cookies are read. Capturing every site takes an explicit **Allow all sites**, which only builds outside the Chrome Web Store offer. Excluded domains are never captured.
 - **One way.** Captures flow from your browser to your agents, never back.
-- **Warned before another server.** The store extension connects to a server other than agent-computers.com only after a full-page warning, unless the server is on the [verified list](apps/extension#connecting-to-another-server) or your administrator approved it.
+- **Warned before another server.** The store extension connects to a server other than clutchbox.dev only after a full-page warning, unless the server is on the [verified list](apps/extension#connecting-to-another-server) or your administrator approved it.
 - **You stay in control.** Pause, remove a site, or disconnect from the extension at any time. Disconnecting deletes everything that browser uploaded.
 - **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, a key kept outside the database, and keeps only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
 - **Cookies, not passwords.** Your passwords and 2FA secrets never leave your browser.
@@ -184,7 +184,7 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 ## Self-hosted or hosted
 
-| | Self-hosted (this repository) | Hosted ([agent-computers.com](https://www.agent-computers.com)) |
+| | Self-hosted (this repository) | Hosted ([clutchbox.dev](https://www.clutchbox.dev)) |
 | --- | --- | --- |
 | Extension | The manual build your server offers or you build for it, loaded unpacked or force-installed with Chrome Enterprise policy | Listed on the Chrome Web Store |
 | Server | The web app for your organization, with Docker Compose or on your own Node and Postgres | Multi-user, managed |
@@ -225,4 +225,4 @@ The Playwright adapter's tests drive a real Chromium (`bunx playwright-core inst
 
 ## License
 
-[Apache-2.0](LICENSE). The Agent Computers name and logos are covered by the [trademark policy](TRADEMARKS.md): use them to say what's true, and rename a modified extension before publishing it.
+[Apache-2.0](LICENSE). The Clutchbox name and logos are covered by the [trademark policy](TRADEMARKS.md): use them to say what's true, and rename a modified extension before publishing it.

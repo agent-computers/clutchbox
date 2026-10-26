@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { AcceptInvitation, JoinPage } from '../components/join';
 import type { GetServices } from '../services';
 
-export const metadata: Metadata = { title: 'Join · Agent Computers', robots: { index: false } };
+export const metadata: Metadata = { title: 'Join · Clutchbox', robots: { index: false } };
 const page = 'mx-auto flex w-full max-w-xl justify-center px-5 py-12 sm:px-8';
 
 // /join: where the app sends a person signed in but in no organization here.

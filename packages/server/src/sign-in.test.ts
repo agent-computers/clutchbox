@@ -258,7 +258,7 @@ describe('email link sign-in', () => {
   it('signs in once with the link the email carries, verifying the address', async () => {
     const link = await emailLink('Member@Example.test');
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: 'Member@Example.test', subject: 'Sign in to Agent Computers' });
+    expect(sent[0]).toMatchObject({ to: 'Member@Example.test', subject: 'Sign in to Clutchbox' });
     const signedIn = await get(link);
     expect(redirectOf(signedIn).path).toBe('/app');
     expect(await sessionOf(cookiesOf(signedIn))).toMatchObject({ email: 'member@example.test' });

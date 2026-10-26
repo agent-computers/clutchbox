@@ -13,9 +13,9 @@
     "logged-in",
     "session"
   ],
-  "homepage": "https://www.agent-computers.com",
+  "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

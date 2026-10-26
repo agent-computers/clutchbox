@@ -1,10 +1,10 @@
 {
   "name": "@agent-computers/server",
   "version": "0.1.0",
-  "description": "The Agent Computers web app's server: accounts, browser sync, captures, agent computers, MCP grants, and live view, on Postgres with its migrations.",
-  "homepage": "https://www.agent-computers.com",
+  "description": "The Clutchbox web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres with its migrations.",
+  "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

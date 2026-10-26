@@ -1,10 +1,10 @@
 {
   "name": "@agent-computers/ui",
   "version": "0.1.0",
-  "description": "The Agent Computers web app's design system: shadcn components on Base UI, the theme, and the fonts.",
-  "homepage": "https://www.agent-computers.com",
+  "description": "The Clutchbox web app's design system: shadcn components on Base UI, the theme, and the fonts.",
+  "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

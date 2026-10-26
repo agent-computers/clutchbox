@@ -1,4 +1,4 @@
-/* The Agent Computers design tokens, fonts, and base styles the extension's three pages use: a plum-black ground,
+/* The Clutchbox design tokens, fonts, and base styles the extension's three pages use: a plum-black ground,
    white ink, and pink for the primary action, in EB Garamond and IBM Plex Sans. Tailwind scans this app's files only. */
 @import "tailwindcss";
 

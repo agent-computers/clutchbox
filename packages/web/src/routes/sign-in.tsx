@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { ResumeSignIn, SignIn as SignInView } from '../components/auth/sign-in';
 import type { GetServices } from '../services';
 
-export const metadata: Metadata = { title: 'Sign in · Agent Computers', robots: { index: false } };
+export const metadata: Metadata = { title: 'Sign in · Clutchbox', robots: { index: false } };
 // Where signing in may return to instead of the app: only an invitation link, so it can't send anyone off-site.
 const returnable = (next: unknown) =>
   typeof next === 'string' && /^\/join\/[A-Za-z0-9_-]{1,100}$/.test(next) ? next : undefined;

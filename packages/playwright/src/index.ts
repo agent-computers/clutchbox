@@ -39,8 +39,8 @@ export async function applyCapture(context: BrowserContext, capture: Capture, pr
   }
 }
 
-// Reading captures from an Agent Computers server with an organization API key (`ack_…`), made by an owner or admin
-// on its Organization page. `server` is its origin, such as https://www.agent-computers.com. Pass `fetch` to use your
+// Reading captures from a Clutchbox server with an organization API key (`ack_…`), made by an owner or admin
+// on its Organization page. `server` is its origin, such as https://www.clutchbox.dev. Pass `fetch` to use your
 // own. Errors carry the server's error code as `code`: unauthenticated (a wrong or revoked key), insufficient_scope,
 // not_found (no such member in the key's organization), no_capture (the member hasn't synced yet).
 export type ServerOptions = { server: string; apiKey: string; fetch?: typeof fetch };
@@ -49,7 +49,7 @@ export class CaptureRequestError extends Error {
     readonly status: number,
     readonly code: string,
   ) {
-    super(`Agent Computers answered ${status} ${code}`);
+    super(`Clutchbox answered ${status} ${code}`);
   }
 }
 async function get(options: ServerOptions, path: string) {

@@ -171,7 +171,7 @@ export function createAuth(
   // the provider can connect an agent to the wrong one.
   const prompt = 'select_account' as const;
   return betterAuth({
-    appName: 'Agent Computers',
+    appName: 'Clutchbox',
     baseURL: config.BETTER_AUTH_URL,
     secret: config.BETTER_AUTH_SECRET,
     trustedOrigins: [config.BETTER_AUTH_URL],
@@ -280,8 +280,8 @@ export function createAuth(
               sendMagicLink: ({ email, url }) =>
                 emailLinks({
                   to: email,
-                  subject: 'Sign in to Agent Computers',
-                  text: `Open this link to sign in to Agent Computers:\n\n${url}\n\nIt works once, for ${EMAIL_LINK_SECONDS / 60} minutes. If you did not ask to sign in, ignore this email.`,
+                  subject: 'Sign in to Clutchbox',
+                  text: `Open this link to sign in to Clutchbox:\n\n${url}\n\nIt works once, for ${EMAIL_LINK_SECONDS / 60} minutes. If you did not ask to sign in, ignore this email.`,
                 }),
             }),
           ]

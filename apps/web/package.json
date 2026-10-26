@@ -1,9 +1,9 @@
 {
   "name": "@agent-computers/app",
   "version": "0.1.0",
-  "description": "The Agent Computers web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults.",
+  "description": "The Clutchbox web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults.",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

@@ -252,7 +252,7 @@ const bounded = (min: number, max: number, fallback: number) =>
     .finite()
     .transform(value => Math.min(Math.max(Math.round(value), min), max))
     .catch(fallback);
-// Icons load from the Agent Computers site only, so no other site learns which suggestions a user sees.
+// Icons load from the Clutchbox site only, so no other site learns which suggestions a user sees.
 const iconSchema = z
   .string()
   .max(200)
@@ -450,7 +450,7 @@ export interface StatusResponse {
   sync: SyncStatus;
   settings: CaptureSettings;
   account: AccountState;
-  // A connect flow is waiting for the Agent Computers tab.
+  // A connect flow is waiting for the Clutchbox tab.
   connecting?: true;
   permissionGranted: boolean;
   // Sites the account lists that this browser has not granted, so they are not captured here.
@@ -472,7 +472,7 @@ export type Response =
         | 'excluded'
         | 'paused'
         | 'capture_failed'
-        // The Agent Computers server could not be reached to change the account's settings.
+        // The Clutchbox server could not be reached to change the account's settings.
         | 'unavailable'
         // The connection's tokens ended; Reconnect first.
         | 'reconnect'

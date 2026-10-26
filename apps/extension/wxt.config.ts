@@ -16,9 +16,9 @@ export default defineConfig({
   vite: () => ({ plugins: [tailwindcss()] }),
   // A function so WXT has loaded .env files into process.env first.
   manifest: ({ mode }) => ({
-    name: 'Agent Computers — Browser Sync',
+    name: 'Clutchbox — Browser Sync',
     description:
-      'Sync sign-ins for the sites you choose to your agent computer. Encrypted uploads, with exclusions, pause, and disconnect controls.',
+      'Sync sign-ins for sites you choose into the browsers your agents use. Opt-in, encrypted, with exclusions, pause, and disconnect.',
     ...(mode === 'store' ? {} : { key }),
     minimum_chrome_version: '130',
     // activeTab: opening the popup lets it read the current tab's address for Add this site.

@@ -1,7 +1,7 @@
 {
   "name": "@agent-computers/computer",
   "version": "0.1.0",
-  "description": "The interface for AI agent computers: create, pause, resume, screenshot, act, exec, CDP, and cookie sync.",
+  "description": "The interface for computers that AI agents use: create, pause, resume, screenshot, act, exec, CDP, and cookie sync.",
   "keywords": [
     "computer-use",
     "ai-agents",
@@ -9,9 +9,9 @@
     "desktop",
     "cdp"
   ],
-  "homepage": "https://www.agent-computers.com",
+  "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

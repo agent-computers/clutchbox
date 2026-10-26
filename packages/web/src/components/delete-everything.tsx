@@ -27,14 +27,14 @@ export function DeleteEverything() {
         <CardTitle>
           <h2>Delete everything</h2>
         </CardTitle>
-        <CardDescription>Delete your agent computer and your synced browser data.</CardDescription>
+        <CardDescription>Delete your computer and your synced browser data.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         {confirm ? (
           <div className="grid gap-3 rounded-lg bg-muted p-4">
             <p className="text-sm">
-              This deletes everything: your agent computer, its files, every sign-in on it, and your synced browser
-              data. Every browser disconnects and browser sync turns off; connect again from the extension. Agents stay
+              This deletes everything: your computer, its files, every sign-in on it, and your synced browser data.
+              Every browser disconnects and browser sync turns off; connect again from the extension. Agents stay
               connected and get a fresh computer next time. You'll be set up again the next time an agent opens your
               computer.
             </p>

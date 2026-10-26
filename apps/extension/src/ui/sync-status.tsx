@@ -50,7 +50,7 @@ function summarize({ capture, sync, settings, account }: StatusResponse, busy: b
       detail: `This browser stopped syncing${account.email ? ` to ${account.email}` : ''}. It was disconnected, unused for 30 days, or updated from an older version. Your sites and exclusions are kept.`,
       action: 'reconnect',
     };
-  if (settings.paused) return { label: 'Paused', tone: 'idle', detail: 'Your agent computer keeps the last upload.' };
+  if (settings.paused) return { label: 'Paused', tone: 'idle', detail: 'Your agents keep the last upload.' };
   if (busy || capture.state === 'capturing' || sync.state === 'uploading') return { label: 'Syncing…', tone: 'idle' };
   if (capture.state === 'interrupted' || capture.state === 'failed')
     return { label: 'Capture failed', tone: 'problem', detail: 'Sync now to retry.' };

@@ -11,8 +11,8 @@ export function SitesDisclosure() {
       <p>
         The extension reads cookies, including signed-in sessions, only from sites you add and allow in your browser. It
         uploads them encrypted when you add a site, within seconds of signing in to or out of one, when the browser
-        starts, and every minute, to the Agent Computers account you connect, in a tab where you sign in if needed.{' '}
-        {agentsUse('those sites')} Sign-in on your agent computer is not guaranteed for every site.
+        starts, and every minute, to the Clutchbox account you connect, in a tab where you sign in if needed.{' '}
+        {agentsUse('those sites')} Sign-in in your agents' browsers is not guaranteed for every site.
       </p>
       <a
         className="text-foreground underline underline-offset-2"

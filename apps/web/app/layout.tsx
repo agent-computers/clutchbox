@@ -22,8 +22,8 @@ const plex = localFont({
 });
 export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
-  title: 'Agent Computers',
-  description: 'Cloud computers for your agents, signed in to the sites you sync from your browser.',
+  title: 'Clutchbox',
+  description: 'Your agents, already signed in. Clutchbox syncs your browser states to browsers your agents use.',
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

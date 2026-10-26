@@ -1,10 +1,10 @@
 # @agent-computers/e2b
 
-Agent computers on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome that pauses when idle, resumes with its memory, and stays signed in to the sites you sync. It implements the [`ComputerProvider`](../computer) interface: screenshots, mouse and keyboard, commands, Chrome DevTools Protocol, file downloads, live view, and cookie sync.
+Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome that pauses when idle, resumes with its memory, and stays signed in to the sites you sync. It implements the [`ComputerProvider`](../computer) interface: screenshots, mouse and keyboard, commands, Chrome DevTools Protocol, file downloads, live view, and cookie sync.
 
 ## The template
 
-Computers start from an E2B template with current Chrome, Node, and this package's helpers ([`src/template.ts`](src/template.ts)). Agent Computers builds it from this repository's main branch, rebuilds it weekly for current Chrome, and publishes it on E2B as `agent-computers-desktop`, so any E2B team can start computers from it with no build of its own. Refresh brings its helpers to your checkout's version on open.
+Computers start from an E2B template with current Chrome, Node, and this package's helpers ([`src/template.ts`](src/template.ts)). Clutchbox builds it from this repository's main branch, rebuilds it weekly for current Chrome, and publishes it on E2B as `agent-computers-desktop`, so any E2B team can start computers from it with no build of its own. Refresh brings its helpers to your checkout's version on open.
 
 To run your own instead, build it into your E2B team. E2B finds a template by name in your own team first, so computers then start from yours:
 

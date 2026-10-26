@@ -102,9 +102,9 @@ export function AppShell({ user, children }: { user: AppUser; children: ReactNod
                   if (guard.current?.(() => router.push(home))) event.preventDefault();
                 }}
                 className="font-serif text-lg font-medium italic"
-                aria-label="Agent Computers home page"
+                aria-label="Clutchbox home page"
               >
-                agent computers
+                clutchbox
               </Link>
             </header>
             {children}
@@ -179,9 +179,9 @@ function AppSidebar({
           href={home}
           onClick={follow(home)}
           className="font-serif text-lg font-medium italic"
-          aria-label="Agent Computers home page"
+          aria-label="Clutchbox home page"
         >
-          agent computers
+          clutchbox
         </Link>
         <OrganizationSwitcher
           onCreate={() => {

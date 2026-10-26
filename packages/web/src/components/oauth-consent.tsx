@@ -118,7 +118,7 @@ export function OAuthConsent({
             <CardTitle className="max-w-full text-3xl wrap-break-word">
               <h1>{client.name}</h1>
             </CardTitle>
-            <CardDescription>wants to access your Agent Computers account</CardDescription>
+            <CardDescription>wants to access your Clutchbox account</CardDescription>
             <p className="mt-2 max-w-full text-sm text-muted-foreground">
               Signed in as <span className="break-all font-medium text-foreground">{user.email}</span>
             </p>

@@ -10,7 +10,7 @@ import { hint } from './sync-status';
 
 const host = (origin: string) => new URL(origin).host;
 // The build's own server, which the warning compares the other one with.
-const ours = serverOrigin === defaultServerOrigin ? 'Agent Computers' : host(serverOrigin);
+const ours = serverOrigin === defaultServerOrigin ? 'Clutchbox' : host(serverOrigin);
 
 // The servers the browser's administrator approved (Chrome Enterprise policy), offered first.
 async function approvedServers(): Promise<string[]> {
@@ -111,9 +111,9 @@ export function ServerWarning(props: { origin: string; onAgree: () => void; onBa
         can use them as you.
       </p>
       <p className="text-soft">
-        It is not on the verified list of servers that have shown they run Agent Computers at their address. Continue
-        only if you trust whoever runs <strong className="font-medium text-foreground">{props.origin}</strong>, such as
-        your employer, and you expected to connect to it.
+        It is not on the verified list of servers that have shown they run Clutchbox at their address. Continue only if
+        you trust whoever runs <strong className="font-medium text-foreground">{props.origin}</strong>, such as your
+        employer, and you expected to connect to it.
       </p>
       <div className="flex flex-wrap gap-3">
         <Button size="lg" variant="secondary" onClick={props.onBack}>

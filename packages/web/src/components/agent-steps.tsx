@@ -24,10 +24,10 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
       <ol className="grid list-decimal gap-3 pl-5 text-sm text-soft">
         <li>
           In a terminal, run:
-          <Command label="Claude Code command" command={`claude mcp add --transport http agent-computers ${mcpUrl}`} />
+          <Command label="Claude Code command" command={`claude mcp add --transport http clutchbox ${mcpUrl}`} />
         </li>
         <li>
-          In Claude Code, run <code className="text-foreground">/mcp</code>, choose {strong('agent-computers')}, then{' '}
+          In Claude Code, run <code className="text-foreground">/mcp</code>, choose {strong('clutchbox')}, then{' '}
           {strong('Authenticate')}, and allow the connection in your browser.
         </li>
       </ol>
@@ -62,11 +62,11 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
       <ol className="grid list-decimal gap-3 pl-5 text-sm text-soft">
         <li>
           In a terminal, run:
-          <Command label="Codex command" command={`codex mcp add agent-computers --url ${mcpUrl}`} />
+          <Command label="Codex command" command={`codex mcp add clutchbox --url ${mcpUrl}`} />
         </li>
         <li>
           Follow the browser prompt to sign in and allow the connection. If sign-in did not complete, run:
-          <Command label="Codex sign-in command" command="codex mcp login agent-computers" />
+          <Command label="Codex sign-in command" command="codex mcp login clutchbox" />
         </li>
       </ol>
     ),

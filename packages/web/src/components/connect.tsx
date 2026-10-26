@@ -71,7 +71,7 @@ export function ConnectSteps({ oauthQuery }: { oauthQuery: string }) {
           <h1>{status.member ? `Connect your browser to ${status.organization}` : `Join ${status.organization}`}</h1>
         </CardTitle>
         <CardDescription>
-          {status.app.name} uses Agent Computers to sign its agents in to your sites, through {status.organization}.
+          {status.app.name} uses Clutchbox to sign its agents in to your sites, through {status.organization}.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -102,7 +102,7 @@ function BrowserStep({ status, skip, skipping }: { status: ConnectStatus; skip: 
     <>
       <ol className="grid list-decimal gap-2 pl-5 text-sm">
         <li>
-          Install the Agent Computers extension, or open it if you have it.{' '}
+          Install the Clutchbox extension, or open it if you have it.{' '}
           <a className="underline underline-offset-4" href="/app/sync" target="_blank" rel="noopener">
             How to install
           </a>

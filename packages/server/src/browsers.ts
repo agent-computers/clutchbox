@@ -40,7 +40,7 @@ export const extensionOrigins = (value: string | undefined) =>
 export function extensionClientMetadata(originsEnv: string | undefined) {
   return {
     client_id: EXTENSION_CLIENT_ID,
-    client_name: 'Agent Computers extension',
+    client_name: 'Clutchbox extension',
     redirect_uris: extensionOrigins(originsEnv).map(origin => `${origin}/connected.html`),
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],

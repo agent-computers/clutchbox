@@ -1,9 +1,9 @@
 {
   "name": "@agent-computers/web",
   "version": "0.1.0",
-  "description": "The Agent Computers web app's product library: the dashboard, sign-in and consent pages as route modules, their components and client code, the route manifest, the proxy, and the Node server.",
+  "description": "The Clutchbox web app's product library: the dashboard, sign-in and consent pages as route modules, their components and client code, the route manifest, the proxy, and the Node server.",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
-  "author": "Agent Computers",
+  "author": "Clutchbox",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clutchbox-hq/clutchbox.git",

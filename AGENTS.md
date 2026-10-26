@@ -1,6 +1,6 @@
 # Coding instructions
 
-- This is Agent Computers, under Apache-2.0. Every package must build, test, and run on its own, without any hosted service.
+- This is Clutchbox, under Apache-2.0. Every package must build, test, and run on its own, without any hosted service.
 - Everything here is public, including history. Never commit credentials, captured cookies or profiles, customer data, or internal plans, and don't link to documents or issues outside this repository.
 - Each package states what it is in its own README or the root table; keep it current when a package is added or changes status.
 - Run `bun run format` before committing; `bun run lint`, `bun run typecheck`, and `bun run test` must pass. Fix a lint finding rather than suppressing it; when a rule is wrong for a line, use a `biome-ignore` comment that says why.

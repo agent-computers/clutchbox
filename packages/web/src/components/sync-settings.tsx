@@ -94,7 +94,7 @@ export function SyncSettingsPanel({
                 <Button variant="secondary" disabled={busy} onClick={() => change.mutate({ paused: true })}>
                   Pause sync
                 </Button>
-                <p className="text-sm text-soft">Your agent computer keeps the last copy. Resume from the extension.</p>
+                <p className="text-sm text-soft">Your agents keep the last copy. Resume from the extension.</p>
               </div>
             )}
             <div className="grid justify-items-start gap-2">

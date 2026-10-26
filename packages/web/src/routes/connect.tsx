@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { ConnectSteps } from '../components/connect';
 import type { GetServices } from '../services';
 
-export const metadata: Metadata = { title: 'Connect · Agent Computers', robots: { index: false } };
+export const metadata: Metadata = { title: 'Connect · Clutchbox', robots: { index: false } };
 const page = 'mx-auto flex w-full max-w-xl justify-center px-5 py-12 sm:px-8';
 
 // /connect: where a Connect app's authorize request goes after sign-in, before consent (auth.ts, postLogin).

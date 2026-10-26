@@ -103,7 +103,7 @@ export function App() {
   return (
     <main className="mx-auto grid w-[400px] max-w-full gap-5 p-5 font-sans text-sm leading-relaxed">
       <header className="flex items-center justify-between gap-3">
-        <span className="font-serif text-lg font-medium italic">agent computers</span>
+        <span className="font-serif text-lg font-medium italic">clutchbox</span>
         {!connected ? (
           <Badge variant="outline" className="text-muted-foreground">
             Preview
@@ -228,7 +228,7 @@ export function App() {
                   <p className={hint}>All sites in this profile are synced, except exclusions.</p>
                 ) : sites.includes(tabSite) && !ungranted.includes(tabSite) ? (
                   <div className="grid justify-items-start gap-2">
-                    <p className={hint}>Your agent computer gets this site's sign-in at each sync.</p>
+                    <p className={hint}>Your agents get this site's sign-in at each sync.</p>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -348,7 +348,7 @@ function Connect(props: {
   return (
     <>
       <h1 className="font-heading text-[32px] leading-[1.05] font-medium tracking-[-0.015em]">
-        Keep your agent computer signed in.
+        Keep your agents signed in.
       </h1>
       <SitesDisclosure />
       <div className="grid gap-2">
@@ -357,12 +357,12 @@ function Connect(props: {
         </Button>
         <p className={hint}>
           {status?.connecting
-            ? 'Finish connecting in the Agent Computers tab.'
+            ? 'Finish connecting in the Clutchbox tab.'
             : another
-              ? 'Opens Agent Computers in a tab. It connects the organization you are using there, so switch to the one you want first.'
+              ? 'Opens Clutchbox in a tab. It connects the organization you are using there, so switch to the one you want first.'
               : current
-                ? `Connects ${connectionName(current)} again. Opens Agent Computers in a tab, where you sign in if needed.`
-                : 'Opens Agent Computers in a tab, where you sign in if needed.'}
+                ? `Connects ${connectionName(current)} again. Opens Clutchbox in a tab, where you sign in if needed.`
+                : 'Opens Clutchbox in a tab, where you sign in if needed.'}
         </p>
         <div className="flex gap-4">
           {/* The setup tab has room for the address and the warning other servers need. */}
@@ -476,8 +476,7 @@ function Settings(props: {
           </Button>
           <p className={hint}>
             Disconnects {name} only: deletes its local and uploaded copies and removes the browser access no other
-            organization uses. It does not sign you out of websites or Agent Computers. Added sites and exclusions are
-            kept.
+            organization uses. It does not sign you out of websites or Clutchbox. Added sites and exclusions are kept.
           </p>
         </div>
       </section>

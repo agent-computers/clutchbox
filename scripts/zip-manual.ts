@@ -1,5 +1,5 @@
 // Packages the manual build: the production extension with its pinned key, for loading unpacked in Developer mode. It
-// targets WXT_SERVER_ORIGIN (agent-computers.com by default), and the zip holds one folder, so unzipping anywhere gives
+// targets WXT_SERVER_ORIGIN (clutchbox.dev by default), and the zip holds one folder, so unzipping anywhere gives
 // the folder Chrome's Load unpacked expects. Writes apps/extension/.output/agent-computers-<version>-chrome-manual.zip.
 import { spawnSync } from 'node:child_process';
 import { readdir, readFile, writeFile } from 'node:fs/promises';

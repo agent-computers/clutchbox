@@ -108,7 +108,7 @@ const failure = (value: ComputerFailure) =>
 // Any shape is accepted here: the services answer an unknown or malformed ID with session_not_found, which
 // tells the agent to call computer_open, where a schema error would not.
 const sessionId = z.string().max(100).describe('The session_id returned by computer_open.');
-const remote = "Runs on the user's remote Agent Computers desktop, never on your own machine.";
+const remote = "Runs on the user's remote Clutchbox desktop, never on your own machine.";
 const ACT_MAX_TYPED = 2000;
 // Expected run time, so a batch stops before it overruns the call budget (computer-timing.ts).
 const actCost = (action: ComputerAction) =>
@@ -122,7 +122,7 @@ const plural = (count = 0, noun: string) => `${count} ${noun}${count === 1 ? '' 
 function syncNote(sync: SyncSummary, email: string) {
   switch (sync.status) {
     case 'none':
-      return `No browser has synced to the Agent Computers account ${email} yet, so no sites are signed in on this computer. If the user expected signed-in sites, tell them you are connected as ${email}: their Agent Computers browser extension may be signed in to a different account. They can sign the extension in to ${email}, or reconnect you under the extension's account.`;
+      return `No browser has synced to the Clutchbox account ${email} yet, so no sites are signed in on this computer. If the user expected signed-in sites, tell them you are connected as ${email}: their Clutchbox browser extension may be signed in to a different account. They can sign the extension in to ${email}, or reconnect you under the extension's account.`;
     case 'unchanged':
       return `Browser sign-ins are current with the user's browser as of ${sync.captureCompletedAt}.`;
     case 'applied':
@@ -146,9 +146,9 @@ const freeMinutes = async (metering: Metering, db: Database, member: Member) => 
 // Server instructions (MCP initialize): when to use the computer, the computer session flow, and the account.
 const instructions = (
   email: string,
-) => `Agent Computers gives you the user's own remote computer: a Linux desktop with Chrome, signed in to the sites the user syncs from their browser. Use it instead of your host environment when a task needs the user's signed-in websites, a real desktop browser, or isolation from your host. Nothing runs on your machine.
+) => `Clutchbox gives you the user's own remote computer: a Linux desktop with Chrome, signed in to the sites the user syncs from their browser. Use it instead of your host environment when a task needs the user's signed-in websites, a real desktop browser, or isolation from your host. Nothing runs on your machine.
 
-You are connected as the Agent Computers account ${email}. Each account has its own computer, signed in to the sites synced from the browser extension under that same account. When the user asks which account you use, or expected sites are signed out, name it.
+You are connected as the Clutchbox account ${email}. Each account has its own computer, signed in to the sites synced from the browser extension under that same account. When the user asks which account you use, or expected sites are signed out, name it.
 
 Flow: computer_open returns a session_id. Pass it on every other computer tool call for the task. Each computer_open returns a new session_id that replaces the one you passed it; use the newest from then on. When the task is done, always call computer_close with it: that applies newer browser sign-ins, closes the browser tabs, pauses the computer, and refunds unused time.
 
@@ -181,7 +181,7 @@ function registerComputerTools(
     recorded: ReturnType<typeof recordCalls>;
   },
 ) {
-  const signInHelp = `If a site needs sign-in, never type credentials. Ask the user to sign in to it in their own Chrome, add the site in the Agent Computers extension if it is not added, choose Sync now, and tell you when they are done. A waiting sign-in then shows as pending_sync in tool results; call computer_open with your session_id to apply it, and use the new session_id it returns. Setup is at ${origin}/app.`;
+  const signInHelp = `If a site needs sign-in, never type credentials. Ask the user to sign in to it in their own Chrome, add the site in the Clutchbox extension if it is not added, choose Sync now, and tell you when they are done. A waiting sign-in then shows as pending_sync in tool results; call computer_open with your session_id to apply it, and use the new session_id it returns. Setup is at ${origin}/app.`;
   const caller: Caller = {
     ...member,
     clientId: principal.clientId,
@@ -243,7 +243,7 @@ function registerComputerTools(
   server.registerTool(
     'computer_open',
     {
-      title: "Open the user's Agent Computer",
+      title: "Open the user's computer",
       description: `Open the user's persistent remote desktop computer (created on first use, resumed if paused), apply the user's newest browser sign-ins, and start a computer session for this agent. Returns session_id, which every other computer tool requires, plus a screenshot. Pass your current session_id to replace it with a fresh session without losing control, for example to apply pending_sync, and use the new session_id from then on; without it, another active session (even your own) makes this return busy until its idle minute ends. To open a page, use computer_act: key ["ctrl", "l"], type the URL, key "enter". Call computer_close when the task is done. ${remote} ${signInHelp}`,
       inputSchema: z
         .object({
@@ -311,7 +311,7 @@ function registerComputerTools(
   server.registerTool(
     'computer_screenshot',
     {
-      title: 'Screenshot the Agent Computer',
+      title: 'Screenshot the computer',
       description: `Capture the current screen of the remote computer. Coordinates in other tools use these screenshot pixels. ${remote}`,
       inputSchema: z.object({ session_id: sessionId }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -327,7 +327,7 @@ function registerComputerTools(
   server.registerTool(
     'computer_act',
     {
-      title: "Use the Agent Computer's mouse and keyboard",
+      title: "Use the computer's mouse and keyboard",
       description: `Perform up to 20 mouse/keyboard actions in order on the remote desktop: click, move, drag, scroll, type, key (for example "enter" or ["ctrl", "l"]), or wait. One call types at most ${ACT_MAX_TYPED} characters and waits at most ${ACT_MAX_WAIT_MS / 1000} seconds in total. Stops at the first failure, or when the call runs out of time, and reports what ran; send unexecuted actions in a new call. Returns a screenshot. Actions affect real signed-in accounts. ${remote}`,
       inputSchema: z
         .object({
@@ -438,7 +438,7 @@ function registerComputerTools(
   server.registerTool(
     'computer_exec',
     {
-      title: 'Run a command on the Agent Computer',
+      title: 'Run a command on the computer',
       description: `Run one non-interactive shell command as the desktop user on the remote Linux computer and return its exit code and output (each capped at 32 KB). Use it to inspect or process files the browser downloaded (usually in /home/user/Downloads). timeout_seconds is at most ${EXEC_MAX_SECONDS}; run longer jobs in the background and check on them. ${remote}`,
       inputSchema: z
         .object({
@@ -519,7 +519,7 @@ export function createMcpEndpoint({
     createMcpHandler(
       () => {
         const server = new McpServer(
-          { name: 'agent-computers', version: '0.5.0' },
+          { name: 'clutchbox', version: '0.5.0' },
           { instructions: instructions(principal.email) },
         );
         const security = { securitySchemes: [{ type: 'oauth2', scopes: [MCP_SCOPE] }] };
@@ -528,7 +528,7 @@ export function createMcpEndpoint({
           'account_identity',
           {
             title: 'Check connected account',
-            description: 'Return the connected Agent Computers account (ID and email).',
+            description: 'Return the connected Clutchbox account (ID and email).',
             inputSchema: z.object({}).strict(),
             annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
             _meta: security,

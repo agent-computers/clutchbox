@@ -1,6 +1,6 @@
-# Agent Computers browser extension
+# Clutchbox browser extension
 
-The Chrome extension (Manifest V3) that keeps your agents signed in to the sites you choose. It captures those sites' cookies with their full metadata and syncs them, one way, to your server: the [web app](../web) when you self-host, or [agent-computers.com](https://www.agent-computers.com) from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi).
+The Chrome extension (Manifest V3) that keeps your agents signed in to the sites you choose. It captures those sites' cookies with their full metadata and syncs them, one way, to your server: the [web app](../web) when you self-host, or [clutchbox.dev](https://www.clutchbox.dev) from the [Chrome Web Store](https://chromewebstore.google.com/detail/agent-computers-%E2%80%94-browser/bjmfpnkjkdkfimdfgbgepmdgdnodpmmi).
 
 <img src="store/screenshot-2-control.png" alt="The extension's popup: github.com synced, with Sync now, Pause, Remove this site, and Add another site." width="640">
 
@@ -15,9 +15,9 @@ Works in Chrome 130 and later, and in other Chromium browsers (Edge, Brave, Arc)
 
 ## Connecting to another server
 
-The store build connects to agent-computers.com unless you choose **Connect to another server** in its setup tab (the popup's **Another server…** opens it) and enter a server's address, such as `agents.example.com`. The server must use HTTPS and allow the store build's ID in `EXTENSION_ORIGINS`, as a self-hosted web app does by default.
+The store build connects to clutchbox.dev unless you choose **Connect to another server** in its setup tab (the popup's **Another server…** opens it) and enter a server's address, such as `agents.example.com`. The server must use HTTPS and allow the store build's ID in `EXTENSION_ORIGINS`, as a self-hosted web app does by default.
 
-A server outside the verified list gets a full-page warning first, before any permission prompt: it, not Agent Computers, receives your sign-ins. Servers on the list, servers you already connected to, and servers your administrator approved connect without it.
+A server outside the verified list gets a full-page warning first, before any permission prompt: it, not Clutchbox, receives your sign-ins. Servers on the list, servers you already connected to, and servers your administrator approved connect without it.
 
 **The verified list** is [`packages/capture/verified-servers.json`](../../packages/capture/verified-servers.json), changed by pull request: add `{"origin": "https://agents.example.com", "name": "Example Inc"}`, kept sorted by origin. Your server must serve `/.well-known/agent-computers.json` as `{"origin": "https://agents.example.com"}`, which the web app does on its own; CI checks it for each entry when the list changes and weekly. The extension asks its build's server for the list, with nothing about you, and uses the copy it was built with when that fails.
 
@@ -56,4 +56,4 @@ diff -r -x _metadata built store
 
 The only difference should be the `update_url` line the store adds to `manifest.json`; `_metadata` holds the store's signatures.
 
-To publish a modified build, on a store or anywhere else, give it its own name and icons (`wxt.config.ts` and `public/icon`) and your own key: the Agent Computers name and icons mean this project's builds ([trademark policy](../../TRADEMARKS.md)).
+To publish a modified build, on a store or anywhere else, give it its own name and icons (`wxt.config.ts` and `public/icon`) and your own key: the Clutchbox name and icons mean this project's builds ([trademark policy](../../TRADEMARKS.md)).

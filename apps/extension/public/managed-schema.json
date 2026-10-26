@@ -3,7 +3,7 @@
   "properties": {
     "approvedServers": {
       "title": "Approved servers",
-      "description": "Origins of Agent Computers servers, such as https://agents.example.com, that people connect to without the warning other servers show.",
+      "description": "Origins of Clutchbox servers, such as https://agents.example.com, that people connect to without the warning other servers show.",
       "type": "array",
       "items": { "type": "string" }
     }

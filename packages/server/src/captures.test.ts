@@ -269,13 +269,13 @@ describe('sealed captures', () => {
 });
 
 describe('sync settings', () => {
-  const serverSite = 'agent-computers.com';
+  const serverSite = 'clutchbox.dev';
   const local = { sites: ['github.com', 'notion.so', serverSite], excludedDomains: ['bank.test'], paused: false };
   it("adopt an extension's settings only when the account has none, sealed and bound to the user", async () => {
     const a = await user('a');
     const b = await user('b');
     expect(await syncView(db, a)).toEqual({ settings: null, disconnected: false });
-    // The Agent Computers site is never kept.
+    // The Clutchbox site is never kept.
     const adopted = { ...local, sites: ['github.com', 'notion.so'] };
     expect(await adoptSyncSettings(db, a, local, serverSite)).toEqual(adopted);
     // A second browser gets the account's settings instead of overwriting them.
