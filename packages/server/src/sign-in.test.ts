@@ -205,13 +205,23 @@ describe('OIDC sign-in', () => {
     }
     expect(await db.select().from(schema.user)).toEqual([]);
   });
-  it('refuses an address whose account signs in another way, without linking it', async () => {
+  it('joins the account an address already has, only when the identity provider has verified it', async () => {
     const id = await existingUser('taken@example.test');
-    const { callback } = await signInWithOidc({ sub: 'other', email: 'taken@example.test', email_verified: true });
-    expect(redirectOf(callback).location.searchParams.get('error')).toBe('account_not_linked');
-    expect(
-      (await db.select().from(schema.account).where(eq(schema.account.userId, id))).map(row => row.providerId),
-    ).toEqual(['google']);
+    const providersOf = async () =>
+      (await db.select().from(schema.account).where(eq(schema.account.userId, id))).map(row => row.providerId).sort();
+    const refused = await signInWithOidc({ sub: 'other', email: 'taken@example.test', email_verified: false });
+    expect(redirectOf(refused.callback).location.searchParams.get('error')).toBe('account_not_linked');
+    expect(await providersOf()).toEqual(['google']);
+    const { callback } = await signInWithOidc({
+      sub: 'other',
+      email: 'Taken@Example.test',
+      email_verified: true,
+      name: 'Someone Else',
+    });
+    expect(redirectOf(callback).path).toBe('/app');
+    expect(await sessionOf(cookiesOf(callback))).toMatchObject({ id, name: 'Existing' });
+    expect(await providersOf()).toEqual(['google', 'oidc']);
+    expect(await db.select().from(schema.user)).toHaveLength(1);
   });
   it('rejects an ID token the issuer did not sign or that answers another sign-in', async () => {
     const forged = await signInWithOidc({
@@ -251,6 +261,18 @@ describe('GitHub sign-in', () => {
     const signedIn = await signInWithGitHub();
     expect(redirectOf(signedIn).path).toBe('/app');
     expect(await sessionOf(cookiesOf(signedIn))).toMatchObject({ email: 'member@example.test', name: 'member' });
+  });
+  it('signs in to the account a Google sign-in made for the same verified address', async () => {
+    const id = await existingUser('member@example.test');
+    gitHubUser = {
+      profile: { id: 7, login: 'member', name: null, email: null },
+      emails: [{ email: 'member@example.test', primary: true, verified: true }],
+    };
+    const signedIn = await signInWithGitHub();
+    expect(redirectOf(signedIn).path).toBe('/app');
+    expect(await sessionOf(cookiesOf(signedIn))).toMatchObject({ id, name: 'Existing' });
+    const [linked] = await db.select().from(schema.account).where(eq(schema.account.providerId, 'github'));
+    expect(linked).toMatchObject({ userId: id, accountId: '7' });
   });
 });
 

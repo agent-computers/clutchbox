@@ -220,9 +220,12 @@ export function createAuth(
       encryptOAuthTokens: true,
       storeStateStrategy: 'database',
       storeAccountCookie: false,
-      // An address with an account signs in only the way it was made, plus email links, which prove the address
-      // itself: another provider's sign-in for it fails with account_not_linked, which the sign-in page explains.
-      accountLinking: { enabled: false },
+      // A sign-in with another provider for an address that has an account joins that account, so a member can use
+      // Google and GitHub alike: only when that provider has verified the address (no provider is trusted without it),
+      // and every account's own address is verified (above). Otherwise it fails with account_not_linked, which the
+      // sign-in page explains. Linking keeps the account's name and picture. An OIDC identity provider is trusted to
+      // verify addresses as much as it is to make accounts.
+      accountLinking: { enabled: true },
     },
     // Keys on the default x-forwarded-for, which Vercel, or off it the Node server (packages/api/src/node-upgrade.ts),
     // overwrites with the one client IP. Listing headers the platform does not overwrite would let clients spoof fresh

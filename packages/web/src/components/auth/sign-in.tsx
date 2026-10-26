@@ -19,7 +19,7 @@ import { ProviderButton } from './provider-button';
 // The error codes Better Auth adds to /sign-in when sign-in fails, in words; any other gets the generic message.
 const failures: Record<string, string> = {
   account_not_linked:
-    'This email address already has an account that signs in another way. Sign in the way you did before.',
+    'This email address already has an account, and your sign-in provider has not verified it. Verify it there, or sign in the way you did before.',
   email_not_verified:
     'Your sign-in provider has not verified that account’s email address. Verify it there, then try again.',
   email_not_found: 'Your sign-in provider did not share an email address, which an account needs.',
