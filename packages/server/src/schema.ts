@@ -138,8 +138,8 @@ export const organizations = pgTable(
     id: id(),
     publicId: text('public_id').notNull().unique(),
     name: text('name').notNull(),
-    // Better Auth's: unique, and the public ID unless someone changes it.
-    slug: text('slug').unique(),
+    // Better Auth's: unique; nothing shows it.
+    slug: text('slug').notNull().unique(),
     logo: text('logo'),
     metadata: text('metadata'),
     personalUserId: text('personal_user_id')
