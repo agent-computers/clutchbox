@@ -23,8 +23,9 @@ import {
   syncView,
 } from './captures';
 import type { Database } from './database';
-import { person } from './member-fixtures';
+import { membership, person } from './member-fixtures';
 import * as schema from './schema';
+import { resealForMemberships } from './sealing';
 
 let pg: PGlite;
 let db: Database;
@@ -404,5 +405,89 @@ describe('applied captures', () => {
     expect(() => openAppliedCapture(sealed, B, 'computer-1')).toThrow();
     expect(() => openAppliedCapture(sealed, A, 'computer-2')).toThrow();
     expect(() => openCapture(sealed, A)).toThrow();
+  });
+});
+
+describe('memberships', () => {
+  it("keeps one person's capture, settings, and deletions apart in each of their memberships", async () => {
+    const a = await user('a');
+    // The same person in a second organization.
+    const team = await membership(db, a.userId, (await user('b')).organizationId);
+    const settings = { sites: ['example.com', 'github.com'], excludedDomains: [], paused: false };
+    await adoptSyncSettings(db, a, settings, 'agent-computers.test');
+    await saveCapture(
+      db,
+      a,
+      siteBundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })], ['example.com', 'github.com']),
+    );
+    await saveCapture(db, team, bundle([cookie({ value: 'team' })]));
+    // The second membership has its own settings, which nothing adopted yet.
+    expect((await syncView(db, team)).settings).toBeNull();
+    expect(await changeSyncSettings(db, team, { removeSites: ['github.com'] }, 'agent-computers.test')).toEqual({
+      error: 'sync_settings_missing',
+    });
+    expect((await loadLatestCapture(db, a))!.capture.cookies).toHaveLength(2);
+    expect((await loadLatestCapture(db, team))!.capture.cookies.map(entry => entry.value)).toEqual(['team']);
+    // Narrowing one membership's settings narrows only its capture.
+    await changeSyncSettings(db, a, { removeSites: ['github.com'] }, 'agent-computers.test');
+    expect((await loadLatestCapture(db, a))!.capture.cookies).toHaveLength(1);
+    // Delete everything in the second membership leaves the first's capture, settings, and sync on.
+    await deleteCaptures(db, team, { disconnect: true, forget: true });
+    expect(await captureView(db, team)).toBeNull();
+    expect(await saveCapture(db, team, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
+    expect(await captureView(db, a)).not.toBeNull();
+    expect(await syncView(db, a)).toEqual({ settings: { ...settings, sites: ['example.com'] }, disconnected: false });
+    expect(await saveCapture(db, a, bundle([cookie({ value: 'later' })]))).toMatchObject({ status: 'stored' });
+  });
+});
+
+describe('re-sealing for memberships', () => {
+  it('moves values sealed for the person to their membership, leaving what will not open', async () => {
+    const a = await user('a');
+    const capture = bundle([cookie()], new Date('2026-10-15T10:00:00Z'));
+    const scope = JSON.stringify({ mode: 'sites', sites: ['example.com'] });
+    const settings = { sites: ['example.com'], excludedDomains: [], paused: false };
+    const applied = { completedAt: capture.completedAt, cookies: capture.cookies };
+    await db.insert(schema.captures).values({
+      userId: a.userId,
+      captureId: capture.id,
+      digest: await captureDigest(capture.cookies),
+      cookieCount: 1,
+      sealed: sealedForPerson(JSON.stringify(capture), 'capture', a.userId),
+      sealedScope: sealedForPerson(scope, 'capture-scope', a.userId),
+      completedAt: new Date(capture.completedAt),
+    });
+    await db
+      .insert(schema.syncSettings)
+      .values({ userId: a.userId, sealed: sealedForPerson(JSON.stringify(settings), 'sync-settings', a.userId) });
+    const [computer] = await db
+      .insert(schema.computers)
+      .values({ membershipId: a.membershipId, publicId: 'computer_one' })
+      .returning({ id: schema.computers.id });
+    await db
+      .update(schema.computers)
+      .set({ appliedCapture: sealedForPerson(JSON.stringify(applied), 'applied-capture', a.userId, 'computer_one') })
+      .where(eq(schema.computers.id, computer!.id));
+    // Sealed for someone else: it can't be opened for this row, so it stays as it is.
+    const b = await user('b');
+    const foreign = sealedForPerson(JSON.stringify(settings), 'sync-settings', 'someone-else');
+    await db.insert(schema.syncSettings).values({ userId: b.userId, sealed: foreign });
+
+    expect(await resealForMemberships(db, null)).toEqual({ resealed: 0, unreadable: 0, waiting: 5 });
+    expect(await resealForMemberships(db)).toEqual({ resealed: 4, unreadable: 1, waiting: 0 });
+    const [row] = await db.select().from(schema.captures);
+    expect([row!.sealed.slice(0, 3), row!.sealedScope!.slice(0, 3)]).toEqual(['v2.', 'v2.']);
+    expect((await loadLatestCapture(db, a))!.capture).toEqual(capture);
+    expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['example.com'] });
+    expect((await syncView(db, a)).settings).toEqual(settings);
+    const [moved] = await db.select().from(schema.computers);
+    expect(openAppliedCapture(moved!.appliedCapture!, a, 'computer_one')).toEqual(applied);
+    const [left] = await db
+      .select({ sealed: schema.syncSettings.sealed })
+      .from(schema.syncSettings)
+      .where(eq(schema.syncSettings.userId, b.userId));
+    expect(left!.sealed).toBe(foreign);
+    // A second run finds only what would not open.
+    expect(await resealForMemberships(db)).toEqual({ resealed: 0, unreadable: 1, waiting: 0 });
   });
 });

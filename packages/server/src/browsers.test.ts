@@ -28,7 +28,8 @@ import { bundle, cookie } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
-import { currentMember, singleOrganization } from './organizations';
+import { membership } from './member-fixtures';
+import { createOrganization, currentMember, singleOrganization } from './organizations';
 import * as schema from './schema';
 
 const origin = 'http://localhost:3097';
@@ -524,6 +525,39 @@ describe('connected browsers', () => {
     expect(await listBrowsers(db, await member('a'))).toEqual([]);
     expect((await theirs()).status).toBe(200);
     expect(await listBrowsers(db, await member('b'))).toHaveLength(1);
+  });
+
+  it("keep one person's browsers apart in each of their memberships", async () => {
+    const a = await identity('a');
+    await identity('b');
+    const personal = await connect(a);
+    const work = await connect(a, EDGE_ON_WINDOWS);
+    // The person in a second organization, where the second browser connected.
+    const owner = { id: 'b', name: 'b', email: 'b@example.test' };
+    const team = await membership(
+      db,
+      'a',
+      (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner })))!,
+    );
+    const workBrowser = (await principal(work, EDGE_ON_WINDOWS))!.browser;
+    await db
+      .update(schema.connectedBrowsers)
+      .set({ membershipId: team.membershipId })
+      .where(eq(schema.connectedBrowsers.id, workBrowser.id));
+    const mine = await member('a');
+    // A sync token acts for its browser's membership.
+    expect((await principal(personal))!.member).toEqual(mine);
+    expect((await principal(work, EDGE_ON_WINDOWS))!.member).toEqual(team);
+    expect((await listBrowsers(db, mine)).map(row => row.browser)).toEqual(['chrome']);
+    expect((await listBrowsers(db, team)).map(row => row.browser)).toEqual(['edge']);
+    expect(await disconnectBrowser(db, mine, { publicId: workBrowser.publicId })).toBe(false);
+    // Disconnecting every browser in one membership leaves the other's connected.
+    await disconnectAllBrowsers(db, team);
+    expect(await principal(work, EDGE_ON_WINDOWS)).toBeNull();
+    expect((await refresh(work.refresh_token)).status).toBe(400);
+    expect(await principal(personal)).not.toBeNull();
+    expect(await listBrowsers(db, mine)).toHaveLength(1);
+    expect((await refresh(personal.refresh_token)).status).toBe(200);
   });
 
   it('stay disconnected when a racing rotation recreates their tokens', async () => {

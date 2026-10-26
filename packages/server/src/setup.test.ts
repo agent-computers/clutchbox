@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { bundle, cookie, siteBundle } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { Database } from './database';
-import { person } from './member-fixtures';
+import { membership, person } from './member-fixtures';
 import type { Member } from './organizations';
 import * as schema from './schema';
 import { closeSetupNotice, noteAgentConnected, noteSetupStep, recordSetupStep, resetSetup, setupView } from './setup';
@@ -188,5 +188,17 @@ describe('setup view', () => {
     expect(errors).not.toHaveBeenCalled();
     expect(await saveCapture(db, a, capture)).toMatchObject({ status: 'unchanged' });
     expect((await setupView(db, a)).sync).toEqual({ mode: 'sites', sites: ['github.com'], readable: true });
+  });
+  it("keeps one person's setup apart in each of their memberships", async () => {
+    const a = await user('a');
+    const team = await membership(db, a.userId, (await user('b')).organizationId);
+    await noteSetupStep(db, team, 'setUp');
+    await saveCapture(db, team, siteBundle([], ['github.com']));
+    expect((await setupView(db, a)).items).toMatchObject({ browserSync: false, computer: false });
+    expect((await setupView(db, team)).items).toMatchObject({ browserSync: true, computer: true });
+    await noteSetupStep(db, a, 'setUp');
+    await resetSetup(db, a);
+    expect((await row(team))?.setUpAt).not.toBeNull();
+    expect((await row(a))?.setUpAt).toBeNull();
   });
 });

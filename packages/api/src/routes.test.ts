@@ -9,15 +9,17 @@ import { createAuth } from '../../server/src/auth';
 import { connectBrowser, type Tokens } from '../../server/src/browser-fixtures';
 import { ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie, siteBundle } from '../../server/src/capture-fixtures';
+import { adoptSyncSettings, captureView, saveCapture, syncView } from '../../server/src/captures';
 import type { ComputerProvider } from '../../server/src/computers';
 import { openComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { type MeteringRefusal, noMetering, noOperatorAdmin } from '../../server/src/hooks';
-import { currentMember, singleOrganization } from '../../server/src/organizations';
+import { membership } from '../../server/src/member-fixtures';
+import { createOrganization, currentMember, singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
-import { recordSetupStep } from '../../server/src/setup';
+import { recordSetupStep, setupView } from '../../server/src/setup';
 import { createApi } from './index';
 
 // Every /api/v1 route over HTTP, in process: session, origin, validation, status codes, and ownership.
@@ -712,5 +714,39 @@ describe('API routes', () => {
     expect(await response.json()).toEqual({ error: 'service_unavailable' });
     expect(logged).toHaveBeenCalled();
     expect(logged.mock.calls.flat().join(' ')).not.toContain('secret');
+  });
+  it("show and change only the current membership's sync data and setup, and a browser's own membership's", async () => {
+    const request = client();
+    const a = await identity('a');
+    await identity('b');
+    // A second, newer membership in another organization: not the one the web app acts in.
+    const owner = { id: 'b', name: 'b', email: 'b@example.test' };
+    const team = await membership(
+      db,
+      'a',
+      (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner })))!,
+    );
+    await saveCapture(db, team, siteBundle([cookie({ domain: 'notion.so' })], ['notion.so']));
+    await adoptSyncSettings(db, team, { sites: ['notion.so'], excludedDomains: [], paused: true }, '127.0.0.1');
+    await recordSetupStep(db, team, 'setUp');
+    expect(await (await request('GET', '/sync', { cookie: a })).json()).toMatchObject({
+      settings: null,
+      disconnected: false,
+    });
+    expect(await (await request('GET', '/setup', { cookie: a })).json()).toMatchObject({
+      items: { browserSync: false, computer: false },
+    });
+    // The extension's upload lands in its browser's membership, the current one when it connected.
+    const capture = siteBundle([cookie({ domain: 'github.com' })], ['github.com']);
+    expect((await request('POST', '/captures', { token: await browser(a), body: { capture } })).status).toBe(200);
+    expect(await (await request('GET', '/setup', { cookie: a })).json()).toMatchObject({
+      items: { browserSync: true },
+      sync: { mode: 'sites', sites: ['github.com'] },
+    });
+    // Delete everything leaves the other membership's capture, settings, and setup.
+    expect((await request('DELETE', '/computer', { cookie: a })).status).toBe(200);
+    expect(await captureView(db, team)).toMatchObject({ cookieCount: 1 });
+    expect((await syncView(db, team)).settings).toMatchObject({ sites: ['notion.so'] });
+    expect((await setupView(db, team)).items.computer).toBe(true);
   });
 });
