@@ -1,6 +1,6 @@
 {
   "name": "@agent-computers/extension",
-  "version": "26.1026.3",
+  "version": "26.1026.4",
   "private": true,
   "type": "module",
   "scripts": {

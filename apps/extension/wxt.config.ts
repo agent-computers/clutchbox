@@ -16,7 +16,7 @@ export default defineConfig({
   vite: () => ({ plugins: [tailwindcss()] }),
   // A function so WXT has loaded .env files into process.env first.
   manifest: ({ mode }) => ({
-    name: 'Clutchbox — Browser Sync',
+    name: 'Clutchbox',
     description:
       'Sync sign-ins for sites you choose into the browsers your agents use. Opt-in, encrypted, with exclusions, pause, and disconnect.',
     ...(mode === 'store' ? {} : { key }),
