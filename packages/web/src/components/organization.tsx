@@ -31,7 +31,6 @@ import { Ellipsis } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
-  ApiError,
   type ApiKey,
   api,
   apiKeysQuery,
@@ -44,35 +43,16 @@ import {
   type Role,
 } from '../lib/api';
 import { AppPage } from './app-shell';
+import { ConnectApps } from './connect-apps';
 import { CopyButton } from './copy-button';
+import { Failure } from './failure';
 import { aRole, JoinableOrganizations, roleNames } from './join';
 
-// The server's refusals, in words; any other error shows its own message.
-const refusals: Record<string, string> = {
-  forbidden: 'Your role does not allow that.',
-  last_owner: 'An organization needs an owner. Make someone else an owner first.',
-  not_found: 'That is no longer here. Reload to see the latest.',
-  invalid_domain: 'Enter domains only, like acme.com.',
-  organization_limit: 'You have created as many organizations as you can.',
-  api_key_limit: 'This organization has as many API keys as it can. Revoke one first.',
-  public_email_domain:
-    'Anyone can get an address at that domain, so it cannot let people join. Use your own domain, or invite by link.',
-};
-const failure = (error: Error) => (error instanceof ApiError && error.code && refusals[error.code]) || error.message;
 // Owners manage everyone; admins manage admins and members. Only owners make owners.
 const manages = (role: Role) => role === 'owner' || role === 'admin';
 const grantable = (actor: Role): Role[] => (actor === 'owner' ? ['owner', 'admin', 'member'] : ['admin', 'member']);
 const mayManage = (actor: Role, target: Role) => manages(actor) && (actor === 'owner' || target !== 'owner');
 const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-
-function Failure({ error }: { error: Error | null }) {
-  if (!error) return null;
-  return (
-    <Alert variant="destructive">
-      <AlertDescription>{failure(error)}</AlertDescription>
-    </Alert>
-  );
-}
 
 // The Organization page: who is in it and their roles, and for owners and admins invitations and join domains;
 // for anyone, leaving, and other organizations that allow their email address's domain.
@@ -91,6 +71,7 @@ export function Organization() {
           {manages(data.role) && <Invitations role={data.role} />}
           {manages(data.role) && <JoinDomains domains={data.organization.joinDomains} />}
           {manages(data.role) && <ApiKeys />}
+          {manages(data.role) && <ConnectApps />}
           <OtherOrganizations />
           <NewOrganization />
           <Leave

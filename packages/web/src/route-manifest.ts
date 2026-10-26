@@ -48,6 +48,15 @@ export const routeManifest: RouteEntry[] = [
     segment: { dynamic: 'force-dynamic' },
   },
   {
+    id: 'connect',
+    dir: 'connect',
+    file: 'page.tsx',
+    module: 'connect',
+    reexport: ['metadata'],
+    factory: { name: 'connectPage', as: ['default'] },
+    segment: { dynamic: 'force-dynamic' },
+  },
+  {
     id: 'app-layout',
     dir: 'app',
     file: 'layout.tsx',

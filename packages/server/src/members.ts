@@ -227,7 +227,12 @@ export async function acceptInvitation(db: Database, person: Person, token: stri
   });
 }
 
-async function join(tx: Pick<Database, 'insert' | 'select'>, userId: string, organizationId: number, role: Role) {
+export async function join(
+  tx: Pick<Database, 'insert' | 'select'>,
+  userId: string,
+  organizationId: number,
+  role: Role,
+) {
   const [membership] = await tx
     .insert(schema.memberships)
     .values({ publicId: newPublicId('membership'), organizationId, userId, role })

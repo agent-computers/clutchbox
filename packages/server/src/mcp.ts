@@ -164,7 +164,8 @@ export async function listMcpGrants(db: Database, member: Member) {
     })
     .from(schema.oauthConsent)
     .innerJoin(schema.oauthClient, eq(schema.oauthClient.clientId, schema.oauthConsent.clientId))
-    .where(and(boundTo(schema.oauthConsent, member), notExtension))
+    // Connect apps (connect.ts), which an organization owns, are not agents: members leave the organization to end them.
+    .where(and(boundTo(schema.oauthConsent, member), notExtension, isNull(schema.oauthClient.referenceId)))
     .orderBy(schema.oauthConsent.clientId, desc(schema.oauthConsent.createdAt));
   return latest
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())

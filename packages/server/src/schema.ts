@@ -223,6 +223,27 @@ export const apiKeys = pgTable(
     ),
   ],
 );
+// A person connected to an organization's app through Connect (connect.ts): the app's OAuth client, the member, and
+// the app's own ID for them. It goes with either.
+export const connections = pgTable(
+  'connections',
+  {
+    id: id(),
+    clientId: text('client_id')
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
+    membershipId: key('membership_id')
+      .notNull()
+      .references(() => memberships.id, { onDelete: 'cascade' }),
+    externalUserId: text('external_user_id'),
+    ...timestamps(),
+  },
+  table => [
+    unique('connections_client_membership_unique').on(table.clientId, table.membershipId),
+    index('connections_membership_idx').on(table.membershipId),
+    check('connections_external_user_id', sql`char_length(${table.externalUserId}) BETWEEN 1 AND 255`),
+  ],
+);
 // The membership a per-user row belongs to; see memberships.
 const membershipId = () => key('membership_id').references(() => memberships.id, { onDelete: 'cascade' });
 

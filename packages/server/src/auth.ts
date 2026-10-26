@@ -20,6 +20,7 @@ import {
   SYNC_SCOPE,
 } from './browsers';
 import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
+import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
 import { noOperatorAdmin, type OperatorAdmin } from './hooks';
 import { type SendEmail, smtpSender } from './mail';
@@ -292,7 +293,7 @@ export function createAuth(
         resource: `${config.BETTER_AUTH_URL}/api/mcp`,
         // `sync` is the extension's alone (browsers.ts): never advertised, and never given to agents, whose CIMD
         // registrations store the MCP scopes. The extension's client row allows only offline_access and sync.
-        scopes: [...MCP_SCOPES, SYNC_SCOPE],
+        scopes: [...MCP_SCOPES, SYNC_SCOPE, CONNECT_SCOPE],
         advertisedMetadata: { scopes_supported: MCP_SCOPES },
         clientRegistrationDefaultScopes: MCP_SCOPES,
         grantTypes: ['authorization_code', 'refresh_token'],
@@ -307,12 +308,13 @@ export function createAuth(
         allowDynamicClientRegistration: false,
         clientPrivileges: () => false,
         // Every agent's grant is for one organization: its consent is stored per membership, under the membership's
-        // public ID, and its tokens name that membership (mcp.ts). There is no page to choose one yet, so the grant is
-        // for the person's current membership. The extension's connection (the only request for `sync`) is the
-        // person's, not a membership's.
+        // public ID, and its tokens name that membership (mcp.ts). It is the person's current membership, which the
+        // consent screen names and lets them switch first. The extension's connection (the only request for `sync`)
+        // is the person's, not a membership's. A Connect app's request (`connect`, connect.ts) first goes to /connect,
+        // which joins its organization and switches to it, then comes back here through /oauth2/continue.
         postLogin: {
-          page: `${config.BETTER_AUTH_URL}/consent`,
-          shouldRedirect: () => false,
+          page: `${config.BETTER_AUTH_URL}/connect`,
+          shouldRedirect: ({ scopes, isContinuation }) => scopes.includes(CONNECT_SCOPE) && !isContinuation,
           consentReferenceId: async ({ user, scopes }) => {
             // Neither agents nor browsers connect for a person in no organization here: they would have nothing to
             // act in or sync to. They join by invitation or email domain (members.ts) and connect again.
@@ -322,6 +324,20 @@ export function createAuth(
             return scopes.includes(SYNC_SCOPE) ? undefined : membership;
           },
         },
+        // A Connect app's code exchange records the connection and tells the app who the member is. The grant must be
+        // for the person's membership in the app's own organization, or the exchange fails.
+        customTokenResponseFields: async ({ grantType, user, scopes, verificationValue }) => {
+          if (grantType !== 'authorization_code' || !scopes.includes(CONNECT_SCOPE) || !user) return {};
+          const query = (verificationValue?.query ?? {}) as Record<string, unknown>;
+          const connection = await recordConnection(db, {
+            clientId: String(query.client_id ?? ''),
+            userId: user.id,
+            membershipPublicId: verificationValue?.referenceId,
+            externalUserId: typeof query.external_user_id === 'string' ? query.external_user_id : undefined,
+          });
+          if (!connection) throw oauthError('invalid_grant', 'the grant is not for a member of the app organization');
+          return connection;
+        },
         customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),
       }),
       cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
@@ -330,6 +346,12 @@ export function createAuth(
   });
 }
 export type Auth = ReturnType<typeof createAuth>;
+// The client of an authorize request this server signed and that has not expired, from the query it hands its pages
+// (consent, /connect); null for any other.
+export async function signedOAuthClient(auth: Auth, oauthQuery: string) {
+  if (!(await verifyOAuthQueryParams(oauthQuery, (await auth.$context).secret))) return null;
+  return new URLSearchParams(oauthQuery).get('client_id');
+}
 // Pass `refreshed` from a route handler: getSession extends an active session past updateAge,
 // and the renewed cookie must reach the browser or it still expires 7 days after sign-in.
 // Server components cannot set cookies; their sessions are renewed through /api/v1 calls.

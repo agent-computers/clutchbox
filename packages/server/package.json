@@ -35,6 +35,7 @@
     "./hooks": "./src/hooks.ts",
     "./members": "./src/members.ts",
     "./api-keys": "./src/api-keys.ts",
+    "./connect": "./src/connect.ts",
     "./organizations": "./src/organizations.ts",
     "./migrator": "./src/migrator.ts",
     "./migrate": "./src/migrate.ts",

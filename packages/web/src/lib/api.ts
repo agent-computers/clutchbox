@@ -62,6 +62,15 @@ export type ApiKey = {
   lastUsedAt: string | null;
   createdBy: string | null;
 };
+// Where the signed-in person stands in a Connect app's request (/connect).
+export type ConnectStatus = {
+  app: { id: string; name: string };
+  organization: string;
+  member: boolean;
+  browser: boolean;
+};
+// A Connect app the organization registered; never its secret, which only creating it returns.
+export type ConnectApp = { id: string; name: string; redirectUris: string[]; createdAt: string; connections: number };
 // An organization you may join because it allows your email address's domain.
 export type JoinableOrganization = { id: string; name: string };
 
@@ -110,6 +119,17 @@ export const browsersQuery = queryOptions({
 export const organizationQuery = queryOptions({
   queryKey: ['organization'],
   queryFn: () => api<OrganizationView>('/organization'),
+});
+export const connectStatusQuery = (oauthQuery: string) =>
+  queryOptions({
+    queryKey: ['connect', oauthQuery],
+    queryFn: () => api<ConnectStatus>('/connect/status', 'POST', { oauthQuery }),
+    retry: false,
+  });
+export const connectAppsQuery = queryOptions({
+  queryKey: ['organization', 'connect-apps'],
+  queryFn: () => api<{ apps: ConnectApp[] }>('/organization/connect-apps'),
+  select: data => data.apps,
 });
 export const apiKeysQuery = queryOptions({
   queryKey: ['organization', 'api-keys'],

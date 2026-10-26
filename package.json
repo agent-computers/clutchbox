@@ -35,7 +35,7 @@
     "dev:web": "bun run --cwd apps/web dev",
     "build:web": "bun run --cwd apps/web build",
     "start:web": "bun run --cwd apps/web start",
-    "generate-routes": "node --import tsx packages/web/scripts/generate-routes.ts --app apps/web --group 'sign-in=(auth),consent=(auth),join=(auth),invitation=(auth)'"
+    "generate-routes": "node --import tsx packages/web/scripts/generate-routes.ts --app apps/web --group 'sign-in=(auth),consent=(auth),join=(auth),invitation=(auth),connect=(auth)'"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

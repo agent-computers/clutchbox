@@ -1,4 +1,5 @@
 import { getPrincipal } from '@agent-computers/server/auth';
+import { CONNECT_SCOPE, connectApp } from '@agent-computers/server/connect';
 import { organizationsOf } from '@agent-computers/server/organizations';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import type { OAuthScopeMetadataMap } from '@better-auth-ui/core/plugins/oauth-provider';
@@ -64,6 +65,22 @@ export const consentPage = (getServices: GetServices) =>
         throw error;
       });
     if (!client) return <InvalidRequest />;
+    // A Connect app's grant is for its own organization, which /connect switched to: named, and not switchable here.
+    const connect = query.get('scope')?.split(' ').includes(CONNECT_SCOPE) ? await connectApp(db, clientId) : null;
+    if (
+      connect &&
+      !organizations.find(organization => organization.current && organization.id === connect.organizationPublicId)
+    )
+      return <InvalidRequest />;
+    const scopes: OAuthScopeMetadataMap = connect
+      ? {
+          ...scopeMetadata,
+          [CONNECT_SCOPE]: {
+            label: `Link your account in ${connect.organization}`,
+            description: `${client.client_name ?? 'The app'} learns which member of ${connect.organization} you are. ${connect.organization}'s API keys can use the sites you sync to it.`,
+          },
+        }
+      : scopeMetadata;
     const approvalHost = hostOf(query.get('redirect_uri'));
     const loopback = !!approvalHost && LOOPBACK.has(approvalHost.replace(/:\d+$/, ''));
     return (
@@ -78,10 +95,10 @@ export const consentPage = (getServices: GetServices) =>
             terms: client.tos_uri,
           }}
           user={{ name: principal.name, email: principal.email }}
-          scopeMetadata={scopeMetadata}
+          scopeMetadata={scopes}
           loopback={loopback}
           clientHost={hostOf(clientId) ?? clientId}
-          organizations={organizations.map(({ id, name, current }) => ({ id, name, current }))}
+          organizations={connect ? [] : organizations.map(({ id, name, current }) => ({ id, name, current }))}
         />
       </main>
     );

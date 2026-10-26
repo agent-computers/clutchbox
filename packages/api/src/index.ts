@@ -19,7 +19,7 @@ import {
   membersForKey,
   revokeApiKey,
 } from '@agent-computers/server/api-keys';
-import { type Auth, getPrincipal } from '@agent-computers/server/auth';
+import { type Auth, getPrincipal, signedOAuthClient } from '@agent-computers/server/auth';
 import {
   BROWSER_ID_PATTERN,
   disconnectAllBrowsers,
@@ -44,6 +44,16 @@ import {
   setLiveViewClipboard,
   takeOverComputer,
 } from '@agent-computers/server/computers';
+import {
+  CONNECT_APP_ID_PATTERN,
+  connectionsForOrganization,
+  connectStatus,
+  createConnectApp,
+  deleteConnectApp,
+  joinForConnect,
+  listConnectApps,
+  MAX_REDIRECT_URIS,
+} from '@agent-computers/server/connect';
 import type { Database } from '@agent-computers/server/database';
 import { heartbeat, heartbeatSchema } from '@agent-computers/server/heartbeat';
 import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
@@ -98,7 +108,7 @@ type Principal = {
 };
 // Or, on the developer REST routes alone (KEY_PATH), an organization API key, which acts for its organization.
 type Env = { Variables: { principal: Principal; apiKey?: KeyPrincipal } };
-const KEY_PATH = /^\/api\/v1\/members(\/[^/]+\/capture)?$/;
+const KEY_PATH = /^\/api\/v1\/(members(\/[^/]+\/capture)?|connections)$/;
 // A deployment's own routes, added after the shared middleware so they get its session, origin, and header handling.
 export type ApiExtension = (app: Hono<Env>, services: { db: Database }) => void;
 // Vercel Functions refuse request bodies over 4.5 MB with their own FUNCTION_PAYLOAD_TOO_LARGE. This limit sits
@@ -127,6 +137,8 @@ const MEMBERS_FAILURE_STATUS = {
   invalid_domain: 400,
   public_email_domain: 400,
   api_key_limit: 409,
+  connect_app_limit: 409,
+  invalid_redirect_uri: 400,
 } as const;
 
 export function createApi({
@@ -333,6 +345,41 @@ export function createApi({
     if (!API_KEY_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await revokeApiKey(db, await memberOf(c), id));
   });
+  // Connect apps, which owners and admins register (connect.ts). The client secret is in the answer to POST alone.
+  app.get('/organization/connect-apps', async c => answer(c, await listConnectApps(db, await memberOf(c))));
+  app.post('/organization/connect-apps', async c => {
+    const parsed = await body(
+      c,
+      z
+        .object({
+          name: z.string().trim().min(1).max(100),
+          redirectUris: z.array(z.string().min(1).max(2048)).min(1).max(MAX_REDIRECT_URIS),
+        })
+        .strict(),
+    );
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await createConnectApp(db, await memberOf(c), parsed.data), 201);
+  });
+  app.delete('/organization/connect-apps/:id', async c => {
+    const id = c.req.param('id');
+    if (!CONNECT_APP_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await deleteConnectApp(db, await memberOf(c), id));
+  });
+  // The /connect page, for anyone signed in partway through a Connect app's authorize request: where they stand, and
+  // joining the app's organization, which only a request the server signed (the authorize redirect's query) may ask.
+  app.post('/connect/status', async c => {
+    const parsed = await body(c, z.object({ oauthQuery: z.string().min(1).max(8192) }).strict());
+    const clientId = parsed.success ? await signedOAuthClient(auth, parsed.data.oauthQuery) : null;
+    if (!clientId) return c.json({ error: 'invalid_request' }, 400);
+    const status = await connectStatus(db, c.get('principal').id, clientId);
+    return status ? c.json(status) : c.json({ error: 'not_found' }, 404);
+  });
+  app.post('/connect/join', async c => {
+    const parsed = await body(c, z.object({ oauthQuery: z.string().min(1).max(8192) }).strict());
+    const clientId = parsed.success ? await signedOAuthClient(auth, parsed.data.oauthQuery) : null;
+    if (!clientId) return c.json({ error: 'invalid_request' }, 400);
+    return answer(c, await joinForConnect(db, person(c), clientId));
+  });
   // The developer REST API, under an organization API key only.
   const keyOf = (c: Context<Env>) => {
     const key = c.get('apiKey');
@@ -340,6 +387,10 @@ export function createApi({
     return key;
   };
   app.get('/members', async c => c.json({ members: await membersForKey(db, keyOf(c)) }));
+  // Which member each Connect app's user is (connect.ts).
+  app.get('/connections', async c =>
+    c.json({ connections: await connectionsForOrganization(db, keyOf(c).organizationId) }),
+  );
   app.get('/members/:id/capture', async c => {
     const key = keyOf(c);
     const id = c.req.param('id');
