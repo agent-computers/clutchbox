@@ -2140,6 +2140,13 @@ describe('another server', () => {
     // Unreachable or malformed, the built-in copy decides.
     test.verified.mockRejectedValueOnce(new TypeError('network'));
     expect(await trust(test, elsewhere)).toMatchObject({ trust: 'unverified' });
+    test.verified.mockResolvedValueOnce(answer(503, { error: 'service_unavailable' }));
+    expect(await trust(test, 'https://www.agent-computers.com')).toEqual({
+      ok: true,
+      origin: 'https://www.agent-computers.com',
+      trust: 'verified',
+      name: 'Agent Computers',
+    });
     test.verified.mockResolvedValueOnce(answer(200, { servers: [{ origin: 'http://plain.test', name: 'Plain' }] }));
     expect(await trust(test, 'http://plain.test')).toEqual({ ok: false, error: 'invalid_request' });
     // The browser's administrator approves servers through policy, which needs no request.
