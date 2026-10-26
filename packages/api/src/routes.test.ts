@@ -393,7 +393,7 @@ describe('API routes', () => {
     });
     expect((await setup(b)).items.browserSync).toBe(false);
     // The notice opens once set up, and closing it is per user and idempotent.
-    for (const id of ['a', 'b']) await recordSetupStep(db, id, 'setUp');
+    for (const id of ['a', 'b']) await recordSetupStep(db, await member(id), 'setUp');
     expect(await setup(a)).toMatchObject({ noticeOpen: true, setUpAt: expect.any(String), items: { computer: true } });
     for (const _ of [1, 2]) {
       const closed = await request('POST', '/setup/notice/close', { cookie: a });
@@ -421,8 +421,8 @@ describe('API routes', () => {
     const a = await identity('a');
     const b = await identity('b');
     for (const id of ['a', 'b']) {
-      await recordSetupStep(db, id, 'browserSynced');
-      await recordSetupStep(db, id, 'setUp');
+      await recordSetupStep(db, await member(id), 'browserSynced');
+      await recordSetupStep(db, await member(id), 'setUp');
     }
     expect((await client()('DELETE', '/computer', { cookie: a })).status).toBe(200);
     expect(await (await client()('GET', '/setup', { cookie: a })).json()).toMatchObject({
@@ -460,7 +460,7 @@ describe('API routes', () => {
           .status,
       ).toBe(200);
     for (const userId of ['a', 'b']) {
-      await recordSetupStep(db, userId, 'setUp');
+      await recordSetupStep(db, await member(userId), 'setUp');
       await openComputerSession(
         db,
         { provider: fake.provider, metering: noMetering },

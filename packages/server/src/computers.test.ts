@@ -31,7 +31,8 @@ import { heartbeat, heartbeatSchema } from './heartbeat';
 import { type Metering, type MeteringRefusal, noMetering } from './hooks';
 import { newPublicId } from './ids';
 import { revokeMcpGrant, revokeMcpGrants } from './mcp';
-import { createOrganization, type Member } from './organizations';
+import { membership, person } from './member-fixtures';
+import type { Member } from './organizations';
 import * as schema from './schema';
 import { setTimeZone } from './time-zones';
 
@@ -49,24 +50,8 @@ const metering: Metering = {
   },
 };
 let computers: Computers;
-// A person and their membership in an organization of their own.
-const user = async (id: string): Promise<Member> => {
-  const person = { id, name: id, email: `${id}@example.test` };
-  await db.insert(schema.user).values({ ...person, emailVerified: true });
-  return join(person.id, await db.transaction(tx => createOrganization(tx, { name: id, owner: person })));
-};
-// The person's membership in an organization.
-const join = async (userId: string, organizationId: number | null): Promise<Member> => {
-  const [membership] = await db
-    .insert(schema.memberships)
-    .values({ publicId: newPublicId('membership'), organizationId: organizationId!, userId, role: 'member' })
-    .onConflictDoUpdate({
-      target: [schema.memberships.organizationId, schema.memberships.userId],
-      set: { updatedAt: new Date() },
-    })
-    .returning();
-  return { userId, membershipId: membership!.id, organizationId: membership!.organizationId };
-};
+const user = (id: string) => person(db, id);
+const join = (userId: string, organizationId: number) => membership(db, userId, organizationId);
 // The member's consent for an agent, bound to their membership as the consent page binds it.
 const grant = async (member: Member, clientId: string) => {
   const [membership] = await db
@@ -562,7 +547,7 @@ describe('computer_close', () => {
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
     const opened = await open(a, 'claude');
-    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-20T11:59:00Z')));
+    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-20T11:59:00Z')));
     sandbox().tabs = ['https://a.example.com/', 'https://b.example.com/'];
     at('2026-10-20T12:00:20Z');
     expect(await closeComputerSession(db, computers, caller(a, 'chatgpt'), opened.sessionId)).toMatchObject({
@@ -635,7 +620,7 @@ describe('computer_close', () => {
     const a = await user('a');
     const opened = await open(a);
     at('2026-10-20T12:00:30Z');
-    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-20T12:00:30Z')));
+    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-20T12:00:30Z')));
     at('2026-10-20T12:02:00Z');
     const connects = fake.calls.timeouts.length;
     sandbox().tabs = ['https://a.example.com/'];
@@ -684,7 +669,7 @@ describe('apply between computer sessions', () => {
     );
     await saveCapture(
       db,
-      a.userId,
+      a,
       bundle(
         [
           cookie(),
@@ -716,7 +701,7 @@ describe('apply between computer sessions', () => {
     expect((await reopen(a)).sync).toEqual({ status: 'unchanged', captureCompletedAt: '2026-10-15T10:00:00.000Z' });
     expect(fake.calls.sync).toBe(1);
     // Signed out of GitHub and Gmail locally, example.com refreshed.
-    await saveCapture(db, a.userId, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
+    await saveCapture(db, a, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 3 });
     expect(jar()).toEqual(['agent.dev:tmp=agent', 'example.com:sid=fresh']);
     expect((await computerRow()).syncedSites).toEqual(['example.com']);
@@ -725,7 +710,7 @@ describe('apply between computer sessions', () => {
     const a = await user('a');
     await saveCapture(
       db,
-      a.userId,
+      a,
       bundle([
         cookie({ name: 'changed', value: '1' }),
         cookie({ name: 'kept', value: '1' }),
@@ -742,7 +727,7 @@ describe('apply between computer sessions', () => {
     ];
     await saveCapture(
       db,
-      a.userId,
+      a,
       bundle([
         cookie({ name: 'changed', value: '2' }),
         cookie({ name: 'kept', value: '1' }),
@@ -758,13 +743,13 @@ describe('apply between computer sessions', () => {
     ]);
     // A legacy row (or one after Delete everything) has no baseline: the next apply is wholesale again.
     await db.update(schema.computers).set({ appliedCapture: null });
-    await saveCapture(db, a.userId, bundle([cookie({ name: 'kept', value: '1' })]));
+    await saveCapture(db, a, bundle([cookie({ name: 'kept', value: '1' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     expect(jar()).toEqual(['example.com:kept=1']);
   });
   it('tells a running session only about added or deleted cookies, not rotations', async () => {
     const a = await user('a');
-    await saveCapture(db, a.userId, bundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })]));
+    await saveCapture(db, a, bundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })]));
     await reopen(a);
     const pending = async () => {
       const handle = await use(a, last!);
@@ -772,17 +757,9 @@ describe('apply between computer sessions', () => {
       return handle.pending;
     };
     expect(await pending()).toBeUndefined();
-    await saveCapture(
-      db,
-      a.userId,
-      bundle([cookie({ value: 'rotated' }), cookie({ name: 'gh', domain: 'github.com' })]),
-    );
+    await saveCapture(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'gh', domain: 'github.com' })]));
     expect(await pending()).toBeUndefined();
-    await saveCapture(
-      db,
-      a.userId,
-      bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]),
-    );
+    await saveCapture(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]));
     expect(await pending()).toEqual({ sites: ['github.com', 'notion.so'] });
     // Calls within the session never apply.
     expect(fake.calls.sync).toBe(1);
@@ -792,7 +769,7 @@ describe('apply between computer sessions', () => {
   });
   it('still opens when apply fails and retries on the next open', async () => {
     const a = await user('a');
-    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
+    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
     fake.failSync();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failed = await reopen(a);
@@ -825,7 +802,7 @@ describe('apply between computer sessions', () => {
   });
   it('brings a computer behind the provider revision current on open, before the apply, and retries a failure', async () => {
     const a = await user('a');
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     await reopen(a);
     // A new computer from a current template is only checked, once.
     expect((await computerRow()).revision).toBe('revision-1');
@@ -834,7 +811,7 @@ describe('apply between computer sessions', () => {
     fake.setRevision('revision-2');
     fake.failRefresh();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await saveCapture(db, a.userId, bundle([cookie({ value: 'new' })]));
+    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
     expect(error).toHaveBeenCalled();
     expect((await computerRow()).revision).toBe('revision-1');
@@ -851,19 +828,19 @@ describe('apply between computer sessions', () => {
   it('re-applies a re-upload wholesale after captures are deleted', async () => {
     const a = await user('a');
     const capture = bundle([cookie()]);
-    await saveCapture(db, a.userId, capture);
+    await saveCapture(db, a, capture);
     await reopen(a);
-    await deleteCaptures(db, a.userId);
+    await deleteCaptures(db, a);
     expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
     expect((await reopen(a)).sync).toEqual({ status: 'none' });
-    await saveCapture(db, a.userId, capture);
+    await saveCapture(db, a, capture);
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
     expect(fake.calls.sync).toBe(2);
   });
   it('does not overwrite a concurrent apply of another capture, and re-applies wholesale next time', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     // A close racing this open applies a different capture while this one runs.
     const connect = fake.provider.connect;
     fake.provider.connect = async (sandboxId, timeoutMs) => {
@@ -886,7 +863,7 @@ describe('apply between computer sessions', () => {
   it('skips the apply when the open has no time left, without failing the open', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     const now = Date.now.bind(Date);
     let skew = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => now() + skew);
@@ -907,7 +884,7 @@ describe('apply between computer sessions', () => {
   it('gives the provider its budget, so a sync cut short never changes cookies after the open returns', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -979,7 +956,7 @@ describe('live view', () => {
     const claudeCode = 'https://claude.ai/oauth/claude-code-client-metadata';
     await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId: claudeCode, redirectUris: [] });
     const agent = await open(a, claudeCode);
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     const page = lease();
     at('2026-10-20T12:00:20Z');
     expect(await takeOver(a, page)).toEqual({
@@ -1072,7 +1049,7 @@ describe('live view', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     await setTimeZone(db, a.userId, 'Europe/London');
     const page = lease();
     // Creates the computer, then applies the capture and time zone.
@@ -1088,7 +1065,7 @@ describe('live view', () => {
     const agent = await open(a, 'claude');
     // An agent idle past its minute, but not ended, is still working: the next takeover suspends it, no apply.
     at('2026-10-20T12:05:00Z');
-    await saveCapture(db, a.userId, bundle([cookie({ value: 'new' })]));
+    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
     await takeOver(a, page);
     expect(fake.calls.sync).toBe(1);
     expect(await sessionRow(agent.sessionId)).toMatchObject({ suspendedAt: new Date('2026-10-20T12:05:00Z') });
@@ -1197,7 +1174,7 @@ describe('live view', () => {
   it('lets an agent close its suspended session without touching the computer', async () => {
     const a = await user('a');
     const agent = await open(a, 'claude');
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     const page = lease();
     await takeOver(a, page);
     const connects = fake.calls.timeouts.length;
@@ -1234,7 +1211,7 @@ describe('live view', () => {
   });
   it('creates the computer for a watch with the latest capture, without marking the user set up', async () => {
     const a = await user('a');
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     const page = lease();
     expect(await beat(a, page, 'visible')).toEqual({
       computer: 'running',
@@ -1269,7 +1246,7 @@ describe('live view', () => {
   it('lets a close that ends its session just before a takeover neither apply nor close tabs under the user', async () => {
     const a = await user('a');
     const agent = await open(a, 'claude');
-    await saveCapture(db, a.userId, bundle([cookie()]));
+    await saveCapture(db, a, bundle([cookie()]));
     sandbox().tabs = ['https://a.example.com/'];
     const page = lease();
     // The user takes control while the close connects, after it ended its session but before its apply.

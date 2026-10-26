@@ -29,6 +29,9 @@ export async function currentMember(db: Pick<Database, 'select'>, userId: string
     .limit(1);
   return member ?? null;
 }
+// The same membership's ID, as SQL for a write that names it.
+export const currentMembershipId = (userId: string) =>
+  sql`(SELECT ${memberships.id} FROM ${memberships} WHERE ${memberships.userId} = ${userId} ORDER BY ${memberships.id} LIMIT 1)`;
 
 // Within the name CHECK on organizations (1 to 100 characters).
 const organizationName = (name: string, fallback: string) => (name.trim() || fallback).slice(0, 100);

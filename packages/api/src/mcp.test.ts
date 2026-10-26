@@ -494,7 +494,7 @@ describe('remote MCP OAuth boundary', () => {
     expect((await call(agent.access_token)).status).toBe(401);
     expect((await (await v1('GET', '/mcp/grants', page)).json()).grants).toEqual([]);
     expect((await v1('GET', '/me', as(browser.access_token))).status).toBe(200);
-    expect(await listBrowsers(db, 'a')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
     // Even with a consent row, which it never writes, the extension is no agent.
     const now = new Date();
     await db.insert(schema.oauthConsent).values({
@@ -594,7 +594,7 @@ describe('main computer tools', () => {
     // Every call ends by letting the computer pause after the idle minute.
     expect(fake.calls.setTimeouts.every(ms => ms === 60_000)).toBe(true);
     // A sign-in on the host waits, named in results, until the agent reopens with its session.
-    await saveCapture(db, a.id, bundle([cookie()]));
+    await saveCapture(db, await member(a.id), bundle([cookie()]));
     const noticed = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result
       .structuredContent;
     expect(noticed.pending_sync).toEqual({ sites: ['example.com'], message: expect.stringContaining('computer_open') });
@@ -987,7 +987,7 @@ describe('main computer tools', () => {
           .result.structuredContent.url;
         expect(await (await passthrough(link)).text()).toBe('ok');
         // A host sign-in mid-session is announced, not applied; reopening with the session_id applies it.
-        await saveCapture(db, a.id, bundle([cookie({ domain: 'example.com', value: 'host-signed-in' })]));
+        await saveCapture(db, await member(a.id), bundle([cookie({ domain: 'example.com', value: 'host-signed-in' })]));
         const noticed = await tool(token, 'computer_screenshot', { session_id: id });
         expect(noticed.result.structuredContent.pending_sync).toMatchObject({ sites: ['example.com'] });
         const reopened = (await tool(token, 'computer_open', { session_id: id })).result.structuredContent;

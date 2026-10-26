@@ -35,6 +35,7 @@ import { newPublicId, publicIdPattern } from './ids';
 import { logError } from './log';
 import type { Member } from './organizations';
 import * as schema from './schema';
+import type { Owner } from './sealing';
 import { markToolStep } from './tool-calls';
 
 // Validation prototype: one main computer per member (a person in one organization), shared by every agent through
@@ -560,7 +561,7 @@ export async function openComputerSession(
     // Before the apply, which needs the browser this may restart.
     await refreshComputer(db, computers.provider, row, handle.session);
     const [sync] = await Promise.all([
-      applyLatestCapture(db, caller.userId, row.id, handle.session, deadline),
+      applyLatestCapture(db, caller, row.id, handle.session, deadline),
       applyTimeZone(db, row.id, handle.session),
     ]);
     return {
@@ -615,7 +616,7 @@ export async function useComputerSession(
   const call = { id: started.callId, sessionId: started.sessionKey, computerId: computer.id, member: caller };
   const { session, done } = await startCall(db, computers, call, computer.sandboxId!);
   try {
-    const pending = await pendingSync(db, caller.userId, computer);
+    const pending = await pendingSync(db, caller, computer);
     // Cleared only once the call can run, so a failed one leaves the notice for the agent's retry; conditional, so
     // a newer hand-back since stays.
     if (handedBackAt)
@@ -675,7 +676,7 @@ export async function closeComputerSession(
   if ('error' in started) return started;
   const { computer, sessionKey, callId } = started;
   const sandboxId = computer.sandboxId!;
-  if (!callId) return { sync: await syncState(db, caller.userId, computer) };
+  if (!callId) return { sync: await syncState(db, caller, computer) };
   // The user may take over while this close runs, after its session ended: that takeover applies nothing while this
   // call is in flight, and this close then neither applies nor closes tabs under the user.
   const userTookOver = async () => {
@@ -691,8 +692,8 @@ export async function closeComputerSession(
     await meterRun(db, metering, computer.id, caller, CALL_HOLD_MS);
     session = await provider.connect(sandboxId, CALL_HOLD_MS);
     sync = (await userTookOver())
-      ? await syncState(db, caller.userId, computer)
-      : await applyLatestCapture(db, caller.userId, computer.id, session, deadline);
+      ? await syncState(db, caller, computer)
+      : await applyLatestCapture(db, caller, computer.id, session, deadline);
   } catch (error) {
     logError('computer close apply', error);
     sync = { status: 'failed' };
@@ -719,8 +720,8 @@ export async function closeComputerSession(
 }
 
 // The sync state without applying (a close that does not wake a paused computer).
-async function syncState(db: Database, userId: string, computer: ComputerRow): Promise<SyncSummary> {
-  const latest = await latestCaptureDigest(db, userId);
+async function syncState(db: Database, member: Owner, computer: ComputerRow): Promise<SyncSummary> {
+  const latest = await latestCaptureDigest(db, member);
   if (!latest) return { status: 'none' };
   return {
     status: latest.digest === computer.appliedCaptureDigest ? 'unchanged' : 'pending',
@@ -728,30 +729,30 @@ async function syncState(db: Database, userId: string, computer: ComputerRow): P
   };
 }
 // The last applied capture's cookies; null without one or when it cannot be opened (the next apply is wholesale).
-function baselineOf(sealed: string | null, userId: string, computerId: string) {
+function baselineOf(sealed: string | null, member: Owner, computerId: string) {
   if (!sealed) return null;
   try {
-    return openAppliedCapture(sealed, userId, computerId).cookies;
+    return openAppliedCapture(sealed, member, computerId).cookies;
   } catch (error) {
     logError('applied capture', error);
     return null;
   }
 }
 // The pending notice: sites where a newer capture adds or deletes cookies. Rotations alone wait silently.
-async function pendingSync(db: Database, userId: string, computer: ComputerRow): Promise<PendingSync | null> {
+async function pendingSync(db: Database, member: Owner, computer: ComputerRow): Promise<PendingSync | null> {
   try {
-    const latest = await latestCaptureDigest(db, userId);
+    const latest = await latestCaptureDigest(db, member);
     if (!latest || latest.digest === computer.appliedCaptureDigest) return null;
     const [[sealed], loaded] = await Promise.all([
       db
         .select({ appliedCapture: schema.computers.appliedCapture })
         .from(schema.computers)
         .where(eq(schema.computers.id, computer.id)),
-      loadLatestCapture(db, userId),
+      loadLatestCapture(db, member),
     ]);
     if (!loaded) return null;
     const { addedOrRemovedSites } = cookieChanges(
-      baselineOf(sealed?.appliedCapture ?? null, userId, computer.publicId),
+      baselineOf(sealed?.appliedCapture ?? null, member, computer.publicId),
       loaded.capture.cookies,
       computer.syncedSites,
       loaded.completedAt,
@@ -786,14 +787,14 @@ const unionSites = (sites: string[]) =>
 // Without a baseline each target site is replaced wholesale. A failure never blocks the open or close.
 async function applyLatestCapture(
   db: Database,
-  userId: string,
+  member: Owner,
   computerId: number,
   session: ComputerSession,
   deadline: number,
 ): Promise<SyncSummary> {
   const [[computer], latest] = await Promise.all([
     db.select().from(schema.computers).where(eq(schema.computers.id, computerId)),
-    latestCaptureDigest(db, userId),
+    latestCaptureDigest(db, member),
   ]);
   if (!latest || !computer) return { status: 'none' };
   if (latest.digest === computer.appliedCaptureDigest)
@@ -802,10 +803,10 @@ async function applyLatestCapture(
   try {
     const budget = Math.min(SYNC_BUDGET_MS, deadline - Date.now() - SYNC_SLACK_MS);
     if (budget < SYNC_MIN_MS) throw new Error('no time left');
-    const loaded = await loadLatestCapture(db, userId);
+    const loaded = await loadLatestCapture(db, member);
     if (!loaded) return { status: 'none' };
     const changes = cookieChanges(
-      baselineOf(computer.appliedCapture, userId, computer.publicId),
+      baselineOf(computer.appliedCapture, member, computer.publicId),
       loaded.capture.cookies,
       computer.syncedSites,
       loaded.completedAt,
@@ -836,7 +837,7 @@ async function applyLatestCapture(
         syncedSites: next,
         appliedCapture: sealAppliedCapture(
           { completedAt: loaded.completedAt, cookies: loaded.capture.cookies },
-          userId,
+          member,
           computer.publicId,
         ),
       })
@@ -1160,7 +1161,7 @@ async function extendHolds(db: Database, computers: Computers, member: Member, l
   if (!woken) return;
   try {
     await Promise.all([
-      applyLatestCapture(db, member.userId, woken.row.id, woken.session, deadline),
+      applyLatestCapture(db, member, woken.row.id, woken.session, deadline),
       applyTimeZone(db, woken.row.id, woken.session),
     ]);
   } catch (error) {
@@ -1238,7 +1239,7 @@ export async function takeOverComputer(
       // As computer_open does: before the apply, which needs the browser this may restart.
       await refreshComputer(db, provider, row, started.session);
       await Promise.all([
-        applyLatestCapture(db, member.userId, row.id, started.session, deadline),
+        applyLatestCapture(db, member, row.id, started.session, deadline),
         applyTimeZone(db, row.id, started.session),
       ]);
     } catch (error) {
@@ -1364,7 +1365,7 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       })
       .from(schema.computers)
       .where(eq(schema.computers.membershipId, member.membershipId)),
-    captureView(db, member.userId),
+    captureView(db, member),
     metering.usage(db, member, new Date()),
   ]);
   const [live] = row

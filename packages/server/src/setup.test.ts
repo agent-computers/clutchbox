@@ -8,15 +8,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { bundle, cookie, siteBundle } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { Database } from './database';
+import { person } from './member-fixtures';
+import type { Member } from './organizations';
 import * as schema from './schema';
 import { closeSetupNotice, noteAgentConnected, noteSetupStep, recordSetupStep, resetSetup, setupView } from './setup';
 
 let pg: PGlite;
 let db: Database;
-const user = async (id: string) => {
-  await db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true });
-  return id;
-};
+const user = (id: string) => person(db, id);
 // A consent as Better Auth stores it, for a CIMD client.
 async function consent(userId: string, { createdAt = new Date(), disabled = false, scopes = ['mcp:tools'] } = {}) {
   const clientId = `https://client.example.test/${randomUUID()}.json`;
@@ -26,8 +25,8 @@ async function consent(userId: string, { createdAt = new Date(), disabled = fals
     .values({ id: randomUUID(), clientId, userId, scopes, createdAt, updatedAt: createdAt });
   return clientId;
 }
-const row = async (userId: string) =>
-  (await db.select().from(schema.setups).where(eq(schema.setups.userId, userId)))[0];
+const row = async (member: Member) =>
+  (await db.select().from(schema.setups).where(eq(schema.setups.membershipId, member.membershipId)))[0];
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 let template: PGlite;
 beforeAll(async () => {
@@ -69,7 +68,7 @@ describe('setup progress', () => {
     const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
     const a = await user('a');
     const old = await user('old');
-    await db.insert(schema.setups).values({ userId: old, preexisting: true });
+    await db.insert(schema.setups).values({ userId: old.userId, membershipId: old.membershipId, preexisting: true });
     for (const id of [a, old]) {
       await noteSetupStep(db, id, 'browserSynced');
       await noteSetupStep(db, id, 'browserSynced');
@@ -108,10 +107,10 @@ describe('setup progress', () => {
   });
   it('dates the agent step from the earliest live consent, not from the first call', async () => {
     const a = await user('a');
-    await consent(a, { createdAt: new Date('2026-10-01T00:00:00Z'), disabled: true });
-    await consent(a, { createdAt: new Date('2026-10-02T00:00:00Z'), scopes: ['openid'] });
-    await consent(a, { createdAt: new Date('2026-10-03T00:00:00Z') });
-    await consent(a, { createdAt: new Date('2026-10-04T00:00:00Z') });
+    await consent(a.userId, { createdAt: new Date('2026-10-01T00:00:00Z'), disabled: true });
+    await consent(a.userId, { createdAt: new Date('2026-10-02T00:00:00Z'), scopes: ['openid'] });
+    await consent(a.userId, { createdAt: new Date('2026-10-03T00:00:00Z') });
+    await consent(a.userId, { createdAt: new Date('2026-10-04T00:00:00Z') });
     await noteAgentConnected(db, a);
     expect((await row(a))!.agentConnectedAt).toEqual(new Date('2026-10-03T00:00:00Z'));
   });
@@ -146,10 +145,10 @@ describe('setup view', () => {
       sync: { mode: 'whole-browser', sites: [] },
     });
     // Disabled clients do not count as connected.
-    await consent(a, { disabled: true });
+    await consent(a.userId, { disabled: true });
     expect((await setupView(db, a)).items.agents).toBe(false);
     const connectedAt = new Date('2026-10-05T12:00:00Z');
-    await consent(a, { createdAt: connectedAt });
+    await consent(a.userId, { createdAt: connectedAt });
     expect((await setupView(db, a)).items.agents).toBe(true);
     // Viewing records the agent step for a grant whose agent has not called yet.
     expect((await row(a))!.agentConnectedAt).toEqual(connectedAt);

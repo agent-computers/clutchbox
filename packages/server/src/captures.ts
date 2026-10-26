@@ -1,91 +1,48 @@
 import 'server-only';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import {
   applySyncChange,
   type Capture,
-  type CapturedCookie,
   captureDigest,
-  captureSchema,
-  cookieSchema,
   narrowCapture,
   type SyncChange,
   type SyncSettings,
   syncSettingsSchema,
 } from '@agent-computers/capture';
 import { and, eq, lte, sql } from 'drizzle-orm';
-import { z } from 'zod';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Database } from './database';
 import { logError } from './log';
 import * as schema from './schema';
+import {
+  type CaptureScope,
+  captureKey,
+  type Key,
+  type Owner,
+  openCapture,
+  openScope,
+  openSettings,
+  sealCapture,
+  sealScope,
+  sealSettings,
+} from './sealing';
 
-// Validation prototype: the latest capture per user,
-// sealed with AES-256-GCM under CAPTURE_ENCRYPTION_KEY and bound to the user ID.
-// Key rotation and object storage come later.
-export function captureKey(env: NodeJS.ProcessEnv = process.env) {
-  const key = Buffer.from(env.CAPTURE_ENCRYPTION_KEY ?? '', 'base64');
-  return key.length === 32 ? key : null;
-}
-const aad = (userId: string) => Buffer.from(`agent-computers/capture/v1:${userId}`);
-const scopeAad = (userId: string) => Buffer.from(`agent-computers/capture-scope/v1:${userId}`);
-const settingsAad = (userId: string) => Buffer.from(`agent-computers/sync-settings/v1:${userId}`);
-const appliedAad = (userId: string, computerId: string) =>
-  Buffer.from(`agent-computers/applied-capture/v1:${userId}:${computerId}`);
-function seal(plaintext: string, aad: Buffer, key: Buffer | null) {
-  if (!key) throw new Error('sync_unavailable');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv).setAAD(aad);
-  const sealed = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return ['v1', iv, cipher.getAuthTag(), sealed]
-    .map(part => (typeof part === 'string' ? part : part.toString('base64')))
-    .join('.');
-}
-function open(sealed: string, aad: Buffer, key: Buffer | null): unknown {
-  if (!key) throw new Error('sync_unavailable');
-  const [version, iv, tag, data, ...rest] = sealed.split('.');
-  const ivBytes = Buffer.from(iv ?? '', 'base64');
-  const tagBytes = Buffer.from(tag ?? '', 'base64');
-  // A pinned tag length: Node otherwise accepts truncated GCM tags.
-  if (version !== 'v1' || !data || rest.length || ivBytes.length !== 12 || tagBytes.length !== 16)
-    throw new Error('invalid sealed capture');
-  const decipher = createDecipheriv('aes-256-gcm', key, ivBytes, { authTagLength: 16 })
-    .setAAD(aad)
-    .setAuthTag(tagBytes);
-  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8'));
-}
-export function sealCapture(capture: Capture, userId: string, key = captureKey()) {
-  return seal(JSON.stringify(capture), aad(userId), key);
-}
-export function openCapture(sealed: string, userId: string, key = captureKey()): Capture {
-  return captureSchema.parse(open(sealed, aad(userId), key));
-}
-// What a capture covers, without its exclusions: sealed apart from the capture (sealed_scope)
-// so the account page can list synced sites without opening the cookies.
-export type CaptureScope = { mode: 'sites' | 'whole-browser'; sites: string[] };
-const scopeSchema = z.object({ mode: z.enum(['sites', 'whole-browser']), sites: z.array(z.string()) }).strict();
+// Validation prototype: the latest capture per member, sealed (sealing.ts) with the membership as associated data.
+export {
+  type AppliedCapture,
+  type CaptureScope,
+  captureKey,
+  openAppliedCapture,
+  openCapture,
+  openScope,
+  sealAppliedCapture,
+  sealCapture,
+  sealScope,
+} from './sealing';
+
 const scopeOf = (capture: Capture): CaptureScope => ({
   mode: capture.scope.mode,
   sites: capture.scope.mode === 'sites' ? capture.scope.sites : [],
 });
-export function sealScope(scope: CaptureScope, userId: string, key = captureKey()) {
-  return seal(JSON.stringify({ mode: scope.mode, sites: scope.sites }), scopeAad(userId), key);
-}
-export function openScope(sealed: string, userId: string, key = captureKey()): CaptureScope {
-  return scopeSchema.parse(open(sealed, scopeAad(userId), key));
-}
-
-// The last capture applied to a computer (computers.applied_capture): the baseline the next apply diffs against.
-export type AppliedCapture = { completedAt: string; cookies: CapturedCookie[] };
-const appliedSchema = z.object({ completedAt: z.string(), cookies: z.array(cookieSchema) }).strict();
-export function sealAppliedCapture(applied: AppliedCapture, userId: string, computerId: string, key = captureKey()) {
-  return seal(
-    JSON.stringify({ completedAt: applied.completedAt, cookies: applied.cookies }),
-    appliedAad(userId, computerId),
-    key,
-  );
-}
-export function openAppliedCapture(sealed: string, userId: string, computerId: string, key = captureKey()) {
-  return appliedSchema.parse(open(sealed, appliedAad(userId, computerId), key));
-}
 
 type Saved = {
   status: 'stored' | 'unchanged';
@@ -97,20 +54,22 @@ type Saved = {
 // superseded: a deletion or a later upload was received after this upload.
 // sync_paused: the account's settings are paused; the error carries them so the extension catches up.
 export type SaveError = 'sync_unavailable' | 'sync_disconnected' | 'superseded' | 'sync_paused';
-// Serializes uploads, settings changes, and deletions for one user, so a deletion always wins over an
+// Serializes uploads, settings changes, and deletions for one membership, so a deletion always wins over an
 // earlier-received upload and a stored capture never outlives a narrower setting.
 export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
-type Key = NonNullable<ReturnType<typeof captureKey>>;
-export const lockUser = (tx: Pick<Database, 'execute'>, userId: string) =>
-  tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`captures:${userId}`}))`);
+export const lockMember = (tx: Pick<Database, 'execute'>, member: Pick<Owner, 'membershipId'>) =>
+  tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`captures:membership-${member.membershipId}`}))`);
+// The rows of one membership in a table that carries membership_id.
+const ownRow = (table: { membershipId: AnyPgColumn }, member: Pick<Owner, 'membershipId'>) =>
+  eq(table.membershipId, member.membershipId);
 
-// Callers validate the capture with captureSchema and verify the sync token for userId.
+// Callers validate the capture with captureSchema and verify the sync token for the member.
 // Ordering uses server receive time only; the client clock never decides which upload wins.
 // With settings on the server, only the sites and exclusions they allow are stored.
 // `browser` is the connected browser (connected_browsers.id) that sent it with a sync token.
 export async function saveCapture(
   db: Database,
-  userId: string,
+  member: Owner,
   uploaded: Capture,
   {
     receivedAt = new Date(),
@@ -122,7 +81,7 @@ export async function saveCapture(
   if (!key) return { error: 'sync_unavailable' };
   const fields = { completedAt: schema.captures.completedAt, cookieCount: schema.captures.cookieCount };
   return db.transaction(async (tx): Promise<Saved | { error: SaveError; settings?: SyncSettings | undefined }> => {
-    await lockUser(tx, userId);
+    await lockMember(tx, member);
     // Under the lock and before `connect` can lift a disconnect, so a browser disconnected while this upload was in
     // flight never stores it.
     if (browser !== undefined) {
@@ -132,20 +91,20 @@ export async function saveCapture(
         .where(eq(schema.connectedBrowsers.id, browser));
       if (!row || row.disconnectedAt) return { error: 'sync_disconnected' };
     }
-    const [revoked] = await tx.select().from(schema.syncRevocations).where(eq(schema.syncRevocations.userId, userId));
+    const [revoked] = await tx.select().from(schema.syncRevocations).where(ownRow(schema.syncRevocations, member));
     if (revoked?.disconnected && !connect) return { error: 'sync_disconnected' };
     if (revoked && revoked.deletedAt > receivedAt) return { error: 'superseded' };
-    const settings = await readSettings(tx, userId, key);
+    const settings = await readSettings(tx, member, key);
     if (settings?.paused) return { error: 'sync_paused', settings };
     if (revoked?.disconnected)
       await tx
         .update(schema.syncRevocations)
         .set({ disconnected: false })
-        .where(eq(schema.syncRevocations.userId, userId));
+        .where(ownRow(schema.syncRevocations, member));
     const capture = settings ? narrowCapture(uploaded, settings) : uploaded;
     const digest = await captureDigest(capture.cookies);
-    const sealed = sealCapture(capture, userId, key);
-    const sealedScope = sealScope(scopeOf(capture), userId, key);
+    const sealed = sealCapture(capture, member, key);
+    const sealedScope = sealScope(scopeOf(capture), member, key);
     const view = (row: { completedAt: Date; cookieCount: number }, status: Saved['status']): Saved => ({
       status,
       completedAt: row.completedAt.toISOString(),
@@ -170,7 +129,7 @@ export async function saveCapture(
         sealedScope: sql`case when ${schema.captures.uploadedAt} <= ${receivedAt} then ${sealedScope} else ${schema.captures.sealedScope} end`,
         connectedBrowserId: sql`case when ${schema.captures.uploadedAt} <= ${receivedAt} then ${sender}::bigint else ${schema.captures.connectedBrowserId} end`,
       })
-      .where(and(eq(schema.captures.userId, userId), eq(schema.captures.digest, digest)))
+      .where(and(ownRow(schema.captures, member), eq(schema.captures.digest, digest)))
       .returning(fields);
     if (same) return synced(view(same, 'unchanged'));
     // A clock running ahead must not show a future capture time.
@@ -187,9 +146,9 @@ export async function saveCapture(
     };
     const [stored] = await tx
       .insert(schema.captures)
-      .values({ userId, ...values })
+      .values({ userId: member.userId, membershipId: member.membershipId, ...values })
       .onConflictDoUpdate({
-        target: schema.captures.userId,
+        target: schema.captures.membershipId,
         set: values,
         setWhere: lte(schema.captures.uploadedAt, receivedAt),
       })
@@ -200,38 +159,38 @@ export async function saveCapture(
 
 // Sync settings. Unreadable settings (no key, or a decrypt failure) count as none, so the extension's
 // next adoption replaces them.
-async function readSettings(tx: Pick<Database, 'select'>, userId: string, key: Key | null) {
+async function readSettings(tx: Pick<Database, 'select'>, member: Owner, key: Key | null) {
   const [row] = await tx
     .select({ sealed: schema.syncSettings.sealed })
     .from(schema.syncSettings)
-    .where(eq(schema.syncSettings.userId, userId));
+    .where(ownRow(schema.syncSettings, member));
   if (!row) return null;
   try {
-    return syncSettingsSchema.parse(open(row.sealed, settingsAad(userId), key));
+    return syncSettingsSchema.parse(openSettings(row.sealed, member, key));
   } catch (error) {
     logError('sync settings', error);
     return null;
   }
 }
-async function writeSettings(tx: Transaction, userId: string, settings: SyncSettings, key: Key) {
-  const values = { sealed: seal(JSON.stringify(settings), settingsAad(userId), key), updatedAt: new Date() };
+async function writeSettings(tx: Transaction, member: Owner, settings: SyncSettings, key: Key) {
+  const values = { sealed: sealSettings(settings, member, key), updatedAt: new Date() };
   await tx
     .insert(schema.syncSettings)
-    .values({ userId, ...values })
-    .onConflictDoUpdate({ target: schema.syncSettings.userId, set: values });
+    .values({ userId: member.userId, membershipId: member.membershipId, ...values })
+    .onConflictDoUpdate({ target: schema.syncSettings.membershipId, set: values });
 }
 // Re-seals the stored capture with only what the settings allow, so a removed site or new exclusion leaves the
 // server at once rather than at the next upload. The new digest makes the next open apply it, which clears the
 // removed sites on the computer. A capture that can't be opened is deleted.
-async function narrowStoredCapture(tx: Transaction, userId: string, settings: SyncSettings, key: Key) {
-  const [row] = await tx.select().from(schema.captures).where(eq(schema.captures.userId, userId));
+async function narrowStoredCapture(tx: Transaction, member: Owner, settings: SyncSettings, key: Key) {
+  const [row] = await tx.select().from(schema.captures).where(ownRow(schema.captures, member));
   if (!row) return;
   let capture: Capture;
   try {
-    capture = openCapture(row.sealed, userId, key);
+    capture = openCapture(row.sealed, member, key);
   } catch (error) {
     logError('narrow capture', error);
-    await tx.delete(schema.captures).where(eq(schema.captures.userId, userId));
+    await tx.delete(schema.captures).where(ownRow(schema.captures, member));
     return;
   }
   const narrowed = narrowCapture(capture, settings);
@@ -241,106 +200,106 @@ async function narrowStoredCapture(tx: Transaction, userId: string, settings: Sy
     .set({
       digest: await captureDigest(narrowed.cookies),
       cookieCount: narrowed.cookies.length,
-      sealed: sealCapture(narrowed, userId, key),
-      sealedScope: sealScope(scopeOf(narrowed), userId, key),
+      sealed: sealCapture(narrowed, member, key),
+      sealedScope: sealScope(scopeOf(narrowed), member, key),
     })
-    .where(eq(schema.captures.userId, userId));
+    .where(ownRow(schema.captures, member));
 }
 
 export type SyncView = { settings: SyncSettings | null; disconnected: boolean };
-export async function syncView(db: Database, userId: string): Promise<SyncView> {
+export async function syncView(db: Database, member: Owner): Promise<SyncView> {
   const [[revoked], settings] = await Promise.all([
-    db.select().from(schema.syncRevocations).where(eq(schema.syncRevocations.userId, userId)),
-    readSettings(db, userId, captureKey()),
+    db.select().from(schema.syncRevocations).where(ownRow(schema.syncRevocations, member)),
+    readSettings(db, member, captureKey()),
   ]);
   return { settings, disconnected: revoked?.disconnected ?? false };
 }
-// An extension's local settings become the account's only when it has none, so a second browser never overwrites
-// them. Returns the account's settings either way.
+// An extension's local settings become the member's only when they have none, so a second browser never overwrites
+// them. Returns the member's settings either way.
 export async function adoptSyncSettings(
   db: Database,
-  userId: string,
+  member: Owner,
   local: SyncSettings,
   serverSite: string,
 ): Promise<SyncSettings | { error: 'sync_unavailable' }> {
   const key = captureKey();
   if (!key) return { error: 'sync_unavailable' };
   return db.transaction(async tx => {
-    await lockUser(tx, userId);
-    const existing = await readSettings(tx, userId, key);
+    await lockMember(tx, member);
+    const existing = await readSettings(tx, member, key);
     if (existing) return existing;
     const settings = applySyncChange(local, {}, serverSite);
-    await writeSettings(tx, userId, settings, key);
-    await narrowStoredCapture(tx, userId, settings, key);
+    await writeSettings(tx, member, settings, key);
+    await narrowStoredCapture(tx, member, settings, key);
     return settings;
   });
 }
-// sync_settings_missing: nothing to change until an extension adopts settings for the account. Callers decide who
+// sync_settings_missing: nothing to change until an extension adopts settings for the member. Callers decide who
 // may widen.
 export async function changeSyncSettings(
   db: Database,
-  userId: string,
+  member: Owner,
   change: SyncChange,
   serverSite: string,
 ): Promise<SyncSettings | { error: 'sync_unavailable' | 'sync_settings_missing' }> {
   const key = captureKey();
   if (!key) return { error: 'sync_unavailable' };
   return db.transaction(async tx => {
-    await lockUser(tx, userId);
-    const existing = await readSettings(tx, userId, key);
+    await lockMember(tx, member);
+    const existing = await readSettings(tx, member, key);
     if (!existing) return { error: 'sync_settings_missing' as const };
     const settings = applySyncChange(existing, change, serverSite);
-    await writeSettings(tx, userId, settings, key);
-    await narrowStoredCapture(tx, userId, settings, key);
+    await writeSettings(tx, member, settings, key);
+    await narrowStoredCapture(tx, member, settings, key);
     return settings;
   });
 }
 
 // A later upload re-applies from scratch (no baseline: wholesale per site); synced sites stay recorded so it can clear them.
 // The tombstone refuses uploads received before now; `disconnect` also refuses later ones.
-// `forget` (Delete everything) also deletes the account's sync settings.
+// `forget` (Delete everything) also deletes the member's sync settings.
 // `uploadedBy` (a connected browser's ID) deletes the capture only if that browser sent it, and otherwise does nothing.
 type DeleteOptions = {
   disconnect?: boolean | undefined;
   forget?: boolean | undefined;
   uploadedBy?: number | undefined;
 };
-export async function deleteCaptures(db: Database, userId: string, options: DeleteOptions = {}) {
+export async function deleteCaptures(db: Database, member: Owner, options: DeleteOptions = {}) {
   await db.transaction(async tx => {
-    await lockUser(tx, userId);
-    await deleteCapturesIn(tx, userId, options);
+    await lockMember(tx, member);
+    await deleteCapturesIn(tx, member, options);
   });
 }
-// deleteCaptures inside a caller's transaction, which already holds lockUser.
+// deleteCaptures inside a caller's transaction, which already holds lockMember.
 export async function deleteCapturesIn(
   tx: Transaction,
-  userId: string,
+  member: Owner,
   { disconnect = false, forget = false, uploadedBy }: DeleteOptions = {},
 ) {
   if (uploadedBy !== undefined) {
     const [mine] = await tx
       .select({ id: schema.captures.id })
       .from(schema.captures)
-      .where(and(eq(schema.captures.userId, userId), eq(schema.captures.connectedBrowserId, uploadedBy)));
+      .where(and(ownRow(schema.captures, member), eq(schema.captures.connectedBrowserId, uploadedBy)));
     if (!mine) return;
   }
   const deletedAt = new Date();
   await tx
     .insert(schema.syncRevocations)
-    .values({ userId, deletedAt, disconnected: disconnect })
+    .values({ userId: member.userId, membershipId: member.membershipId, deletedAt, disconnected: disconnect })
     .onConflictDoUpdate({
-      target: schema.syncRevocations.userId,
+      target: schema.syncRevocations.membershipId,
       set: disconnect ? { deletedAt, disconnected: true } : { deletedAt },
     });
-  await tx.delete(schema.captures).where(eq(schema.captures.userId, userId));
-  if (forget) await tx.delete(schema.syncSettings).where(eq(schema.syncSettings.userId, userId));
+  await tx.delete(schema.captures).where(ownRow(schema.captures, member));
+  if (forget) await tx.delete(schema.syncSettings).where(ownRow(schema.syncSettings, member));
   await tx
     .update(schema.computers)
     .set({ appliedCaptureDigest: null, appliedCapture: null })
-    .where(eq(schema.computers.userId, userId));
+    .where(ownRow(schema.computers, member));
 }
 
-export async function captureView(db: Database, userId: string) {
+export async function captureView(db: Database, member: Owner) {
   const [row] = await db
     .select({
       completedAt: schema.captures.completedAt,
@@ -348,7 +307,7 @@ export async function captureView(db: Database, userId: string) {
       cookieCount: schema.captures.cookieCount,
     })
     .from(schema.captures)
-    .where(eq(schema.captures.userId, userId));
+    .where(ownRow(schema.captures, member));
   return row
     ? {
         completedAt: row.completedAt.toISOString(),
@@ -361,31 +320,31 @@ export async function captureView(db: Database, userId: string) {
 // The latest capture's scope: null without a capture, 'unreadable' when it cannot be opened
 // (no key, or a decrypt failure). Only sealed_scope is read, never the cookies, so a row stored
 // before sealed_scope existed is also 'unreadable' until the extension's next upload fills it.
-export async function captureScope(db: Database, userId: string): Promise<CaptureScope | null | 'unreadable'> {
+export async function captureScope(db: Database, member: Owner): Promise<CaptureScope | null | 'unreadable'> {
   const [row] = await db
     .select({ sealedScope: schema.captures.sealedScope })
     .from(schema.captures)
-    .where(eq(schema.captures.userId, userId));
+    .where(ownRow(schema.captures, member));
   if (!row) return null;
   if (!row.sealedScope) return 'unreadable';
   try {
-    return openScope(row.sealedScope, userId);
+    return openScope(row.sealedScope, member);
   } catch (error) {
     logError('capture scope', error);
     return 'unreadable';
   }
 }
 
-export async function latestCaptureDigest(db: Database, userId: string) {
+export async function latestCaptureDigest(db: Database, member: Owner) {
   const [row] = await db
     .select({ digest: schema.captures.digest, completedAt: schema.captures.completedAt })
     .from(schema.captures)
-    .where(eq(schema.captures.userId, userId));
+    .where(ownRow(schema.captures, member));
   return row ? { digest: row.digest, completedAt: row.completedAt.toISOString() } : null;
 }
-export async function loadLatestCapture(db: Database, userId: string) {
-  const [row] = await db.select().from(schema.captures).where(eq(schema.captures.userId, userId));
+export async function loadLatestCapture(db: Database, member: Owner) {
+  const [row] = await db.select().from(schema.captures).where(ownRow(schema.captures, member));
   return row
-    ? { digest: row.digest, completedAt: row.completedAt.toISOString(), capture: openCapture(row.sealed, userId) }
+    ? { digest: row.digest, completedAt: row.completedAt.toISOString(), capture: openCapture(row.sealed, member) }
     : null;
 }

@@ -4,9 +4,10 @@ import { captureScope } from './captures';
 import type { Database } from './database';
 import { logError, logSetupEvent } from './log';
 import { earliestLiveConsentAt, hasLiveGrant } from './mcp';
+import type { Member } from './organizations';
 import * as schema from './schema';
 
-// Setup: the overview's checklist. Browser sync and Agents are read from
+// Setup: the overview's checklist, one per member. Browser sync and Agents are read from
 // current state; "set up" is recorded when an agent first opens the main computer. Every write
 // here is best-effort and runs outside other transactions, so it never fails an upload or a tool call.
 export type SetupStep = 'browserSynced' | 'agentConnected' | 'setUp';
@@ -17,7 +18,7 @@ type Recorded = { first: boolean; firstEver: boolean; preexisting: boolean };
 // `firstEver` means set up for the first time.
 export async function recordSetupStep(
   db: Pick<Database, 'insert' | 'update'>,
-  userId: string,
+  member: Member,
   step: SetupStep,
   at = new Date(),
 ): Promise<Recorded> {
@@ -27,7 +28,7 @@ export async function recordSetupStep(
       ? db
           .update(schema.setups)
           .set({ setUpAt: at, firstSetUpAt: sql`coalesce(${schema.setups.firstSetUpAt}, ${at})` })
-          .where(and(eq(schema.setups.userId, userId), isNull(schema.setups.setUpAt)))
+          .where(and(eq(schema.setups.membershipId, member.membershipId), isNull(schema.setups.setUpAt)))
           .returning({
             preexisting: schema.setups.preexisting,
             firstEver: sql<boolean>`${schema.setups.firstSetUpAt} = ${schema.setups.setUpAt}`,
@@ -35,7 +36,7 @@ export async function recordSetupStep(
       : db
           .update(schema.setups)
           .set(step === 'browserSynced' ? { browserSyncedAt: at } : { agentConnectedAt: at })
-          .where(and(eq(schema.setups.userId, userId), isNull(column)))
+          .where(and(eq(schema.setups.membershipId, member.membershipId), isNull(column)))
           .returning({ preexisting: schema.setups.preexisting, firstEver: sql<boolean>`true` });
   const [updated] = await update();
   if (updated) return { first: true, ...updated };
@@ -47,7 +48,7 @@ export async function recordSetupStep(
         : { agentConnectedAt: at };
   const [inserted] = await db
     .insert(schema.setups)
-    .values({ userId, ...values })
+    .values({ userId: member.userId, membershipId: member.membershipId, ...values })
     .onConflictDoNothing()
     .returning({ preexisting: schema.setups.preexisting });
   if (inserted) return { first: true, firstEver: true, preexisting: inserted.preexisting };
@@ -58,10 +59,10 @@ export async function recordSetupStep(
 
 // The best-effort wrapper every caller uses. Emits the funnel event on a first-ever completion by a
 // user who signed up after setup shipped. Returns whether the step is recorded.
-export async function noteSetupStep(db: Database, userId: string, step: SetupStep, at?: Date) {
+export async function noteSetupStep(db: Database, member: Member, step: SetupStep, at?: Date) {
   try {
-    const recorded = await recordSetupStep(db, userId, step, at);
-    if (recorded.firstEver && !recorded.preexisting) logSetupEvent(`setup.${step}`, { user: userId });
+    const recorded = await recordSetupStep(db, member, step, at);
+    if (recorded.firstEver && !recorded.preexisting) logSetupEvent(`setup.${step}`, { user: member.userId });
     return true;
   } catch (error) {
     logError(`setup ${step}`, error);
@@ -69,45 +70,52 @@ export async function noteSetupStep(db: Database, userId: string, step: SetupSte
   }
 }
 
-// Users already known to have agentConnectedAt, per database, so repeat MCP calls skip the lookup.
-const agentConnected = new WeakMap<Database, Set<string>>();
+// Memberships already known to have agentConnectedAt, per database, so repeat MCP calls skip the lookup.
+const agentConnected = new WeakMap<Database, Set<number>>();
 // Records the agent step at the earliest live consent's time, so it reflects when the user
 // connected, not when the agent first called. Never throws.
-export async function noteAgentConnected(db: Database, userId: string) {
-  const known = agentConnected.get(db) ?? new Set<string>();
+export async function noteAgentConnected(db: Database, member: Member) {
+  const known = agentConnected.get(db) ?? new Set<number>();
   agentConnected.set(db, known);
-  if (known.has(userId)) return;
+  if (known.has(member.membershipId)) return;
   let at: Date | null;
   try {
-    at = await earliestLiveConsentAt(db, userId);
+    at = await earliestLiveConsentAt(db, member.userId);
   } catch (error) {
     logError('setup agentConnected', error);
     return;
   }
-  if (at && (await noteSetupStep(db, userId, 'agentConnected', at))) known.add(userId);
+  if (at && (await noteSetupStep(db, member, 'agentConnected', at))) known.add(member.membershipId);
 }
 
-// Delete everything: the user is no longer set up. First-completion times stay.
-export async function resetSetup(db: Database, userId: string) {
-  await db.update(schema.setups).set({ setUpAt: null, noticeClosedAt: null }).where(eq(schema.setups.userId, userId));
+// Delete everything: the member is no longer set up. First-completion times stay.
+export async function resetSetup(db: Database, member: Member) {
+  await db
+    .update(schema.setups)
+    .set({ setUpAt: null, noticeClosedAt: null })
+    .where(eq(schema.setups.membershipId, member.membershipId));
 }
-export async function closeSetupNotice(db: Database, userId: string) {
+export async function closeSetupNotice(db: Database, member: Member) {
   await db
     .update(schema.setups)
     .set({ noticeClosedAt: new Date() })
     .where(
-      and(eq(schema.setups.userId, userId), isNotNull(schema.setups.setUpAt), isNull(schema.setups.noticeClosedAt)),
+      and(
+        eq(schema.setups.membershipId, member.membershipId),
+        isNotNull(schema.setups.setUpAt),
+        isNull(schema.setups.noticeClosedAt),
+      ),
     );
 }
 
-export async function setupView(db: Database, userId: string) {
+export async function setupView(db: Database, member: Member) {
   const [[row], live, scope] = await Promise.all([
-    db.select().from(schema.setups).where(eq(schema.setups.userId, userId)),
-    hasLiveGrant(db, userId),
-    captureScope(db, userId),
+    db.select().from(schema.setups).where(eq(schema.setups.membershipId, member.membershipId)),
+    hasLiveGrant(db, member.userId),
+    captureScope(db, member),
   ]);
   // Covers a grant whose agent has not called yet.
-  if (live) await noteAgentConnected(db, userId);
+  if (live) await noteAgentConnected(db, member);
   const sync = scope === 'unreadable' ? null : scope;
   return {
     setUpAt: row?.setUpAt?.toISOString() ?? null,

@@ -28,6 +28,7 @@ import { bundle, cookie } from './capture-fixtures';
 import { saveCapture } from './captures';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
+import { currentMember, singleOrganization } from './organizations';
 import * as schema from './schema';
 
 const origin = 'http://localhost:3097';
@@ -44,7 +45,10 @@ let pg: PGlite;
 let db: Database;
 let auth: ReturnType<typeof createAuth>;
 async function identity(id: string) {
-  await db.insert(schema.user).values({ id, name: `Fixture ${id}`, email: `${id}@example.test`, emailVerified: true });
+  const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  // Into the deployment's organization, as sign-up does.
+  await db.transaction(tx => singleOrganization.join(tx, person));
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)
@@ -52,6 +56,8 @@ async function identity(id: string) {
   const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
   return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
 }
+// The member a person acts as, as the routes resolve it.
+const member = async (userId: string) => (await currentMember(db, userId))!;
 const hash = (token: string) => createHash('sha256').update(token).digest('base64url');
 const principal = (tokens: Pick<Tokens, 'access_token'>, userAgent = CHROME_ON_MAC, now?: Date) =>
   syncPrincipal(db, { authorization: `Bearer ${tokens.access_token}`, userAgent, ...(now ? { now } : {}) });
@@ -268,7 +274,7 @@ describe('sync tokens', () => {
     expect(second.refresh_token).not.toBe(first.refresh_token);
     expect(await principal(second)).toEqual(found);
     expect(await db.select().from(schema.connectedBrowsers)).toHaveLength(1);
-    const listed = await listBrowsers(db, 'a');
+    const listed = await listBrowsers(db, await member('a'));
     expect(listed).toEqual([
       {
         id: found!.browser.publicId,
@@ -348,7 +354,7 @@ describe('sync tokens', () => {
     const refreshed = await refresh(tokens.refresh_token);
     expect(refreshed.status).toBe(200);
     expect(await principal((await refreshed.json()) as Tokens)).toMatchObject({ id: 'a' });
-    expect(await listBrowsers(db, 'a')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
   });
 
   it("prune their family's expired tokens and keep live and rotated ones", async () => {
@@ -393,30 +399,30 @@ describe('connected browsers', () => {
     await principal(used);
     const expiring = await connect(a, EDGE_ON_WINDOWS);
     await connect(b);
-    expect((await listBrowsers(db, 'a')).map(row => row.browser)).toEqual(['chrome', 'edge']);
+    expect((await listBrowsers(db, await member('a'))).map(row => row.browser)).toEqual(['chrome', 'edge']);
     // The refresh token expired, or was deleted.
     await db
       .update(schema.oauthRefreshToken)
       .set({ expiresAt: new Date(Date.now() - 1000) })
       .where(eq(schema.oauthRefreshToken.token, hash(expiring.refresh_token)));
-    expect((await listBrowsers(db, 'a')).map(row => row.browser)).toEqual(['chrome']);
+    expect((await listBrowsers(db, await member('a'))).map(row => row.browser)).toEqual(['chrome']);
     await db.delete(schema.oauthRefreshToken).where(eq(schema.oauthRefreshToken.token, hash(used.refresh_token)));
-    expect(await listBrowsers(db, 'a')).toEqual([]);
-    expect(await listBrowsers(db, 'b')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('a'))).toEqual([]);
+    expect(await listBrowsers(db, await member('b'))).toHaveLength(1);
   });
 
   it('are recorded at the code exchange, so one that never made a request can be disconnected', async () => {
     const a = await identity('a');
     const tokens = await connect(a, EDGE_ON_WINDOWS);
-    const [listed] = await listBrowsers(db, 'a');
+    const [listed] = await listBrowsers(db, await member('a'));
     expect(listed).toMatchObject({ browser: 'edge', platform: 'windows', lastSyncedAt: null });
     // Its first request finds the same browser.
     expect((await principal(tokens))!.browser.publicId).toBe(listed!.id);
     expect(await db.select().from(schema.connectedBrowsers)).toHaveLength(1);
-    expect(await disconnectBrowser(db, 'a', { publicId: listed!.id })).toBe(true);
+    expect(await disconnectBrowser(db, await member('a'), { publicId: listed!.id })).toBe(true);
     expect(await principal(tokens)).toBeNull();
     expect((await refresh(tokens.refresh_token)).status).toBe(400);
-    expect(await listBrowsers(db, 'a')).toEqual([]);
+    expect(await listBrowsers(db, await member('a'))).toEqual([]);
   });
 
   it('disconnect one at a time, deleting the capture only when that browser sent it', async () => {
@@ -427,21 +433,21 @@ describe('connected browsers', () => {
     const first = (await principal(one))!;
     const second = (await principal(two))!;
     const agent = await agentGrant('a');
-    expect(await saveCapture(db, 'a', bundle([cookie()]), { browser: second.browser.id })).toMatchObject({
+    expect(await saveCapture(db, await member('a'), bundle([cookie()]), { browser: second.browser.id })).toMatchObject({
       status: 'stored',
     });
     // Another account, or an unknown ID: nothing happens.
-    expect(await disconnectBrowser(db, 'b', { publicId: first.browser.publicId })).toBe(false);
-    expect(await disconnectBrowser(db, 'a', { publicId: 'brw_00000000000000000000000000' })).toBe(false);
+    expect(await disconnectBrowser(db, await member('b'), { publicId: first.browser.publicId })).toBe(false);
+    expect(await disconnectBrowser(db, await member('a'), { publicId: 'brw_00000000000000000000000000' })).toBe(false);
     // The first did not send the capture, so it stays.
-    expect(await disconnectBrowser(db, 'a', { publicId: first.browser.publicId })).toBe(true);
-    expect(await disconnectBrowser(db, 'a', { publicId: first.browser.publicId })).toBe(false);
+    expect(await disconnectBrowser(db, await member('a'), { publicId: first.browser.publicId })).toBe(true);
+    expect(await disconnectBrowser(db, await member('a'), { publicId: first.browser.publicId })).toBe(false);
     expect(await db.select().from(schema.captures)).toHaveLength(1);
     expect(await db.select().from(schema.syncRevocations)).toEqual([]);
     expect(await principal(one)).toBeNull();
     expect((await refresh(one.refresh_token)).status).toBe(400);
     expect(await principal(two)).not.toBeNull();
-    expect((await listBrowsers(db, 'a')).map(row => row.id)).toEqual([second.browser.publicId]);
+    expect((await listBrowsers(db, await member('a'))).map(row => row.id)).toEqual([second.browser.publicId]);
     const [tombstone] = await db
       .select()
       .from(schema.connectedBrowsers)
@@ -453,7 +459,7 @@ describe('connected browsers', () => {
       disconnectedAt: expect.any(Date),
     });
     // The second did: its capture goes, behind a deletion tombstone.
-    expect(await disconnectBrowser(db, 'a', { id: second.browser.id })).toBe(true);
+    expect(await disconnectBrowser(db, await member('a'), { id: second.browser.id })).toBe(true);
     expect(await db.select().from(schema.captures)).toEqual([]);
     expect(await db.select().from(schema.syncRevocations)).toMatchObject([{ userId: 'a', disconnected: false }]);
     expect((await refresh(two.refresh_token)).status).toBe(400);
@@ -471,8 +477,8 @@ describe('connected browsers', () => {
     const theirs = await connect(b);
     await principal(theirs);
     await agentGrant('a');
-    await disconnectAllBrowsers(db, 'a');
-    expect(await listBrowsers(db, 'a')).toEqual([]);
+    await disconnectAllBrowsers(db, await member('a'));
+    expect(await listBrowsers(db, await member('a'))).toEqual([]);
     expect(
       await db
         .select()
@@ -511,13 +517,13 @@ describe('connected browsers', () => {
     };
     const mine = await pending(a);
     const theirs = await pending(b);
-    await disconnectAllBrowsers(db, 'a');
+    await disconnectAllBrowsers(db, await member('a'));
     const refused = await mine();
     expect(refused.status).toBe(400);
     expect((await refused.json()).error).toBe('invalid_grant');
-    expect(await listBrowsers(db, 'a')).toEqual([]);
+    expect(await listBrowsers(db, await member('a'))).toEqual([]);
     expect((await theirs()).status).toBe(200);
-    expect(await listBrowsers(db, 'b')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('b'))).toHaveLength(1);
   });
 
   it('stay disconnected when a racing rotation recreates their tokens', async () => {
@@ -525,7 +531,7 @@ describe('connected browsers', () => {
     const tokens = await connect(a);
     const found = (await principal(tokens))!;
     const family = await familyOf(tokens.access_token);
-    await disconnectBrowser(db, 'a', { id: found.browser.id });
+    await disconnectBrowser(db, await member('a'), { id: found.browser.id });
     // A rotation that read the old row before the disconnect writes its new tokens after it.
     const refreshToken = randomBytes(24).toString('base64url');
     const accessToken = randomBytes(24).toString('base64url');
@@ -554,7 +560,7 @@ describe('connected browsers', () => {
       scopes: ['offline_access', 'sync'],
     });
     expect(await principal({ access_token: accessToken })).toBeNull();
-    expect(await listBrowsers(db, 'a')).toEqual([]);
+    expect(await listBrowsers(db, await member('a'))).toEqual([]);
     const refused = await refresh(refreshToken);
     expect(refused.status).toBe(400);
     expect((await refused.json()).error).toBe('invalid_grant');
@@ -581,7 +587,7 @@ describe('connected browsers', () => {
     expect((await replayed.json()).error).toBe('invalid_grant');
     expect(await principal(rotated)).toBeNull();
     expect((await refresh(rotated.refresh_token)).status).toBe(400);
-    expect(await listBrowsers(db, 'a')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
     expect((await refresh(two.refresh_token)).status).toBe(200);
   });
 
@@ -639,7 +645,7 @@ describe('connected browsers', () => {
       await db.select().from(schema.oauthRefreshToken).where(eq(schema.oauthRefreshToken.clientId, 'other')),
     ).toHaveLength(1);
     expect(await principal(tokens)).not.toBeNull();
-    expect(await listBrowsers(db, 'a')).toHaveLength(1);
+    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
     expect((await refresh(tokens.refresh_token)).status).toBe(200);
   });
 

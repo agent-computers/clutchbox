@@ -260,7 +260,7 @@ function registerComputerTools(
         if ('error' in opened) return failure(opened);
         handle = opened;
         // An agent opened the computer: the user is set up. Best-effort; never fails the open.
-        await noteSetupStep(db, principal.userId, 'setUp');
+        await noteSetupStep(db, member, 'setUp');
         markToolStep('screenshot');
         const png = await opened.session.screenshot();
         // End the call first, so the free minutes count its running time.
@@ -565,10 +565,7 @@ export function createMcpEndpoint({
     auth,
     async (request, claims) => {
       const principal = await liveMcpPrincipal(db, claims);
-      if (principal) {
-        await hooks.operatorAdmin.recordActivity(db, principal.userId);
-        await noteAgentConnected(db, principal.userId);
-      }
+      if (principal) await hooks.operatorAdmin.recordActivity(db, principal.userId);
       if (!principal)
         return Response.json(
           { error: 'invalid_grant' },
@@ -580,6 +577,7 @@ export function createMcpEndpoint({
           },
         );
       // Every call acts as the member the grant is for (server/src/mcp.ts).
+      await noteAgentConnected(db, principal.member);
       return serve(request, principal, principal.member);
     },
     { resource, requiredScopes: [MCP_SCOPE] },

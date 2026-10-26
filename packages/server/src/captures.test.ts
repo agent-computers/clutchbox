@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { captureDigest } from '@agent-computers/capture';
 import { PGlite } from '@electric-sql/pglite';
@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { bundle, cookie, siteBundle } from './capture-fixtures';
 import {
   adoptSyncSettings,
+  captureKey,
   captureScope,
   captureView,
   changeSyncSettings,
@@ -22,14 +23,12 @@ import {
   syncView,
 } from './captures';
 import type { Database } from './database';
+import { person } from './member-fixtures';
 import * as schema from './schema';
 
 let pg: PGlite;
 let db: Database;
-const user = async (id: string) => {
-  await db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true });
-  return id;
-};
+const user = (id: string) => person(db, id);
 // Migrate once per file; each test gets its own clone, which is much cheaper than a fresh database.
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 let template: PGlite;
@@ -52,22 +51,74 @@ afterEach(async () => {
   await pg.close();
 });
 
+// A value sealed for its person, as values were before memberships (sealing.ts, version v1).
+function sealedForPerson(plaintext: string, purpose: string, userId: string, ...extra: string[]) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', captureKey()!, iv).setAAD(
+    Buffer.from([`agent-computers/${purpose}/v1`, userId, ...extra].join(':')),
+  );
+  const data = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return ['v1', iv, cipher.getAuthTag(), data]
+    .map(part => (typeof part === 'string' ? part : part.toString('base64')))
+    .join('.');
+}
+// Owners for the sealing tests alone, which touch no database.
+const A = { userId: 'a', membershipId: 1 };
+const B = { userId: 'b', membershipId: 2 };
+
 describe('sealed captures', () => {
-  it('round-trips and binds the ciphertext to its user', () => {
+  it('round-trips and binds the ciphertext to its membership', () => {
     const capture = bundle([cookie(), cookie({ name: 'other', domain: '.github.com', hostOnly: false })]);
-    const sealed = sealCapture(capture, 'a');
+    const sealed = sealCapture(capture, A);
     expect(sealed).not.toContain('local');
-    expect(openCapture(sealed, 'a')).toEqual(capture);
-    expect(() => openCapture(sealed, 'b')).toThrow();
+    expect(sealed.startsWith('v2.')).toBe(true);
+    expect(openCapture(sealed, A)).toEqual(capture);
+    expect(() => openCapture(sealed, B)).toThrow();
+    // The same person in another organization.
+    expect(() => openCapture(sealed, { ...A, membershipId: 3 })).toThrow();
     const [version, iv, tag, data] = sealed.split('.');
     const flipped = Buffer.from(data!, 'base64');
     flipped[0]! ^= 1;
-    expect(() => openCapture([version, iv, tag, flipped.toString('base64')].join('.'), 'a')).toThrow();
-    expect(() => openCapture(sealed, 'a', randomBytes(32))).toThrow();
+    expect(() => openCapture([version, iv, tag, flipped.toString('base64')].join('.'), A)).toThrow();
+    expect(() => openCapture(sealed, A, randomBytes(32))).toThrow();
     // Truncated GCM tags are refused outright.
     expect(() =>
-      openCapture([version, iv, Buffer.from(tag!, 'base64').subarray(0, 4).toString('base64'), data].join('.'), 'a'),
+      openCapture([version, iv, Buffer.from(tag!, 'base64').subarray(0, 4).toString('base64'), data].join('.'), A),
     ).toThrow('invalid sealed capture');
+  });
+  it('still opens values sealed for the person before memberships, and seals anew for the membership', async () => {
+    const a = await user('a');
+    const capture = bundle([cookie()], new Date('2026-10-15T10:00:00Z'));
+    const settings = { sites: ['example.com'], excludedDomains: [], paused: false };
+    await db.insert(schema.captures).values({
+      userId: a.userId,
+      captureId: capture.id,
+      digest: await captureDigest(capture.cookies),
+      cookieCount: 1,
+      sealed: sealedForPerson(JSON.stringify(capture), 'capture', a.userId),
+      sealedScope: sealedForPerson(
+        JSON.stringify({ mode: 'sites', sites: ['example.com'] }),
+        'capture-scope',
+        a.userId,
+      ),
+      completedAt: new Date(capture.completedAt),
+    });
+    await db
+      .insert(schema.syncSettings)
+      .values({ userId: a.userId, sealed: sealedForPerson(JSON.stringify(settings), 'sync-settings', a.userId) });
+    expect((await loadLatestCapture(db, a))!.capture).toEqual(capture);
+    expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['example.com'] });
+    expect((await syncView(db, a)).settings).toEqual(settings);
+    const applied = { completedAt: capture.completedAt, cookies: capture.cookies };
+    const baseline = sealedForPerson(JSON.stringify(applied), 'applied-capture', a.userId, 'computer-1');
+    expect(openAppliedCapture(baseline, a, 'computer-1')).toEqual(applied);
+    expect(() => openAppliedCapture(baseline, a, 'computer-2')).toThrow();
+    // Bound to its person: another person's membership can't open it.
+    expect(() => openCapture(sealedForPerson(JSON.stringify(capture), 'capture', 'b'), a)).toThrow();
+    // The next write seals for the membership.
+    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
+    const [row] = await db.select().from(schema.captures);
+    expect([row!.sealed.slice(0, 3), row!.sealedScope!.slice(0, 3)]).toEqual(['v2.', 'v2.']);
   });
   it('stores only digest and counts in plaintext, and skips unchanged uploads', async () => {
     const a = await user('a');
@@ -126,18 +177,23 @@ describe('sealed captures', () => {
       await saveCapture(db, a, siteBundle(cookies, ['github.com']), { receivedAt: new Date(Date.now() - 60_000) }),
     ).toMatchObject({ status: 'unchanged' });
     expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['github.com', 'notion.so'] });
-    // The scope is bound to its user like the capture.
+    // The scope is bound to its membership like the capture.
     await saveCapture(db, b, siteBundle(cookies, ['github.com']));
     const [sealedB] = await db
       .select({ sealedScope: schema.captures.sealedScope })
       .from(schema.captures)
-      .where(eq(schema.captures.userId, b));
-    await db.update(schema.captures).set({ sealedScope: sealedB!.sealedScope }).where(eq(schema.captures.userId, a));
+      .where(eq(schema.captures.membershipId, b.membershipId));
+    await db
+      .update(schema.captures)
+      .set({ sealedScope: sealedB!.sealedScope })
+      .where(eq(schema.captures.membershipId, a.membershipId));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await captureScope(db, a)).toBe('unreadable');
     await deleteCaptures(db, a);
     expect(await captureScope(db, a)).toBeNull();
-    expect(await db.select().from(schema.captures).where(eq(schema.captures.userId, a))).toHaveLength(0);
+    expect(
+      await db.select().from(schema.captures).where(eq(schema.captures.membershipId, a.membershipId)),
+    ).toHaveLength(0);
   });
   it('answers sync_unavailable without a valid key', async () => {
     const a = await user('a');
@@ -171,7 +227,7 @@ describe('sealed captures', () => {
     const a = await user('a');
     const [one, two] = await db
       .insert(schema.connectedBrowsers)
-      .values(['one', 'two'].map(name => ({ publicId: `brw_${name}`, userId: a, authorizationCodeId: name })))
+      .values(['one', 'two'].map(name => ({ publicId: `brw_${name}`, userId: a.userId, authorizationCodeId: name })))
       .returning({ id: schema.connectedBrowsers.id });
     const state = async () => ({
       sender: (await db.select().from(schema.captures))[0]?.connectedBrowserId ?? null,
@@ -212,8 +268,8 @@ describe('sealed captures', () => {
     const [one, two] = await db
       .insert(schema.connectedBrowsers)
       .values([
-        { publicId: 'brw_one', userId: a, authorizationCodeId: 'one' },
-        { publicId: 'brw_two', userId: a, authorizationCodeId: 'two', disconnectedAt: new Date() },
+        { publicId: 'brw_one', userId: a.userId, authorizationCodeId: 'one' },
+        { publicId: 'brw_two', userId: a.userId, authorizationCodeId: 'two', disconnectedAt: new Date() },
       ])
       .returning({ id: schema.connectedBrowsers.id });
     await deleteCaptures(db, a, { disconnect: true });
@@ -253,7 +309,10 @@ describe('sync settings', () => {
     expect(row!.sealed).not.toMatch(/github|bank/);
     // Another user's sealed settings don't open under this user.
     await adoptSyncSettings(db, b, local, serverSite);
-    await db.update(schema.syncSettings).set({ sealed: row!.sealed }).where(eq(schema.syncSettings.userId, b));
+    await db
+      .update(schema.syncSettings)
+      .set({ sealed: row!.sealed })
+      .where(eq(schema.syncSettings.membershipId, b.membershipId));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await syncView(db, b)).settings).toBeNull();
   });
@@ -337,13 +396,13 @@ describe('sync settings', () => {
 });
 
 describe('applied captures', () => {
-  it('seals the applied capture to its user and computer', () => {
+  it('seals the applied capture to its membership and computer', () => {
     const applied = { completedAt: '2026-10-20T12:00:00.000Z', cookies: [cookie()] };
-    const sealed = sealAppliedCapture(applied, 'a', 'computer-1');
+    const sealed = sealAppliedCapture(applied, A, 'computer-1');
     expect(sealed).not.toContain('local');
-    expect(openAppliedCapture(sealed, 'a', 'computer-1')).toEqual(applied);
-    expect(() => openAppliedCapture(sealed, 'b', 'computer-1')).toThrow();
-    expect(() => openAppliedCapture(sealed, 'a', 'computer-2')).toThrow();
-    expect(() => openCapture(sealed, 'a')).toThrow();
+    expect(openAppliedCapture(sealed, A, 'computer-1')).toEqual(applied);
+    expect(() => openAppliedCapture(sealed, B, 'computer-1')).toThrow();
+    expect(() => openAppliedCapture(sealed, A, 'computer-2')).toThrow();
+    expect(() => openCapture(sealed, A)).toThrow();
   });
 });

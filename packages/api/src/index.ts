@@ -51,8 +51,15 @@ import { allowedMutationOrigin, isPinnedExtension, SYNC_PATHS } from './origins'
 
 export { allowedMutationOrigin, extensionCors, tokenPreflight } from './origins';
 
-// App auth (a web session, our web app's) or, on the extension's routes, a sync token, which also names the browser.
-type Principal = { id: string; name: string; email: string; browser?: SyncPrincipal['browser'] };
+// App auth (a web session, our web app's) or, on the extension's routes, a sync token, which also names the browser and
+// its membership.
+type Principal = {
+  id: string;
+  name: string;
+  email: string;
+  browser?: SyncPrincipal['browser'];
+  member?: SyncPrincipal['member'];
+};
 type Env = { Variables: { principal: Principal } };
 // A deployment's own routes, added after the shared middleware so they get its session, origin, and header handling.
 export type ApiExtension = (app: Hono<Env>, services: { db: Database }) => void;
@@ -95,10 +102,12 @@ export function createApi({
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
   const { metering, operatorAdmin } = hooks;
   const running = { provider: computers, metering };
-  // The member a signed-in request acts as, for its computer (organizations.ts). An account the tenancy has not placed
-  // yet has none until the next migration run places it: the request fails like any unavailable service.
+  // The member a request acts as: a sync token's browser's, or for app auth the person's current one (organizations.ts).
+  // An account the tenancy has not placed yet has none until the next migration run places it: the request fails like
+  // any unavailable service.
   const memberOf = async (c: Context<Env>) => {
-    const member = await currentMember(db, c.get('principal').id);
+    const principal = c.get('principal');
+    const member = principal.member ?? (await currentMember(db, principal.id));
     if (!member) throw new Error('account has no membership');
     return member;
   };
@@ -170,9 +179,9 @@ export function createApi({
       ? c.json({ revoked: true })
       : c.json({ error: 'not_found' }, 404);
   });
-  app.get('/setup', async c => c.json(await setupView(db, c.get('principal').id)));
+  app.get('/setup', async c => c.json(await setupView(db, await memberOf(c))));
   app.post('/setup/notice/close', async c => {
-    await closeSetupNotice(db, c.get('principal').id);
+    await closeSetupNotice(db, await memberOf(c));
     return c.json({ closed: true });
   });
   // The browser's time zone, which the user's computer follows from its next open.
@@ -188,14 +197,14 @@ export function createApi({
   app.get('/computer', async c => c.json(await computerView(db, metering, await memberOf(c))));
   // Connected browsers, for the account page. Disconnecting one revokes its tokens and deletes the capture if it
   // sent it. Neither path takes a sync token or the extension's origin.
-  app.get('/browsers', async c => c.json({ browsers: await listBrowsers(db, c.get('principal').id) }));
+  app.get('/browsers', async c => c.json({ browsers: await listBrowsers(db, await memberOf(c)) }));
   app.post('/browsers/disconnect', async c => {
     const parsed = z
       .object({ id: z.string().regex(BROWSER_ID_PATTERN) })
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return (await disconnectBrowser(db, c.get('principal').id, { publicId: parsed.data.id }))
+    return (await disconnectBrowser(db, await memberOf(c), { publicId: parsed.data.id }))
       ? c.json({ disconnected: true })
       : c.json({ error: 'not_found' }, 404);
   });
@@ -203,10 +212,10 @@ export function createApi({
   app.delete('/computer', async c => {
     const member = await memberOf(c);
     // Every browser disconnects, and sync turns off. Agents stay connected.
-    await disconnectAllBrowsers(db, c.get('principal').id);
-    await deleteCaptures(db, c.get('principal').id, { disconnect: true, forget: true });
+    await disconnectAllBrowsers(db, member);
+    await deleteCaptures(db, member, { disconnect: true, forget: true });
     // Before the provider, so a provider failure cannot skip it. Agents stay connected.
-    await resetSetup(db, c.get('principal').id);
+    await resetSetup(db, member);
     await deleteToolCalls(db, member);
     await deleteMainComputer(db, computers, member);
     return c.json({ deleted: true });
@@ -274,7 +283,8 @@ export function createApi({
         .safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
       const { capture } = parsed.data;
-      const saved = await saveCapture(db, c.get('principal').id, capture, {
+      const member = await memberOf(c);
+      const saved = await saveCapture(db, member, capture, {
         receivedAt,
         connect: parsed.data.connect,
         browser: browser.id,
@@ -286,7 +296,7 @@ export function createApi({
         );
       // After the upload commits; a capture with no sites added yet does not count.
       if (capture.scope.mode === 'whole-browser' || capture.scope.sites.length > 0)
-        await noteSetupStep(db, c.get('principal').id, 'browserSynced');
+        await noteSetupStep(db, member, 'browserSynced');
       return c.json({
         status: saved.status,
         completedAt: saved.completedAt,
@@ -301,7 +311,7 @@ export function createApi({
   // extension's origin for it.
   const fromExtension = (c: Context<Env>) => c.get('principal').browser !== undefined;
   app.get('/sync', async c =>
-    c.json({ ...(await syncView(db, c.get('principal').id)), config: defaultExtensionConfig, ...latest }),
+    c.json({ ...(await syncView(db, await memberOf(c))), config: defaultExtensionConfig, ...latest }),
   );
   // The account page may only narrow what is captured; adding sites and resuming need the extension. Exclusions are
   // the user's to edit from either.
@@ -311,7 +321,7 @@ export function createApi({
     const change = parsed.data;
     if (!fromExtension(c) && (change.addSites?.length || change.paused === false))
       return c.json({ error: 'extension_only' }, 403);
-    const settings = await changeSyncSettings(db, c.get('principal').id, change, serverSite);
+    const settings = await changeSyncSettings(db, await memberOf(c), change, serverSite);
     if ('error' in settings)
       return c.json({ error: settings.error }, settings.error === 'sync_unavailable' ? 503 : 409);
     return c.json({ settings });
@@ -324,22 +334,23 @@ export function createApi({
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const settings = await adoptSyncSettings(db, c.get('principal').id, parsed.data.settings, serverSite);
+    const settings = await adoptSyncSettings(db, await memberOf(c), parsed.data.settings, serverSite);
     if ('error' in settings) return c.json({ error: settings.error }, 503);
     return c.json({ settings });
   });
   // Turns sync off and deletes the uploaded copy, keeping the settings for when the extension reconnects. Every
   // connected browser disconnects first, so none can lift it with `connect`.
   app.post('/sync/disconnect', async c => {
-    await disconnectAllBrowsers(db, c.get('principal').id);
-    await deleteCaptures(db, c.get('principal').id, { disconnect: true });
+    const member = await memberOf(c);
+    await disconnectAllBrowsers(db, member);
+    await deleteCaptures(db, member, { disconnect: true });
     return c.json({ disconnected: true });
   });
   // The extension's Disconnect: that browser's tokens, and the capture if it sent it.
   app.delete('/captures', async c => {
-    const { id, browser } = c.get('principal');
+    const { browser } = c.get('principal');
     if (!browser) return c.json({ error: 'extension_only' }, 403);
-    await disconnectBrowser(db, id, { id: browser.id });
+    await disconnectBrowser(db, await memberOf(c), { id: browser.id });
     return c.json({ deleted: true });
   });
   // After the product's routes, so an extension cannot shadow one.
