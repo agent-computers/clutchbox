@@ -34,7 +34,7 @@ function InvalidRequest() {
   return (
     <main id="main" className={page}>
       <h1 className="font-heading text-4xl leading-tight font-medium">Connection request expired or invalid.</h1>
-      <p className="mt-3 text-soft">Start the connection again from your agent.</p>
+      <p className="mt-3 text-foreground">Start the connection again from your agent.</p>
     </main>
   );
 }

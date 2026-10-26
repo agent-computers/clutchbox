@@ -19,7 +19,7 @@ export const connectPage = (getServices: GetServices) =>
     if (!(await signedOAuthClient(auth, oauthQuery)))
       return (
         <main id="main" className={page}>
-          <p className="text-soft">This connection request expired or is invalid. Start again from the app.</p>
+          <p className="text-foreground">This connection request expired or is invalid. Start again from the app.</p>
         </main>
       );
     if (!(await getPrincipal(auth, await headers()))) redirect(`/sign-in?${oauthQuery}`);

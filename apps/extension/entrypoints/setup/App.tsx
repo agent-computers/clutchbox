@@ -105,7 +105,7 @@ export function App() {
         </h2>
         <SitesDisclosure />
         {connected ? (
-          <p className="text-soft">Connected{current ? ` to ${connectionName(current)}` : ''}</p>
+          <p className="text-foreground">Connected{current ? ` to ${connectionName(current)}` : ''}</p>
         ) : (
           <div className="grid justify-items-start gap-2">
             <Button size="lg" disabled={busy || pending || !status} onClick={() => connect('sites')}>
@@ -146,7 +146,7 @@ export function App() {
           Sites
         </h2>
         {allSites ? (
-          <p className="text-soft">All sites in this browser profile sync.</p>
+          <p className="text-foreground">All sites in this browser profile sync.</p>
         ) : (
           <>
             <p className={hint}>

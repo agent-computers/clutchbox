@@ -206,7 +206,7 @@ export function OAuthConsent({
               </div>
             )}
             {loopback && (
-              <p role="note" className="text-sm leading-5 text-soft">
+              <p role="note" className="text-sm leading-5 text-foreground">
                 This agent runs on your own device. Only allow it if you started this connection yourself just now.
               </p>
             )}
@@ -231,7 +231,7 @@ export function OAuthConsent({
                 Application names and logos are provided by their developers. Only authorize applications you trust.
               </p>
             </div>
-            <p className="text-sm leading-5 text-soft">
+            <p className="text-sm leading-5 text-foreground">
               Access is limited to your account and this agent connection. You can disconnect any agent from your
               account at any time.
             </p>

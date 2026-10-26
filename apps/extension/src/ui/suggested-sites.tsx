@@ -59,7 +59,7 @@ export function SuggestedSites(props: {
                         Add
                       </Button>
                     ) : (
-                      <span className="text-[13px] text-soft">Added</span>
+                      <span className="text-[13px] text-foreground">Added</span>
                     )}
                   </li>
                 );

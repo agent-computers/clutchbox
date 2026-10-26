@@ -15,7 +15,7 @@ export const aRole: Record<Role, string> = { owner: 'an owner', admin: 'an admin
 // What joining lets the organization do with your sign-ins. Joining is the consent, so every way in shows it.
 export function JoinDisclosure({ organization }: { organization: string }) {
   return (
-    <p className="text-sm text-soft">
+    <p className="text-sm text-foreground">
       Owners and admins of {organization} can create API keys that let their agents use the sites you sync to it. Join
       only an organization you trust with those sign-ins. You choose which sites to sync, and leaving deletes everything
       you had there.

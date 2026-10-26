@@ -1,5 +1,5 @@
-/* The Clutchbox design tokens, fonts, and base styles the extension's three pages use: a plum-black ground,
-   white ink, and pink for the primary action, in EB Garamond and IBM Plex Sans. Tailwind scans this app's files only. */
+/* The Clutchbox design tokens, fonts, and base styles the extension's three pages use: neutral black, white ink and
+   a white primary action, and blush for small marks, in EB Garamond and IBM Plex Sans. Tailwind scans this app's files only. */
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
@@ -30,7 +30,7 @@
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "EB Garamond", Garamond, Georgia, serif;
   --font-heading: var(--font-serif);
-  --color-soft: var(--soft);
+  --color-brand: var(--brand);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -53,24 +53,24 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* One dark theme. Pink (primary) is only for the primary action. */
+/* One dark theme, the web app's (packages/ui globals.css): blush (brand) marks only small things. */
 :root {
   color-scheme: dark;
-  --background: #0d060b;
-  --foreground: #ffffff;
-  --card: #1b0e17;
-  --card-foreground: #ffffff;
-  --primary: #ff488b;
-  --primary-foreground: #0d060b;
-  --secondary: #33202c;
-  --secondary-foreground: #ffffff;
-  --muted: #26141f;
-  --muted-foreground: #9a8f97;
-  --soft: #c9bec6;
-  --destructive: #ff9e7a;
-  --border: #33202c;
-  --input: #7d6f78;
-  --ring: #ff488b;
+  --background: #121212;
+  --foreground: #ededed;
+  --card: #1c1c1c;
+  --card-foreground: var(--foreground);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --secondary: #262626;
+  --secondary-foreground: var(--foreground);
+  --muted: #262626;
+  --muted-foreground: #a3a3a3;
+  --brand: #f9a8d4;
+  --destructive: #f87171;
+  --border: #2e2e2e;
+  --input: #6b6b6b;
+  --ring: var(--brand);
   --radius: 0.25rem;
 }
 
@@ -82,7 +82,7 @@
     @apply bg-background font-sans text-foreground antialiased;
   }
   ::selection {
-    @apply bg-primary text-primary-foreground;
+    @apply bg-brand text-background;
   }
 }
 

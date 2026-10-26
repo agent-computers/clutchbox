@@ -22,21 +22,21 @@ const style = `
   @font-face { font-family: Garamond; src: url(${await font('EBGaramond.woff2')}); font-weight: 400 500; }
   @font-face { font-family: Garamond; src: url(${await font('EBGaramond-Italic.woff2')}); font-weight: 400 500; font-style: italic; }
   * { margin: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; color: #ffffff; font-family: Garamond; }
-  .ground { width: 100%; height: 100%; overflow: hidden; background: #0d060b; }
+  html, body { width: 100%; height: 100%; color: #ededed; font-family: Garamond; }
+  .ground { width: 100%; height: 100%; overflow: hidden; background: #121212; }
   h1 { font-weight: 500; line-height: 1.02; letter-spacing: -0.02em; }
   .wordmark { font-style: italic; font-weight: 500; line-height: 1; }
-  .tagline { line-height: 1.3; color: #c9bec6; }`;
+  .tagline { line-height: 1.3; color: #a3a3a3; }`;
 const headline = (br: boolean) => `Your agents,${br ? '<br>' : ' '}<i style="white-space:nowrap">already signed in</i>`;
 const tagline = 'Sync your sign-ins to where your agents run';
 
-// The italic c on the plum-black ground. Rounded corners give the tab icons transparency, so they are RGBA as ICO
+// The italic c on the black ground. Rounded corners give the tab icons transparency, so they are RGBA as ICO
 // requires; iOS rounds the opaque apple-icon itself and would draw transparent corners black, and GitHub crops avatars.
 const mark = (rounded: boolean) =>
   `<div class="ground" style="display:grid;place-items:center;border-radius:${rounded ? '22%' : '0'}"><span style="font-style:italic;font-weight:500;font-size:116vw;line-height:1;transform:translate(3%,-21%)">c</span></div>`;
-// The wordmark over the headline, set right on the plum field (--field).
-const plum = (wordmark: number, size: number, gap: number, right: number) =>
-  `<div class="ground" style="background:#470c35;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;padding-right:${right}px">
+// The wordmark over the headline, set right on the black ground.
+const setRight = (wordmark: number, size: number, gap: number, right: number) =>
+  `<div class="ground" style="display:flex;flex-direction:column;align-items:flex-end;justify-content:center;padding-right:${right}px">
   <p class="wordmark" style="font-size:${wordmark}px;margin-bottom:${gap}px">clutchbox</p>
   <h1 style="font-size:${size}px;text-align:right">${headline(true)}</h1></div>`;
 
@@ -72,7 +72,7 @@ export const brandFolder: Record<string, Image> = {
   <p class="wordmark" style="font-size:36px">clutchbox</p>
   <div><h1 style="font-size:104px">${headline(false)}</h1>
   <p class="tagline" style="margin-top:28px;max-width:46ch;font-size:36px">${tagline}</p></div>
-  <p class="tagline" style="font-size:28px">Open source <span style="color:#ff488b">→</span> Playwright, browser-use, E2B, any Chrome over CDP</p></div>`,
+  <p class="tagline" style="font-size:28px">Open source <span style="color:#f9a8d4">→</span> Playwright, browser-use, E2B, any Chrome over CDP</p></div>`,
     size: [1280, 640],
     scale: 2,
   },
@@ -85,8 +85,8 @@ export const brandFolder: Record<string, Image> = {
   <h1 style="font-size:92px">${headline(true)}</h1></div>`,
     size: [1500, 500],
   },
-  'chrome-web-store/promo-small-440x280.png': { html: plum(20, 46, 16, 40), size: [440, 280] },
-  'chrome-web-store/promo-marquee-1400x560.png': { html: plum(44, 116, 36, 130), size: [1400, 560] },
+  'chrome-web-store/promo-small-440x280.png': { html: setRight(20, 46, 16, 40), size: [440, 280] },
+  'chrome-web-store/promo-marquee-1400x560.png': { html: setRight(44, 116, 36, 130), size: [1400, 560] },
 };
 
 // A single-image ICO may hold a PNG directly: 6-byte header, 16-byte entry, then the PNG.

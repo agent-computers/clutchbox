@@ -59,7 +59,7 @@ export function ConnectSteps({ oauthQuery }: { oauthQuery: string }) {
     );
   if (!status || ready)
     return (
-      <p className="flex items-center gap-2 text-soft">
+      <p className="flex items-center gap-2 text-foreground">
         <Spinner aria-hidden /> Connecting…
       </p>
     );
@@ -109,7 +109,7 @@ function BrowserStep({ status, skip, skipping }: { status: ConnectStatus; skip: 
         </li>
         <li>In the extension, choose Agree and connect, then add the sites {status.app.name} should use.</li>
       </ol>
-      <p className="flex items-center gap-2 text-sm text-soft" aria-live="polite">
+      <p className="flex items-center gap-2 text-sm text-foreground" aria-live="polite">
         <Spinner aria-hidden /> Waiting for your browser to connect. This page goes on by itself.
       </p>
       <div>

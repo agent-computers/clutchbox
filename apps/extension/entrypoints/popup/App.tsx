@@ -126,7 +126,7 @@ export function App() {
 
       {status && (status.update || status.sync.state === 'outdated') && (
         <aside className="flex items-center justify-between gap-3 rounded-lg bg-card p-3 text-[13px]" role="status">
-          <span className="text-soft">
+          <span className="text-foreground">
             {status.update
               ? `Version ${status.update} is available.`
               : status.noUpdate
@@ -198,7 +198,7 @@ export function App() {
           )}
           {!allSites && ungranted.length > 0 && (
             <section className="grid justify-items-start gap-2 rounded-lg bg-card p-4" aria-label="Sites to allow">
-              <p className="text-soft">
+              <p className="text-foreground">
                 Your account syncs {ungranted.map(each => siteName(each, config.suggestedSites)).join(', ')}, which this
                 browser has not allowed yet.
               </p>
@@ -209,7 +209,7 @@ export function App() {
           )}
           <section className="grid gap-3 rounded-lg bg-card p-4" aria-label="This site" aria-live="polite">
             {!tabSite ? (
-              <p className="text-soft">
+              <p className="text-foreground">
                 {allSites
                   ? 'All sites in this profile are synced, except exclusions.'
                   : 'Open a site you are signed in to, then add it here.'}
@@ -219,7 +219,7 @@ export function App() {
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="font-heading text-xl font-medium break-all">{tabSite}</span>
                   {!blocked(tabSite) && (allSites || (sites.includes(tabSite) && !ungranted.includes(tabSite))) && (
-                    <span className="text-[13px] text-soft">Synced</span>
+                    <span className="text-[13px] text-foreground">Synced</span>
                   )}
                 </div>
                 {blocked(tabSite) ? (

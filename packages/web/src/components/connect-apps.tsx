@@ -92,7 +92,7 @@ export function ConnectApps() {
         </form>
         {made && (
           <div className="grid gap-2">
-            <p className="text-sm text-soft">
+            <p className="text-sm text-foreground">
               Copy the client secret for {made.name} now. It is shown only once; if you lose it, delete the app and
               register it again.
             </p>

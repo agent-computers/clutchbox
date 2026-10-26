@@ -34,7 +34,7 @@ export function YourComputer() {
           {view.computer && <ResetComputer />}
         </>
       ) : (
-        <p className="text-soft">{isError ? 'Your computer could not load. Reload to try again.' : 'Loading…'}</p>
+        <p className="text-foreground">{isError ? 'Your computer could not load. Reload to try again.' : 'Loading…'}</p>
       )}
     </AppPage>
   );

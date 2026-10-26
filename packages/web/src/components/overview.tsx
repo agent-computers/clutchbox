@@ -59,7 +59,8 @@ export function Overview({ mcpUrl }: { mcpUrl: string }) {
   }, [router, shell]);
   const first = useAppUser().name.split(' ')[0];
   const setup = useQuery(setupQuery);
-  if (setup.isPending) return <AppPage title={`Welcome, ${first}.`}>{<p className="text-soft">Loading…</p>}</AppPage>;
+  if (setup.isPending)
+    return <AppPage title={`Welcome, ${first}.`}>{<p className="text-foreground">Loading…</p>}</AppPage>;
   // If setup cannot load, the status view shows plainly.
   if (setup.data && !setup.data.setUpAt) return <Checklist setup={setup.data} first={first} mcpUrl={mcpUrl} />;
   return <Status setup={setup.data} first={first} />;
@@ -109,7 +110,7 @@ function Checklist({ setup, first, mcpUrl }: { setup: SetupView; first: string |
         >
           {chromeWebStoreUrl ? (
             <>
-              <p className="text-soft">
+              <p className="text-foreground">
                 Install the extension in Chrome, Edge, Brave, or Arc, then choose the sites your agents can use. If
                 Chrome says it isn't trusted by Enhanced Safe Browsing, choose Continue to install; Chrome says that of
                 extensions from new publishers.
@@ -123,7 +124,7 @@ function Checklist({ setup, first, mcpUrl }: { setup: SetupView; first: string |
             </>
           ) : (
             <>
-              <p className="text-soft">
+              <p className="text-foreground">
                 Download the extension and load it in Chrome, Edge, Brave, or Arc, then choose the sites your agents can
                 use.
               </p>
@@ -144,7 +145,9 @@ function Checklist({ setup, first, mcpUrl }: { setup: SetupView; first: string |
           summary={`Connected: ${connectedAgents(grants).join(', ')}`}
           href="/app/agents"
         >
-          <p className="text-soft">Add this MCP server to Claude, ChatGPT, Claude Code, Codex, or any MCP agent.</p>
+          <p className="text-foreground">
+            Add this MCP server to Claude, ChatGPT, Claude Code, Codex, or any MCP agent.
+          </p>
           <div className="flex flex-wrap gap-3">
             <Input readOnly aria-label="MCP server URL" value={mcpUrl} className="min-w-60 flex-1" />
             <CopyButton text={mcpUrl} label="Copy the MCP server URL" />
@@ -159,7 +162,7 @@ function Checklist({ setup, first, mcpUrl }: { setup: SetupView; first: string |
           summary={used ? `Opened by ${used.name}, ${when(used.at)}` : 'Opened'}
           href="/app/computer"
         >
-          <p className="text-soft">Ask a connected agent:</p>
+          <p className="text-foreground">Ask a connected agent:</p>
           <RotatingPrompt prompts={promptsFor(sync)} />
         </Step>
       </ol>
@@ -201,7 +204,7 @@ function Step({
               </span>
             )}
             <CardTitle className="flex-1">
-              <h2 className={current ? undefined : 'text-soft'}>
+              <h2 className={current ? undefined : 'text-muted-foreground'}>
                 <span className="sr-only">
                   Step {number}, {done ? 'done' : 'to do'}:{' '}
                 </span>
@@ -277,7 +280,7 @@ function Status({ setup, first }: { setup: SetupView | undefined; first: string 
           </CardHeader>
           <CardContent className="grid gap-3">
             {sync?.mode === 'whole-browser' ? (
-              <p className="text-sm text-soft">All sites, except domains you exclude</p>
+              <p className="text-sm text-foreground">All sites, except domains you exclude</p>
             ) : sync?.sites.length ? (
               <ul className="flex flex-wrap gap-1.5" aria-label="Synced sites">
                 {siteGroups(sync.sites).map(group => (

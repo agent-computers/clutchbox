@@ -1,6 +1,6 @@
 # Brand images
 
-The Clutchbox brand images that are uploaded by hand or shown in this repository's READMEs: EB Garamond on the plum-black ground, or on the plum field. The web app's icons (`apps/web/app`) and the extension's (`apps/extension/public/icon`) stay where their frameworks read them.
+The Clutchbox brand images that are uploaded by hand or shown in this repository's READMEs: EB Garamond in white on the black ground. The web app's icons (`apps/web/app`) and the extension's (`apps/extension/public/icon`) stay where their frameworks read them.
 
 | File | Where it goes |
 | --- | --- |

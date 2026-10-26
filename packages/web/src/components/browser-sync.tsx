@@ -124,7 +124,7 @@ export function BrowserSync({
         <span className="text-sm text-muted-foreground tabular-nums">Version {extensionVersion}</span>
       </div>
       <InstallSteps />
-      <p className="text-sm text-soft">{update}</p>
+      <p className="text-sm text-foreground">{update}</p>
     </>
   );
   const extension = (
@@ -163,13 +163,13 @@ export function BrowserSync({
               </a>
             </div>
             {installed ? (
-              <p className="text-sm text-soft">
+              <p className="text-sm text-foreground">
                 Installed it by hand? To switch, remove that copy on chrome://extensions first, so the two don't upload
                 over each other. Your sites carry over; the new copy asks you to allow each one again.
                 {sync.mode === 'whole-browser' && ' It syncs only the sites you add, not all sites.'}
               </p>
             ) : (
-              <p className="text-sm text-soft">
+              <p className="text-sm text-foreground">
                 If Chrome says it isn't trusted by Enhanced Safe Browsing, choose Continue to install; Chrome says that
                 of extensions from new publishers. In the tab it opens, choose Agree and connect, then add your sites.
               </p>
@@ -180,7 +180,7 @@ export function BrowserSync({
                 <ChevronDown aria-hidden className="transition-transform group-data-panel-open:rotate-180" />
               </CollapsibleTrigger>
               <CollapsibleContent className="grid gap-5">
-                <p className="text-sm text-soft">
+                <p className="text-sm text-foreground">
                   The manual build can also sync every site, except domains you exclude. It needs Developer mode, and
                   you update it by hand.
                 </p>
@@ -206,7 +206,7 @@ export function BrowserSync({
           {lines.length > 0 && (
             <div className="grid gap-1">
               {lines.map(line => (
-                <p key={line} className="text-sm text-soft">
+                <p key={line} className="text-sm text-foreground">
                   {line}
                 </p>
               ))}
@@ -232,7 +232,7 @@ export function BrowserSync({
               ) : (
                 <p className="text-sm">No sites added yet.</p>
               )}
-              <p className="text-sm text-soft">Update the extension to manage your sites here.</p>
+              <p className="text-sm text-foreground">Update the extension to manage your sites here.</p>
             </section>
           )}
         </CardContent>

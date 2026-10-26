@@ -10,9 +10,7 @@
   --font-sans: var(--font-plex), "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-garamond), "EB Garamond", Garamond, Georgia, serif;
   --font-heading: var(--font-serif);
-  --color-field-foreground: var(--field-foreground);
-  --color-field: var(--field);
-  --color-soft: var(--soft);
+  --color-brand: var(--brand);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -49,34 +47,35 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* One dark theme. Pink (primary) is only for the primary action and the sync arrow; shadcn's "accent" is a quiet hover ground. */
+/* One dark theme: white ink on neutral black, and one colour. The primary action is white; blush (brand) marks only
+   small things: the focus ring, selection, the sync arrow, link hovers, and live states. shadcn's "accent" is a quiet
+   hover ground. Five colours are chosen (background, foreground, muted-foreground, brand, destructive); the rest are
+   neutral steps between background and foreground. */
 :root {
   color-scheme: dark;
-  --background: #0d060b;
-  --foreground: #ffffff;
-  --card: #1b0e17;
-  --card-foreground: #ffffff;
-  --popover: #26141f;
-  --popover-foreground: #ffffff;
-  --primary: #ff488b;
-  --primary-foreground: #0d060b;
-  --secondary: #33202c;
-  --secondary-foreground: #ffffff;
-  --muted: #26141f;
-  --muted-foreground: #9a8f97;
-  --soft: #c9bec6;
-  --accent: #26141f;
-  --accent-foreground: #ffffff;
-  --destructive: #ff9e7a;
-  --border: #33202c;
-  --input: #7d6f78;
-  --ring: #ff488b;
-  --field: #470c35;
-  --field-foreground: #ffffff;
+  --background: #121212;
+  --foreground: #ededed;
+  --card: #1c1c1c;
+  --card-foreground: var(--foreground);
+  --popover: #262626;
+  --popover-foreground: var(--foreground);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --secondary: #262626;
+  --secondary-foreground: var(--foreground);
+  --muted: #262626;
+  --muted-foreground: #a3a3a3;
+  --accent: #262626;
+  --accent-foreground: var(--foreground);
+  --brand: #f9a8d4;
+  --destructive: #f87171;
+  --border: #2e2e2e;
+  --input: #6b6b6b;
+  --ring: var(--brand);
   --radius: 0.25rem;
   /* The signed-in app's sidebar sits on the ground itself, divided by a border. */
   --sidebar: var(--background);
-  --sidebar-foreground: var(--soft);
+  --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: var(--muted);
@@ -93,7 +92,7 @@
     @apply bg-background font-sans text-foreground antialiased;
   }
   ::selection {
-    @apply bg-primary text-primary-foreground;
+    @apply bg-brand text-background;
   }
 }
 

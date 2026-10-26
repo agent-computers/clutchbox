@@ -55,7 +55,7 @@ export function AnotherServer(props: { disabled: boolean; onChoose: (server: Ser
     <div className="grid gap-3 rounded-lg bg-card p-4 text-[13px]">
       {approved.length > 0 && (
         <div className="grid justify-items-start gap-2">
-          <p className="text-soft">Approved by your organization:</p>
+          <p className="text-foreground">Approved by your organization:</p>
           {approved.map(origin => (
             <Button key={origin} variant="secondary" disabled={disabled} onClick={() => void choose(origin)}>
               {host(origin)}
@@ -110,7 +110,7 @@ export function ServerWarning(props: { origin: string; onAgree: () => void; onBa
         This server, not {ours}, will receive your sign-ins for the sites you add to this connection. Whoever runs it
         can use them as you.
       </p>
-      <p className="text-soft">
+      <p className="text-foreground">
         It is not on the verified list of servers that have shown they run Clutchbox at their address. Continue only if
         you trust whoever runs <strong className="font-medium text-foreground">{props.origin}</strong>, such as your
         employer, and you expected to connect to it.

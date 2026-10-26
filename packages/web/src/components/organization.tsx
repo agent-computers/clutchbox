@@ -282,7 +282,9 @@ function Invitations({ organizationId, role }: { organizationId: string; role: R
         </form>
         {sent && (
           <div className="grid gap-2">
-            <p className="text-sm text-soft">Invited {sent.email}. If they don't get an email, send them this link.</p>
+            <p className="text-sm text-foreground">
+              Invited {sent.email}. If they don't get an email, send them this link.
+            </p>
             <div className="flex flex-wrap gap-3">
               <Input readOnly aria-label="Invitation link" value={linkOf(sent.id)} className="min-w-60 flex-1" />
               <CopyButton text={linkOf(sent.id)} label="Copy the invitation link" />
@@ -425,7 +427,7 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
         </form>
         {made && (
           <div className="grid gap-2">
-            <p className="text-sm text-soft">
+            <p className="text-sm text-foreground">
               Copy the key for {made.name} now. It is shown only once; if you lose it, delete it and create another.
             </p>
             <div className="flex flex-wrap gap-3">

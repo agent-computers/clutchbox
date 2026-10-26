@@ -21,7 +21,7 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
     kind: 'claude-code',
     name: 'Claude Code',
     steps: mcpUrl => (
-      <ol className="grid list-decimal gap-3 pl-5 text-sm text-soft">
+      <ol className="grid list-decimal gap-3 pl-5 text-sm text-foreground">
         <li>
           In a terminal, run:
           <Command label="Claude Code command" command={`claude mcp add --transport http clutchbox ${mcpUrl}`} />
@@ -37,7 +37,7 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
     kind: 'claude',
     name: 'Claude',
     steps: () => (
-      <ol className="grid list-decimal gap-2 pl-5 text-sm text-soft">
+      <ol className="grid list-decimal gap-2 pl-5 text-sm text-foreground">
         <li>
           Open{' '}
           <a
@@ -59,7 +59,7 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
     kind: 'codex',
     name: 'Codex',
     steps: mcpUrl => (
-      <ol className="grid list-decimal gap-3 pl-5 text-sm text-soft">
+      <ol className="grid list-decimal gap-3 pl-5 text-sm text-foreground">
         <li>
           In a terminal, run:
           <Command label="Codex command" command={`codex mcp add clutchbox --url ${mcpUrl}`} />
@@ -75,7 +75,7 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
     kind: 'chatgpt',
     name: 'ChatGPT',
     steps: () => (
-      <ol className="grid list-decimal gap-2 pl-5 text-sm text-soft">
+      <ol className="grid list-decimal gap-2 pl-5 text-sm text-foreground">
         <li>
           Open{' '}
           <a

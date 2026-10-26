@@ -69,7 +69,7 @@ export function SyncSettingsPanel({
         ) : (
           <p className="text-sm">No sites added yet.</p>
         )}
-        <p className="text-sm text-soft">
+        <p className="text-sm text-foreground">
           Add a site from the extension while you're on it. Removing one deletes its synced copy, and your agent
           computer forgets it the next time an agent opens it.
         </p>
@@ -84,24 +84,24 @@ export function SyncSettingsPanel({
           Sync
         </h2>
         {view.disconnected ? (
-          <p className="text-sm text-soft">Browser sync is off. Connect again from the extension.</p>
+          <p className="text-sm text-foreground">Browser sync is off. Connect again from the extension.</p>
         ) : (
           <>
             {settings.paused ? (
-              <p className="text-sm text-soft">Paused. Resume from the extension in your browser.</p>
+              <p className="text-sm text-foreground">Paused. Resume from the extension in your browser.</p>
             ) : (
               <div className="grid justify-items-start gap-2">
                 <Button variant="secondary" disabled={busy} onClick={() => change.mutate({ paused: true })}>
                   Pause sync
                 </Button>
-                <p className="text-sm text-soft">Your agents keep the last copy. Resume from the extension.</p>
+                <p className="text-sm text-foreground">Your agents keep the last copy. Resume from the extension.</p>
               </div>
             )}
             <div className="grid justify-items-start gap-2">
               <Button variant="secondary" disabled={busy} onClick={() => turnOff.mutate()}>
                 Turn off sync
               </Button>
-              <p className="text-sm text-soft">
+              <p className="text-sm text-foreground">
                 Deletes the synced copy and disconnects every browser; connect again from the extension. Your sites and
                 exclusions are kept.
               </p>
@@ -149,7 +149,7 @@ function Exclusions({
           setInvalid(false);
         }}
       />
-      <p id="exclusions-help" className="text-sm text-soft">
+      <p id="exclusions-help" className="text-sm text-foreground">
         {invalid
           ? 'Enter up to 100 domains, one per line, without addresses, paths, ports, or wildcards.'
           : 'Includes subdomains, shared parent-domain cookies, and related partitioned cookies, which can affect sign-in on other sites. Excluding a site you added removes it.'}

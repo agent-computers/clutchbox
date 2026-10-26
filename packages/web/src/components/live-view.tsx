@@ -71,7 +71,7 @@ export function LiveViewPanel({ metered, exhausted }: { metered: boolean; exhaus
           <Monitor aria-hidden className="size-8 text-muted-foreground" />
           <div className="grid gap-1">
             <p className="font-heading text-2xl">Live view is off</p>
-            <p className="max-w-sm text-sm text-soft">
+            <p className="max-w-sm text-sm text-foreground">
               {exhausted
                 ? `This month's free computer minutes are used up, so live view is off until they reset on ${resetsOn(exhausted.resetsAt)}.`
                 : 'Watch what your agents do, or take control to use your computer yourself.'}
@@ -179,7 +179,7 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
           </Button>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <p className="text-sm text-soft" role="status" aria-live="polite">
+          <p className="text-sm text-foreground" role="status" aria-live="polite">
             {describe({ status, isError, viewer: viewer.state, takingOver: takeOver.isPending })}
           </p>
           {waiting && (
@@ -229,7 +229,7 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
             </Alert>
           )}
           <div
-            className={`relative aspect-[16/10] w-full overflow-hidden rounded-lg bg-black ${inControl ? 'ring-2 ring-primary' : 'ring-1 ring-foreground/10'}`}
+            className={`relative aspect-[16/10] w-full overflow-hidden rounded-lg bg-black ${inControl ? 'ring-2 ring-brand' : 'ring-1 ring-foreground/10'}`}
           >
             {/* noVNC owns this element's children. */}
             <div ref={viewer.screen} className="absolute inset-0" />

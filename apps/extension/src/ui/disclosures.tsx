@@ -6,7 +6,7 @@ const agentsUse = (what: string) => `Agents you connect can then use ${what} as 
 
 export function SitesDisclosure() {
   return (
-    <aside className="grid gap-2 rounded-lg bg-card p-4 text-[13px] leading-relaxed text-soft">
+    <aside className="grid gap-2 rounded-lg bg-card p-4 text-[13px] leading-relaxed text-foreground">
       <strong className="font-medium text-foreground">Sites you add · encrypted sync</strong>
       <p>
         The extension reads cookies, including signed-in sessions, only from sites you add and allow in your browser. It
@@ -28,7 +28,7 @@ export function SitesDisclosure() {
 
 export function AllSitesDisclosure({ disabled, onAgree }: { disabled: boolean; onAgree: () => void }) {
   return (
-    <aside className="grid justify-items-start gap-2 rounded-lg bg-card p-4 text-[13px] leading-relaxed text-soft">
+    <aside className="grid justify-items-start gap-2 rounded-lg bg-card p-4 text-[13px] leading-relaxed text-foreground">
       <strong className="font-medium text-foreground">All-sites access</strong>
       <p>
         Allowing all sites lets the extension read cookies from every HTTP and HTTPS site in this browser profile,

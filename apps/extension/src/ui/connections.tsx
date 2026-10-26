@@ -60,7 +60,7 @@ export function Connections(props: {
                   </span>
                 </span>
                 {site && (
-                  <span className="shrink-0 text-[13px] text-soft">
+                  <span className="shrink-0 text-[13px] text-foreground">
                     {receives(connection, site) ? 'Gets this site' : 'Not this site'}
                   </span>
                 )}
