@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://www.agent-computers.com">
-    <img src=".github/assets/banner.png" alt="Agent Computers: agents that work signed in. Sync the sites you choose from your browser into the browsers your agents use." width="100%">
+    <img src=".github/assets/banner.png" alt="Clutchbox: your agents, already signed in. Clutchbox syncs your browser states to browsers your agents use." width="100%">
   </a>
 
   <p>
@@ -22,7 +22,7 @@
   </p>
 </div>
 
-**Agent Computers syncs your browser's sign-ins to your AI agents.** A Chrome extension captures the sites you choose and keeps them current in the background, one way. Your agent's browser (Playwright, browser-use, Stagehand, an E2B sandbox, or any Chrome over CDP) then starts signed in instead of blank. No passwords typed, no 2FA prompts, and no signing in again in every sandbox.
+**Clutchbox syncs your browser states to browsers your agents use.** A Chrome extension captures the sites you choose and keeps them current in the background, one way. Your agent's browser (Playwright, browser-use, Stagehand, an E2B sandbox, or any Chrome over CDP) then starts signed in instead of blank. No passwords typed, no 2FA prompts, and no signing in again in every sandbox.
 
 Everything here is Apache-2.0: the extension, the capture format, the apply runtime, the provider adapters, and the whole web app for one organization, with sign-in, browser sync, agent computers with live view and takeover, and the MCP server agents connect to. Run all of it yourself, or use the hosted service at [agent-computers.com](https://www.agent-computers.com).
 
@@ -34,7 +34,7 @@ Most of what people want agents to do happens behind a sign-in: email, calendars
 - You sign in again inside each provider's cloud browser, once per site and once per provider.
 - You export a cookie file once, and it goes stale within days.
 
-Agent Computers keeps a live, consented copy of the sessions you already have, and applies it to whichever browser your agent uses.
+Clutchbox keeps a live, consented copy of the sessions you already have, and applies it to whichever browser your agent uses.
 
 ## How it works
 
@@ -173,7 +173,7 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
 ## How it compares
 
-| | Agent Computers | Cloud browser profiles (Browserbase contexts, Kernel profiles) | Exported cookie files | Giving the agent your password |
+| | Clutchbox | Cloud browser profiles (Browserbase contexts, Kernel profiles) | Exported cookie files | Giving the agent your password |
 | --- | --- | --- | --- | --- |
 | Uses the sessions you already have | ✅ | Sign in again in their browser | ✅ | Agent signs in |
 | Stays current | Syncs in the background | Until the session expires | One-off snapshot | Per sign-in |
