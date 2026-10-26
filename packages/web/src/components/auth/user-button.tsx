@@ -19,15 +19,16 @@ import { ChevronsUpDown, LogOut, Settings } from 'lucide-react';
 import type { UserIdentity } from './user-avatar';
 import { UserView } from './user-view';
 
-// Signs out, clears account-specific caches, and goes to sign-in.
-export function useAppSignOut() {
+// Signs out, clears account-specific caches, and goes to sign-in, which returns to `next` (a path it accepts).
+export function useAppSignOut(next?: string) {
   const { authClient, basePaths, viewPaths } = useAuth();
   const queryClient = useQueryClient();
   return useSignOut(authClient, {
     onSuccess: () => {
       // Product queries contain account-specific data too; a full navigation also drops Next's route cache.
       queryClient.clear();
-      window.location.assign(`${basePaths.auth}/${viewPaths.auth.signIn}`);
+      const signIn = `${basePaths.auth}/${viewPaths.auth.signIn}`;
+      window.location.assign(next ? `${signIn}?${new URLSearchParams({ next })}` : signIn);
     },
   });
 }

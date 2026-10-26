@@ -118,11 +118,11 @@ const cookiesOf = (response: Response) =>
     .map(cookie => cookie.split(';')[0]!)
     .filter(cookie => !cookie.endsWith('='))
     .join('; ');
-function post(path: string, body: unknown, ip = '198.51.100.1') {
-  return auth.handler(
+function post(path: string, body: unknown, ip = '198.51.100.1', cookie = '', handler = auth.handler) {
+  return handler(
     new Request(`${origin}/api/auth${path}`, {
       method: 'POST',
-      headers: { origin, 'content-type': 'application/json', 'x-forwarded-for': ip },
+      headers: { origin, 'content-type': 'application/json', 'x-forwarded-for': ip, ...(cookie ? { cookie } : {}) },
       body: JSON.stringify(body),
     }),
   );
@@ -140,6 +140,15 @@ async function existingUser(email: string, providerId = 'google') {
   await db.insert(schema.user).values({ id, name: 'Existing', email, emailVerified: true });
   await db.insert(schema.account).values({ id: randomUUID(), userId: id, providerId, accountId: `${providerId}-1` });
   return id;
+}
+
+// A session for the user, signed in at `createdAt`, as a request's cookie header.
+async function sessionCookie(userId: string, createdAt = new Date()) {
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + 3600_000);
+  await db.insert(schema.session).values({ id: randomUUID(), userId, token, expiresAt, createdAt });
+  const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
+  return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
 }
 
 // Starts an OIDC sign-in, has the issuer answer with `idClaims`, and returns the callback's response.
@@ -338,6 +347,68 @@ describe('email link sign-in', () => {
           .status,
       );
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+  });
+});
+
+describe('sign-in methods in Settings', () => {
+  const providersOf = async (cookie: string) =>
+    ((await (await get('/api/auth/list-accounts', cookie)).json()) as { providerId: string }[])
+      .map(account => account.providerId)
+      .sort();
+  // Connects GitHub from Settings and returns where GitHub's callback sends the member.
+  async function connectGitHub(cookie: string) {
+    const started = await post(
+      '/link-social',
+      { provider: 'github', callbackURL: '/app/settings', errorCallbackURL: '/app/settings' },
+      undefined,
+      cookie,
+    );
+    expect(started.status).toBe(200);
+    const state = new URL((await started.json()).url).searchParams.get('state')!;
+    return redirectOf(
+      await get(`/api/auth/callback/github?code=synthetic&state=${state}`, `${cookie}; ${cookiesOf(started)}`),
+    ).location;
+  }
+  it('connects GitHub for the account’s own address only, listing only the member’s own', async () => {
+    await existingUser('other@example.test');
+    const cookie = cookiesOf(await get(await emailLink('member@example.test')));
+    expect(await providersOf(cookie)).toEqual([]);
+    gitHubUser = {
+      profile: { id: 8, login: 'someone', name: null, email: null },
+      emails: [{ email: 'someone@example.test', primary: true, verified: true }],
+    };
+    expect((await connectGitHub(cookie)).searchParams.get('error')).toBe('email_does_not_match');
+    gitHubUser = {
+      profile: { id: 7, login: 'member', name: null, email: null },
+      emails: [{ email: 'member@example.test', primary: true, verified: true }],
+    };
+    const connected = await connectGitHub(cookie);
+    expect(`${connected.pathname}${connected.search}`).toBe('/app/settings');
+    expect(await providersOf(cookie)).toEqual(['github']);
+    expect((await get('/api/auth/list-accounts')).status).toBe(401);
+  });
+  it('removes a method only with a fresh session, and keeps the last unless email links remain', async () => {
+    const id = await existingUser('member@example.test');
+    await db.insert(schema.account).values({ id: randomUUID(), userId: id, providerId: 'github', accountId: '7' });
+    const accountId = async (providerId: string) =>
+      (await db.select().from(schema.account).where(eq(schema.account.providerId, providerId)))[0]!.id;
+    const unlink = (cookie: string, providerId: string, handler = auth.handler) =>
+      accountId(providerId).then(account =>
+        post('/unlink-account', { accountId: account }, undefined, cookie, handler),
+      );
+    const stale = await sessionCookie(id, new Date(Date.now() - 2 * 24 * 3600_000));
+    expect((await unlink(stale, 'google')).status).toBe(403);
+    const someoneElse = await sessionCookie(await existingUser('other@example.test', 'oidc'));
+    expect((await unlink(someoneElse, 'google')).status).toBe(400);
+    // Without email links, the last provider is the only way left to sign in.
+    const { SMTP_URL: _url, SMTP_FROM: _from, ...noEmail } = config;
+    const withoutEmail = createAuth(db, noEmail).handler;
+    const cookie = await sessionCookie(id);
+    expect((await unlink(cookie, 'google', withoutEmail)).status).toBe(200);
+    expect((await unlink(cookie, 'github', withoutEmail)).status).toBe(400);
+    expect(await providersOf(cookie)).toEqual(['github']);
+    expect((await unlink(cookie, 'github')).status).toBe(200);
+    expect(await providersOf(cookie)).toEqual([]);
   });
 });
 

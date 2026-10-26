@@ -1,15 +1,18 @@
 'use client';
+import type { SignInMethods as Methods } from '@agent-computers/server/config';
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
 import { Button } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
 import { LogOut } from 'lucide-react';
 import { AppPage, useAppUser } from './app-shell';
+import { SignInMethods } from './auth/sign-in-methods';
 import { useAppSignOut } from './auth/user-button';
 import { UserView } from './auth/user-view';
 import { DeleteEverything } from './delete-everything';
 
-// The Settings page: who is signed in, sign-out, and Delete everything.
-export function Settings() {
+// The Settings page: who is signed in, sign-out, sign-in methods, and Delete everything. `error` is why connecting a
+// sign-in method failed, from Better Auth.
+export function Settings({ methods, error }: { methods: Methods; error: string | undefined }) {
   const user = useAppUser();
   const signOut = useAppSignOut();
   const pending = signOut.isPending || signOut.isSuccess;
@@ -36,6 +39,7 @@ export function Settings() {
           )}
         </CardContent>
       </Card>
+      <SignInMethods methods={methods} email={user.email} error={error} />
       <DeleteEverything />
     </AppPage>
   );

@@ -224,8 +224,9 @@ export function createAuth(
       // Google and GitHub alike: only when that provider has verified the address (no provider is trusted without it),
       // and every account's own address is verified (above). Otherwise it fails with account_not_linked, which the
       // sign-in page explains. Linking keeps the account's name and picture. An OIDC identity provider is trusted to
-      // verify addresses as much as it is to make accounts.
-      accountLinking: { enabled: true },
+      // verify addresses as much as it is to make accounts. Settings connects a provider the same way (link-social,
+      // for the account's own address only) and removes one, unless it is the only way left to sign in.
+      accountLinking: { enabled: true, allowUnlinkingAll: Boolean(emailLinks) },
     },
     // Keys on the default x-forwarded-for, which Vercel, or off it the Node server (packages/api/src/node-upgrade.ts),
     // overwrites with the one client IP. Listing headers the platform does not overwrite would let clients spoof fresh

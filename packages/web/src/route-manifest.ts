@@ -69,7 +69,14 @@ export const routeManifest: RouteEntry[] = [
   { id: 'agents', dir: 'app/agents', file: 'page.tsx', module: 'agents', reexport: ['default', 'metadata'] },
   { id: 'computer', dir: 'app/computer', file: 'page.tsx', module: 'computer', reexport: ['default', 'metadata'] },
   { id: 'sync', dir: 'app/sync', file: 'page.tsx', module: 'sync', reexport: ['default', 'metadata'] },
-  { id: 'settings', dir: 'app/settings', file: 'page.tsx', module: 'settings', reexport: ['default', 'metadata'] },
+  {
+    id: 'settings',
+    dir: 'app/settings',
+    file: 'page.tsx',
+    module: 'settings',
+    reexport: ['metadata'],
+    factory: { name: 'settingsPage', as: ['default'] },
+  },
   {
     id: 'organization',
     dir: 'app/organization',
