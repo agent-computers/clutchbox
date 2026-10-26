@@ -157,7 +157,7 @@ function AppSidebar({
   const item = ({ href, label, icon: Icon }: { href: string; label: string; icon: typeof Bot }, badge?: ReactNode) => (
     <SidebarMenuItem key={href}>
       <SidebarMenuButton
-        className="h-11"
+        className="h-11 data-active:[&>svg]:text-brand"
         isActive={pathname === href}
         render={<Link href={href} onClick={follow(href)} aria-current={pathname === href ? 'page' : undefined} />}
       >
