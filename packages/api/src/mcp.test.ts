@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { e2bComputerProvider } from '@agent-computers/e2b';
 import { PGlite } from '@electric-sql/pglite';
-import { eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,8 +24,15 @@ import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { noMetering, noOperatorAdmin } from '../../server/src/hooks';
-import { hasLiveGrant, liveMcpPrincipal, MCP_SCOPE, revokeMcpGrant, revokeMcpGrants } from '../../server/src/mcp';
-import { currentMember, singleOrganization } from '../../server/src/organizations';
+import {
+  consentMembership,
+  hasLiveGrant,
+  liveMcpPrincipal,
+  MCP_SCOPE,
+  revokeMcpGrant,
+  revokeMcpGrants,
+} from '../../server/src/mcp';
+import { createOrganization, currentMember, singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { createMcpEndpoint } from './mcp';
@@ -187,6 +194,8 @@ async function rpc(response: Response) {
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 // The member a person acts as, which the routes resolve from the session.
 const member = async (userId: string) => (await currentMember(db, userId))!;
+// The reference a consent for the person's current membership carries, as the consent page writes it.
+const membershipOf = async (userId: string) => (await consentMembership(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
@@ -302,7 +311,7 @@ describe('remote MCP OAuth boundary', () => {
     const discovered = await rpc(await call(token.access_token, 'server/discover', {}, '2026-07-28'));
     expect(discovered.error).toBeUndefined();
     expect(discovered.result).toBeDefined();
-    await revokeMcpGrants(db, a.id);
+    await revokeMcpGrants(db, await member(a.id));
     for (const method of ['initialize', 'tools/list', 'server/discover']) {
       expect((await call(token.access_token, method, {})).status, method).toBe(401);
       expect((await call('forged', method, {})).status, method).toBe(401);
@@ -374,7 +383,7 @@ describe('remote MCP OAuth boundary', () => {
     expect(refresh.status).toBe(200);
     const rotated = await refresh.json();
     expect((await call(rotated.access_token)).status).toBe(200);
-    await revokeMcpGrants(db, a.id);
+    await revokeMcpGrants(db, await member(a.id));
     expect((await call(rotated.access_token)).status).toBe(401);
     const denied = await authRequest('/oauth2/token', {
       body: { grant_type: 'refresh_token', client_id: client, refresh_token: rotated.refresh_token, resource },
@@ -617,7 +626,7 @@ describe('main computer tools', () => {
     ).toBe('session_ended');
     expect((await tool(chatgpt.access_token, 'computer_open', {})).result.isError).toBe(false);
     // Revoking agents ends their sessions; reconnecting reaches the same computer.
-    await revokeMcpGrants(db, a.id);
+    await revokeMcpGrants(db, await member(a.id));
     expect(
       (await call(claude.access_token, 'tools/call', { name: 'computer_screenshot', arguments: { session_id: next } }))
         .status,
@@ -1086,6 +1095,78 @@ describe('agent connections and setup', () => {
       expect((await request('POST', '/mcp/grants/revoke', body)).status, JSON.stringify(body)).toBe(400);
     expect((await request('POST', '/mcp/grants/revoke', { clientId: x }, 'https://evil.test')).status).toBe(403);
   });
+  it('binds each grant to one organization, and acts, lists, and revokes only there', async () => {
+    const fake = fakeComputerProvider();
+    endpoint = createMcpEndpoint({ db, auth, origin, computers: fake.provider });
+    const a = await identity('a');
+    const home = await member(a.id);
+    const [x, y] = [await register(), await register()];
+    const ax = (await authorize(a.cookie, x))!;
+    const [consent] = await db.select().from(schema.oauthConsent);
+    expect(consent!.referenceId).toBe(await membershipOf(a.id));
+    const claims = (token: string) => JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+    expect(claims(ax.access_token).membership).toBe(consent!.referenceId);
+    // The person joins a second organization. There is no page to choose it at consent yet, so its grant is made by
+    // moving one there, tokens and all.
+    const team = await db.transaction(tx =>
+      createOrganization(tx, { name: 'Team', owner: { id: a.id, name: 'A', email: 'a@example.test' } }),
+    );
+    const [inTeam] = await db
+      .select()
+      .from(schema.memberships)
+      .where(and(eq(schema.memberships.userId, a.id), eq(schema.memberships.organizationId, team!)));
+    const ay = (await authorize(a.cookie, y))!;
+    for (const table of [schema.oauthConsent, schema.oauthRefreshToken])
+      await db.update(table).set({ referenceId: inTeam!.publicId }).where(eq(table.clientId, y));
+    const refreshed = await authRequest('/oauth2/token', {
+      body: { grant_type: 'refresh_token', client_id: y, refresh_token: ay.refresh_token, resource },
+    });
+    expect(refreshed.status).toBe(200);
+    const teamToken = ((await refreshed.json()) as { access_token: string }).access_token;
+    expect(claims(teamToken).membership).toBe(inTeam!.publicId);
+    // Each grant reaches its own organization's computer.
+    for (const token of [ax.access_token, teamToken])
+      expect((await tool(token, 'computer_open', {})).result.isError).toBe(false);
+    expect(fake.calls.create).toBe(2);
+    const sessions = () =>
+      db
+        .select({
+          clientId: schema.computerSessions.clientId,
+          membershipId: schema.computerSessions.membershipId,
+          endReason: schema.computerSessions.endReason,
+        })
+        .from(schema.computerSessions)
+        .orderBy(asc(schema.computerSessions.id));
+    expect(await sessions()).toEqual([
+      { clientId: x, membershipId: home.membershipId, endReason: null },
+      { clientId: y, membershipId: inTeam!.id, endReason: null },
+    ]);
+    // A token naming a membership its grant is not for, another person's, or none from a grant not in the person's
+    // oldest membership, acts nowhere.
+    const b = await identity('b');
+    const iat = Math.floor(Date.now() / 1000) + 1;
+    for (const membership of [consent!.referenceId, await membershipOf(b.id), 42, undefined])
+      expect(await liveMcpPrincipal(db, { sub: a.id, client_id: y, iat, membership }), String(membership)).toBeNull();
+    // The account page acts in the person's current organization: it lists and disconnects only that one's agents.
+    const request = web(a.cookie);
+    expect(
+      (await (await request('GET', '/mcp/grants')).json()).grants.map((grant: { clientId: string }) => grant.clientId),
+    ).toEqual([x]);
+    expect((await request('POST', '/mcp/grants/revoke', { clientId: y })).status).toBe(404);
+    expect((await request('POST', '/mcp/revoke')).status).toBe(200);
+    expect((await call(ax.access_token)).status).toBe(401);
+    expect((await call(teamToken)).status).toBe(200);
+    expect(await sessions()).toEqual([
+      { clientId: x, membershipId: home.membershipId, endReason: 'revoked' },
+      { clientId: y, membershipId: inTeam!.id, endReason: null },
+    ]);
+    // A token from before grants named a membership acts in the person's oldest one.
+    await authorize(a.cookie, x);
+    expect((await liveMcpPrincipal(db, { sub: a.id, client_id: x, iat: iat + 1 }))?.member).toEqual(home);
+    // Leaving an organization ends the grants made there.
+    await db.delete(schema.memberships).where(eq(schema.memberships.id, inTeam!.id));
+    expect((await call(teamToken)).status).toBe(401);
+  });
   it('lists one row per connected client, flags disabled clients, and names known agents by client_id', async () => {
     const a = await identity('a');
     const b = await identity('b');
@@ -1098,6 +1179,7 @@ describe('agent connections and setup', () => {
       id: randomUUID(),
       clientId: claudeCode,
       userId: a.id,
+      referenceId: await membershipOf(a.id),
       scopes: ['mcp:tools'],
       createdAt: new Date('2026-01-01T00:00:00Z'),
       updatedAt: new Date('2026-01-01T00:00:00Z'),
@@ -1109,6 +1191,7 @@ describe('agent connections and setup', () => {
       id: randomUUID(),
       clientId: 'browser-fixture-1',
       userId: a.id,
+      referenceId: await membershipOf(a.id),
       scopes: ['openid', 'mcp:tools'],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -1141,6 +1224,7 @@ describe('agent connections and setup', () => {
       id: randomUUID(),
       clientId: client,
       userId: a.id,
+      referenceId: await membershipOf(a.id),
       scopes: ['openid', 'profile', 'offline_access'],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -1156,8 +1240,8 @@ describe('agent connections and setup', () => {
   });
   it('never lets a call that was in flight during a disconnect take the computer', async () => {
     for (const [user, revoke] of [
-      ['a', (userId: string, client: string) => revokeMcpGrant(db, userId, client)],
-      ['b', (userId: string) => revokeMcpGrants(db, userId)],
+      ['a', async (userId: string, client: string) => revokeMcpGrant(db, await member(userId), client)],
+      ['b', async (userId: string) => revokeMcpGrants(db, await member(userId))],
     ] as const) {
       // The open has passed its grant check and is creating the computer when the user disconnects it.
       const fake = fakeComputerProvider();

@@ -67,6 +67,22 @@ const join = async (userId: string, organizationId: number | null): Promise<Memb
     .returning();
   return { userId, membershipId: membership!.id, organizationId: membership!.organizationId };
 };
+// The member's consent for an agent, bound to their membership as the consent page binds it.
+const grant = async (member: Member, clientId: string) => {
+  const [membership] = await db
+    .select({ publicId: schema.memberships.publicId })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.id, member.membershipId));
+  await db.insert(schema.oauthConsent).values({
+    id: randomUUID(),
+    clientId,
+    userId: member.userId,
+    referenceId: membership!.publicId,
+    scopes: ['mcp:tools'],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+};
 const caller = (member: Member, clientId = 'client', guard?: Caller['guard']): Caller => ({
   ...member,
   clientId,
@@ -404,28 +420,14 @@ describe('computer sessions', () => {
     const a = await user('a');
     const clientId = 'https://client.example.test/agent.json';
     await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId, redirectUris: [] });
-    await db.insert(schema.oauthConsent).values({
-      id: randomUUID(),
-      clientId,
-      userId: a.userId,
-      scopes: ['mcp:tools'],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    await grant(a, clientId);
     const other = await open(a, 'other');
-    expect(await revokeMcpGrant(db, a.userId, clientId)).toBe(true);
+    expect(await revokeMcpGrant(db, a, clientId)).toBe(true);
     expect(await sessionRow(other.sessionId)).toMatchObject({ endedAt: null });
     at('2026-10-20T12:01:01Z');
     const agent = await open(a, clientId);
-    await db.insert(schema.oauthConsent).values({
-      id: randomUUID(),
-      clientId,
-      userId: a.userId,
-      scopes: ['mcp:tools'],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    expect(await revokeMcpGrant(db, a.userId, clientId)).toBe(true);
+    await grant(a, clientId);
+    expect(await revokeMcpGrant(db, a, clientId)).toBe(true);
     expect(await sessionRow(agent.sessionId)).toMatchObject({ endReason: 'revoked' });
     // Only the guard reports the revocation; once the agent is reconnected, its old session is just ended.
     expect(
@@ -447,7 +449,7 @@ describe('computer sessions', () => {
       ).toMatchObject({ error: 'session_ended' });
     // A revoked session no longer holds control, and revoking every agent ends the rest.
     const next = await open(a, 'next');
-    await revokeMcpGrants(db, a.userId);
+    await revokeMcpGrants(db, a);
     expect(await sessionRow(next.sessionId)).toMatchObject({ endReason: 'revoked' });
   });
 });

@@ -20,6 +20,7 @@ import { bundle, cookie } from '../../server/src/capture-fixtures';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
+import { consentMembership } from '../../server/src/mcp';
 import { singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
@@ -336,6 +337,7 @@ describe('extension routes over OAuth', () => {
       id: randomUUID(),
       clientId: 'agent',
       userId: 'a',
+      referenceId: await consentMembership(db, 'a'),
       scopes: ['mcp:tools'],
       createdAt: now,
       updatedAt: now,

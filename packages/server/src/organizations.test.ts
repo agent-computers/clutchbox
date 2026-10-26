@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { asc, eq } from 'drizzle-orm';
@@ -6,6 +6,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAuth } from './auth';
+import { EXTENSION_CLIENT_ID } from './browsers';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
 import { backfillMemberships, createOrganization, singleOrganization, type Tenancy } from './organizations';
@@ -116,6 +117,41 @@ describe('backfill for accounts made before organizations', () => {
     expect(await scopedRows('second')).toEqual([{ membershipId: second!.id }, { membershipId: second!.id }]);
   });
 
+  it("binds agents' grants and their tokens to the person's membership, and leaves the extension's", async () => {
+    await person('first');
+    const agent = 'https://client.example.test/agent.json';
+    const now = new Date();
+    for (const clientId of [agent, EXTENSION_CLIENT_ID]) {
+      await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId, redirectUris: [] });
+      await db.insert(schema.oauthConsent).values({
+        id: randomUUID(),
+        clientId,
+        userId: 'first',
+        scopes: ['offline_access'],
+        createdAt: now,
+        updatedAt: now,
+      });
+      const tokens = { clientId, userId: 'first', scopes: ['offline_access'], expiresAt: now, createdAt: now };
+      await db.insert(schema.oauthRefreshToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
+      await db.insert(schema.oauthAccessToken).values({ id: randomUUID(), token: randomUUID(), ...tokens });
+    }
+    await backfillMemberships(db, personal);
+    const [membership] = await db
+      .select({ publicId: schema.memberships.publicId })
+      .from(schema.memberships)
+      .where(eq(schema.memberships.userId, 'first'));
+    const references = async (clientId: string) =>
+      Promise.all(
+        [schema.oauthConsent, schema.oauthRefreshToken, schema.oauthAccessToken].map(async table =>
+          (await db.select({ referenceId: table.referenceId }).from(table).where(eq(table.clientId, clientId))).map(
+            row => row.referenceId,
+          ),
+        ),
+      );
+    expect(await references(agent)).toEqual([[membership!.publicId], [membership!.publicId], [membership!.publicId]]);
+    expect(await references(EXTENSION_CLIENT_ID)).toEqual([[null], [null], [null]]);
+  });
+
   it('changes nothing when run again', async () => {
     await person('first');
     await rows('first');
@@ -191,9 +227,18 @@ describe('a person in two organizations', () => {
     const [oldest, team] = await membershipsOf('first');
     expect(team).toMatchObject({ organizationId: shared, role: 'member' });
 
-    // Rows from before the person had any membership could belong to either organization: the backfill leaves them.
+    await db.insert(schema.oauthClient).values({ id: 'agent', clientId: 'agent', redirectUris: [] });
+    const now = new Date();
+    await db
+      .insert(schema.oauthConsent)
+      .values({ id: 'grant', clientId: 'agent', userId: 'first', scopes: [], createdAt: now, updatedAt: now });
+    // Rows and grants from before the person had any membership could belong to either organization: the backfill
+    // leaves them.
     await backfillMemberships(db, personal);
     expect(await scopedRows('first')).toEqual([{ membershipId: null }, { membershipId: null }]);
+    expect(await db.select({ referenceId: schema.oauthConsent.referenceId }).from(schema.oauthConsent)).toEqual([
+      { referenceId: null },
+    ]);
 
     await db.insert(schema.setups).values({ userId: 'first' });
     const [setup] = await db.select().from(schema.setups).where(eq(schema.setups.userId, 'first'));

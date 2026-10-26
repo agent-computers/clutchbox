@@ -154,9 +154,9 @@ export function createApi({
     const { id, name, email } = c.get('principal');
     return c.json({ user: { id, name, email } });
   });
-  app.get('/mcp/grants', async c => c.json({ grants: await listMcpGrants(db, c.get('principal').id) }));
+  app.get('/mcp/grants', async c => c.json({ grants: await listMcpGrants(db, await memberOf(c)) }));
   app.post('/mcp/revoke', async c => {
-    await revokeMcpGrants(db, c.get('principal').id);
+    await revokeMcpGrants(db, await memberOf(c));
     return c.json({ revoked: true });
   });
   // One agent. Its own path, so a missing body can never disconnect every agent.
@@ -166,7 +166,7 @@ export function createApi({
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return (await revokeMcpGrant(db, c.get('principal').id, parsed.data.clientId))
+    return (await revokeMcpGrant(db, await memberOf(c), parsed.data.clientId))
       ? c.json({ revoked: true })
       : c.json({ error: 'not_found' }, 404);
   });

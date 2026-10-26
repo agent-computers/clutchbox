@@ -27,7 +27,7 @@ import type { Database } from '@agent-computers/server/database';
 import { defaultServerHooks, type Metering, type ServerHooks } from '@agent-computers/server/hooks';
 import { errorLabel, logError } from '@agent-computers/server/log';
 import { grantIsLive, liveMcpPrincipal, MCP_SCOPE, type McpPrincipal } from '@agent-computers/server/mcp';
-import { currentMember, type Member } from '@agent-computers/server/organizations';
+import type { Member } from '@agent-computers/server/organizations';
 import { noteAgentConnected, noteSetupStep } from '@agent-computers/server/setup';
 import {
   markToolStep,
@@ -579,14 +579,8 @@ export function createMcpEndpoint({
             },
           },
         );
-      // Every call acts as the person's member in their current organization (organizations.ts). An account the tenancy
-      // has not placed yet has none until the next migration run places it.
-      const member = await currentMember(db, principal.userId);
-      if (!member) {
-        logError('mcp member', new Error('account has no membership'));
-        return Response.json({ error: 'service_unavailable' }, { status: 503 });
-      }
-      return serve(request, principal, member);
+      // Every call acts as the member the grant is for (server/src/mcp.ts).
+      return serve(request, principal, principal.member);
     },
     { resource, requiredScopes: [MCP_SCOPE] },
   );

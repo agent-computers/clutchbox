@@ -23,7 +23,7 @@ import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import type { Database } from './database';
 import { noOperatorAdmin, type OperatorAdmin } from './hooks';
 import { type SendEmail, smtpSender } from './mail';
-import { MCP_SCOPES } from './mcp';
+import { consentMembership, MCP_SCOPES, MEMBERSHIP_CLAIM } from './mcp';
 import * as oauthSchema from './oauth-schema';
 import { singleOrganization, type Tenancy } from './organizations';
 import { account, rateLimit, session, user, verification } from './schema';
@@ -306,6 +306,22 @@ export function createAuth(
         // Clients identify with CIMD; DCR is deprecated in MCP 2026-07-28 and stays off.
         allowDynamicClientRegistration: false,
         clientPrivileges: () => false,
+        // Every agent's grant is for one organization: its consent is stored per membership, under the membership's
+        // public ID, and its tokens name that membership (mcp.ts). There is no page to choose one yet, so the grant is
+        // for the person's current membership. The extension's connection (the only request for `sync`) is the
+        // person's, not a membership's.
+        postLogin: {
+          page: `${config.BETTER_AUTH_URL}/consent`,
+          shouldRedirect: () => false,
+          consentReferenceId: async ({ user, scopes }) => {
+            if (scopes.includes(SYNC_SCOPE)) return undefined;
+            const membership = await consentMembership(db, user.id);
+            // An account the tenancy has not placed yet has none until the next migration run places it.
+            if (!membership) throw oauthError('temporarily_unavailable', 'the account is not in an organization yet');
+            return membership;
+          },
+        },
+        customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),
       }),
       cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
       ...operatorAdmin.plugins,
