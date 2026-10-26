@@ -34,8 +34,7 @@ const tagline = 'Sync your sign-ins to where your agents run';
 // requires; iOS rounds the opaque apple-icon itself and would draw transparent corners black, and GitHub crops avatars.
 const mark = (rounded: boolean) =>
   `<div class="ground" style="display:grid;place-items:center;border-radius:${rounded ? '22%' : '0'}"><span style="font-style:italic;font-weight:500;font-size:116vw;line-height:1;transform:translate(3%,-21%)">c</span></div>`;
-// The wordmark over the headline, set right on the plum field (--field). X crops the header's top and bottom on some
-// screens and puts the avatar over its bottom left, so there the type sits in the middle band, clear of that corner.
+// The wordmark over the headline, set right on the plum field (--field).
 const plum = (wordmark: number, size: number, gap: number, right: number) =>
   `<div class="ground" style="background:#470c35;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;padding-right:${right}px">
   <p class="wordmark" style="font-size:${wordmark}px;margin-bottom:${gap}px">clutchbox</p>
@@ -77,7 +76,15 @@ export const brandFolder: Record<string, Image> = {
     size: [1280, 640],
     scale: 2,
   },
-  'x-header.png': { html: plum(44, 104, 34, 130), size: [1500, 500] },
+  // X's phone app fills a narrower band, cropping about 125px off each side, draws the status bar over the top 150px,
+  // and the back and search buttons over each side below it; the avatar covers the bottom left. So the type is centred
+  // below the status bar, within the middle 800px.
+  'x-header.png': {
+    html: `<div class="ground" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:140px;text-align:center">
+  <p class="wordmark" style="font-size:38px;margin-bottom:26px">clutchbox</p>
+  <h1 style="font-size:92px">${headline(true)}</h1></div>`,
+    size: [1500, 500],
+  },
   'chrome-web-store/promo-small-440x280.png': { html: plum(20, 46, 16, 40), size: [440, 280] },
   'chrome-web-store/promo-marquee-1400x560.png': { html: plum(44, 116, 36, 130), size: [1400, 560] },
 };
