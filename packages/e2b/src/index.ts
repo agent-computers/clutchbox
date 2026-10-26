@@ -34,6 +34,9 @@ import {
 // commands. Helpers are baked into the template (TEMPLATE, built with HELPERS and START_DESKTOP) and kept current on
 // older computers by refresh.
 export const HELPER_DIR = '/opt/agent-computers';
+// The template's name. E2B looks a bare name up in the caller's own team first, so a team that built its own
+// (template.ts) gets that one; any other team gets the public one Agent Computers builds from this repository's main
+// branch, weekly for current Chrome. Refresh brings either's helpers to this checkout's REVISION on open.
 export const TEMPLATE = 'agent-computers-desktop';
 const OUTPUT_LIMIT = 32_000;
 const clip = (text: string) => (text.length > OUTPUT_LIMIT ? text.slice(0, OUTPUT_LIMIT) : text);

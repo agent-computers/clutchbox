@@ -40,7 +40,7 @@ Agent Computers keeps a live, consented copy of the sessions you already have, a
 
 ```mermaid
 flowchart LR
-  A["Your Chrome<br/>(extension)"] -- "sites you chose,<br/>one way" --> B["Sync server<br/>(self-host or hosted)"]
+  A["Your Chrome<br/>(extension)"] -- "sites you chose,<br/>one way" --> B["Web app<br/>(self-hosted or hosted)"]
   B -- "latest capture" --> C["Apply runtime"]
   C --> D["Playwright"]
   C --> E["browser-use, Stagehand<br/>(CDP URL)"]
@@ -63,107 +63,75 @@ Install the [Chrome extension](https://chromewebstore.google.com/detail/agent-co
 
 [`apps/web`](apps/web) is the product the hosted service runs, for one organization: sign-in with Google, GitHub, your identity provider over OIDC, or email links, browser sync, an agent computer per member on your own [E2B](https://e2b.dev) team with live view and takeover, and the MCP server Claude, ChatGPT, and Codex connect to. It has no allowance or billing: every member's computer time runs on your E2B account.
 
-You need [Bun](https://bun.sh), Node 24, Postgres, an E2B account, and at least one way to sign in: a Google or GitHub OAuth app, an OIDC client at your identity provider, or an SMTP server for email links.
+You need Docker with Compose, Chrome, and an [E2B API key](https://e2b.dev/dashboard?tab=keys). Computers start from the template we publish on E2B, so there is nothing to build there.
 
-1. Install, and start your configuration from [`apps/web/.env.example`](apps/web/.env.example), which describes every variable:
-
-   ```sh
-   bun install
-   cd apps/web
-   cp .env.example .env.local
-   ```
-
-2. Fill in `.env.local`:
-
-   | Variable | |
-   | --- | --- |
-   | `APP_ENV` | `production` for a real deployment, which then requires `E2B_API_KEY`; `development` locally. |
-   | `DATABASE_URL` | Your Postgres. |
-   | `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. HTTPS, except on localhost in development. |
-   | `BETTER_AUTH_SECRET` | `openssl rand -base64 32`. |
-   | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in: an OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. |
-   | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in: an OAuth app with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback URL. GitHub must have verified the email address it shares for the member. |
-   | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` | Company SSO (Okta, Entra ID, Keycloak, Authentik, and others): the issuer URL, or its discovery document's, and a confidential client with `<BETTER_AUTH_URL>/api/auth/callback/oidc` as its redirect URI. The provider's ID token must carry `email` and `email_verified: true`. `OIDC_NAME` names the button, such as `Acme SSO`. |
-   | `SMTP_URL`, `SMTP_FROM` | Email links: an `smtp://` or `smtps://` URL with the server's credentials, such as `smtps://user:password@smtp.example.com`, and the address the links come from. |
-   | `E2B_API_KEY` | Your E2B team's API key. Without it, development uses an in-memory fake computer. |
-   | `CAPTURE_ENCRYPTION_KEY` | `openssl rand -base64 32`. It seals synced captures at rest; without it, uploads answer 503. |
-   | `EXTENSION_ORIGINS` | Keep `chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg`, the ID the manual build is pinned to. |
-
-3. Load the configuration into your shell for the commands below, which read the environment rather than the file. Then, from the repository root, build the computer template into your E2B team, once: computers start from `agent-computers-desktop` (or `E2B_COMPUTER_TEMPLATE`), so without it `computer_open` fails.
+1. Clone the repository and write `.env` beside [`compose.yaml`](compose.yaml), with two new secrets, your E2B key, and email links caught by the bundled [Mailpit](https://mailpit.axllent.org):
 
    ```sh
-   set -a; . ./.env.local; set +a
-   cd ../..
-   bun run computer:template
+   git clone https://github.com/agent-computers/agent-computers && cd agent-computers
+   cat > .env <<EOF
+   BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+   CAPTURE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+   E2B_API_KEY=e2b_your_key
+   SMTP_URL=smtp://mailpit:1025
+   SMTP_FROM=agents@localhost
+   EOF
    ```
 
-4. Build and start the app behind HTTPS (a reverse proxy is fine). `MIGRATE_ON_START=true` applies pending migrations before it listens, under a lock, so replicas can start together:
+2. Start it. Compose builds the app, starts Postgres beside it, and the app applies migrations before it serves <http://localhost:3000>:
 
    ```sh
-   bun run build:web
-   MIGRATE_ON_START=true bun run start:web   # HOST and PORT choose the address; default 0.0.0.0:3000
+   docker compose up --build
    ```
 
-   Behind a reverse proxy, set `TRUST_PROXY=true` and have the proxy overwrite `X-Forwarded-For` with the client's address, never append to it. For development, run `bun run db:migrate` and then `bun run dev:web`, and build the extension yourself with `WXT_SERVER_ORIGIN=http://localhost:3000 bun run build:extension` and load `apps/extension/.output/chrome-mv3`; live view needs the built server.
+3. Sign in at <http://localhost:3000> with your email address; the link arrives in Mailpit at <http://localhost:8025>.
 
-5. Sign in at `BETTER_AUTH_URL`. The Browser sync page offers the manual build of the extension, which `build:web` made for your origin: unzip it and load it unpacked from `chrome://extensions` (Developer mode). To force-install it across your company with Chrome Enterprise policy, pack it with your own key and add that ID to `EXTENSION_ORIGINS`. Connect agents to `<BETTER_AUTH_URL>/api/mcp`; the Agents page has the steps for each.
+4. Connect your browser. The Browser sync page offers the manual build of the extension, made for this app's origin: unzip it, load it unpacked from `chrome://extensions` (Developer mode), choose the sites to sync, and connect.
 
-The Chrome Web Store extension syncs to agent-computers.com, not to your app, so self-hosters load the manual build their own app offers. Set at least one sign-in method; the app refuses to start without one, or with one only partly set. The sign-in page offers each one you set. An email address signs in the way its account was first made, or by email link, which proves the address; signing in another way shows an error rather than joining the accounts. The usage table and the MCP tools' free-minutes fields are there for a metering hook: without one, nothing writes or shows them.
+5. Connect an agent to `http://localhost:3000/api/mcp`; the Agents page has the steps for each. Claude Code, on the same machine, takes `claude mcp add --transport http agent-computers http://localhost:3000/api/mcp`. Then ask it to open your computer: it starts signed in to the sites you sync.
 
-### Self-hosted sync, with Playwright
+Claude, ChatGPT, and other agents that run in the cloud need the app on a public HTTPS origin. On a server, set these in `.env` too, then run `docker compose up -d --build` again:
 
-Run the [sync server](apps/server), build the extension for it, and connect your browser. Then, in your agent:
+| Variable | |
+| --- | --- |
+| `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. The image builds the extension download for it, so rebuild after changing it. |
+| `APP_ENV` | `production`, which requires HTTPS and `E2B_API_KEY`. |
+| `TRUST_PROXY` | `true`. Compose serves the app only on this machine, at `127.0.0.1:3000` (or `PORT`): put an HTTPS reverse proxy in front of it that overwrites `X-Forwarded-For` with the client's address, never appends to it. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in: an OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in: an OAuth app with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback URL. GitHub must have verified the email address it shares for the member. |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` | Company SSO (Okta, Entra ID, Keycloak, Authentik, and others): the issuer URL, or its discovery document's, and a confidential client with `<BETTER_AUTH_URL>/api/auth/callback/oidc` as its redirect URI. The provider's ID token must carry `email` and `email_verified: true`. `OIDC_NAME` names the button, such as `Acme SSO`. |
+| `SMTP_URL`, `SMTP_FROM` | Email links from your mail server: an `smtp://` or `smtps://` URL with its credentials, such as `smtps://user:password@smtp.example.com`, and the address the links come from. Remove the Mailpit ones unless you want email links caught on the server. |
+| `EXTENSION_ORIGINS` | Leave unset for the manual build, which is pinned to `chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg`. To force-install the extension across your company with Chrome Enterprise policy, pack it with your own key and list both IDs, comma separated. |
+
+[`apps/web/.env.example`](apps/web/.env.example) describes every variable. Compose sets `DATABASE_URL` to its own Postgres, whose data is kept in the `postgres` volume; back it up with `docker compose exec postgres pg_dump -U agent_computers agent_computers`, and keep `CAPTURE_ENCRYPTION_KEY` apart from it, since it decrypts the synced captures.
+
+Set at least one sign-in method; the app refuses to start without one, or with one only partly set. The sign-in page offers each one you set. An email address signs in the way its account was first made, or by email link, which proves the address; signing in another way shows an error rather than joining the accounts. The Chrome Web Store extension syncs to agent-computers.com, not to your app, so members load the manual build their own app offers. The usage table and the MCP tools' free-minutes fields are there for a metering hook: without one, nothing writes or shows them.
+
+#### Your own computer template
+
+The published template, `agent-computers-desktop`, is built from this repository's main branch and rebuilt weekly for current Chrome; computers bring its helper scripts to your checkout's version when they open. To run your own instead, build it into your E2B team. E2B finds a template by name in your own team first, so new computers then start from yours:
 
 ```sh
-npm install @agent-computers/playwright playwright
+bun install
+E2B_API_KEY=e2b_your_key bun run computer:template
 ```
 
-```ts
-import { applyCapture, fetchCapture } from '@agent-computers/playwright';
-import { chromium } from 'playwright';
+To build and use another name, set `E2B_COMPUTER_TEMPLATE` for both. Existing computers keep the template they started from until you reset them on the Computer page.
 
-const browser = await chromium.launch();
-const context = await browser.newContext();
+#### Without Docker
 
-const capture = await fetchCapture({ server: 'https://sync.example.com', apiKey: process.env.API_KEY! });
-if (capture) await applyCapture(context, capture);
+With [Bun](https://bun.sh), Node 24, and your own Postgres: `bun install`, copy [`apps/web/.env.example`](apps/web/.env.example) to `.env.local` beside it and fill it in, `DATABASE_URL` included, load it into your shell (`set -a; . ./.env.local; set +a` there), then, from the repository root, `bun run build:web` and `MIGRATE_ON_START=true bun run start:web` (`HOST` and `PORT` choose the address; default `0.0.0.0:3000`). For development, run `bun run db:migrate` and then `bun run dev:web`, and build the extension yourself with `WXT_SERVER_ORIGIN=http://localhost:3000 bun run build:extension` and load `apps/extension/.output/chrome-mv3`; live view needs the built server.
 
-const page = await context.newPage();
-await page.goto('https://github.com'); // signed in
-```
+### Your own browser: Playwright, browser-use, and Stagehand
 
-### browser-use, Stagehand, and other agents that take a CDP URL
-
-Start Chrome with remote debugging, apply the capture to its default context, and give your agent the same URL:
-
-```ts
-const chrome = await chromium.connectOverCDP('http://localhost:9222');
-await applyCapture(chrome.contexts()[0]!, capture);
-```
-
-```python
-import asyncio
-from browser_use import Agent, Browser, ChatOpenAI
-
-agent = Agent(
-    task="Find my last order on amazon.com",
-    llm=ChatOpenAI(model="gpt-4.1-mini"),
-    browser=Browser(cdp_url="http://localhost:9222"),
-)
-asyncio.run(agent.run())
-```
-
-### Any Chrome, without Playwright
-
-[`@agent-computers/apply`](packages/apply) works from a raw CDP connection: `applyCookies(send, { clearSites, cookies })`.
+[`@agent-computers/playwright`](packages/playwright) applies a capture to any Chromium that Playwright drives, including a Chrome that browser-use or Stagehand attach to by CDP URL; [`@agent-computers/apply`](packages/apply) does the same over a raw CDP connection. Reading a member's latest capture from the web app over REST, with an organization API key, is [planned](https://github.com/agent-computers/agent-computers/issues/7). Until then, agents get synced sign-ins on the web app's computers, whose Chrome they can also drive over CDP.
 
 ## Packages
 
 | Package | What it does |
 | --- | --- |
 | [`apps/extension`](apps/extension) | The Chrome extension (Manifest V3) that captures the sites you authorize and syncs them to your server. |
-| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. |
-| [`apps/server`](apps/server) | A minimal sync server for one owner: the extension's sign-in and sync routes, and the latest capture for your own agents. Being replaced by `apps/web`. |
+| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. [`Dockerfile`](Dockerfile) and [`compose.yaml`](compose.yaml) run it with Postgres. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
@@ -194,9 +162,9 @@ Syncing sessions is sensitive, so the defaults are narrow and the code is open f
 - **Opt-in per site.** No host permissions at install. Each site you add asks Chrome for its own permission, and only those sites' cookies are read. Capturing every site takes an explicit **Allow all sites**, which only builds outside the Chrome Web Store offer. Excluded domains are never captured.
 - **One way.** Captures flow from your browser to your agents, never back.
 - **You stay in control.** Pause, remove a site, or disconnect from the extension at any time. Disconnecting deletes everything that browser uploaded.
-- **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, the sync server under a key you hold, and both keep only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
+- **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, a key kept outside the database, and keeps only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
 - **Cookies, not passwords.** Your passwords and 2FA secrets never leave your browser.
-- **Honest limits.** Whoever runs the server and the agent's browser can use the synced sessions, so connect only agents you trust, and treat the sync server's API key like a password. Device-bound sessions (Chrome's DBSC) don't carry over, and some sites sign out a copied session.
+- **Honest limits.** Whoever runs the server and the agent's browser can use the synced sessions, so connect only agents you trust. Device-bound sessions (Chrome's DBSC) don't carry over, and some sites sign out a copied session.
 
 Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
@@ -216,18 +184,18 @@ Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 | | Self-hosted (this repository) | Hosted ([agent-computers.com](https://www.agent-computers.com)) |
 | --- | --- | --- |
 | Extension | The manual build your server offers or you build for it, loaded unpacked or force-installed with Chrome Enterprise policy | Listed on the Chrome Web Store |
-| Server | The web app for your organization on your Postgres, or the minimal sync server for one owner | Multi-user, managed |
-| Agent browsers | Linux desktops with Chrome on your E2B team, with live view and MCP; or yours: Playwright, browser-use, any CDP | Hosted Linux desktops with Chrome, live view, and MCP for Claude, ChatGPT, and Codex |
+| Server | The web app for your organization, with Docker Compose or on your own Node and Postgres | Multi-user, managed |
+| Agent browsers | Linux desktops with Chrome on your E2B team, with live view and MCP | Hosted Linux desktops with Chrome, live view, and MCP for Claude, ChatGPT, and Codex |
 
 ## FAQ
 
 ### How do I give an AI agent my logged-in sessions?
 
-Install the extension, add the sites the agent needs, and apply the latest capture to the agent's browser with [`@agent-computers/playwright`](packages/playwright) or [`@agent-computers/apply`](packages/apply). The agent's browser starts signed in, and later applies write only what changed.
+Install the extension, add the sites the agent needs, and connect the agent to the web app's MCP server. The agent's computer starts signed in to those sites, and later syncs write only what changed.
 
 ### Does it work with browser-use, Stagehand, or Playwright MCP?
 
-Yes, with any agent that drives Chrome through Playwright or attaches to it by CDP URL. Apply the capture to that Chrome's default context, then hand the agent the same CDP URL.
+Agents connected over MCP can drive their computer's Chrome over CDP. For your own Chrome, the adapters apply a capture to its default context, and you hand the agent the same CDP URL; reading the latest capture for them over REST is [planned](https://github.com/agent-computers/agent-computers/issues/7).
 
 ### Which sites work?
 
@@ -239,7 +207,7 @@ No. Only the cookies of the sites you chose are captured. Passwords, passkeys, a
 
 ### Can I run it entirely on my own infrastructure?
 
-Yes. The [web app](#self-hosted-the-whole-product-for-your-organization), the [sync server](apps/server), the extension, and the adapters run without any service of ours. Load the manual build of the extension your server offers or you build for it, or force-install it across your company.
+Yes. The [web app](#self-hosted-the-whole-product-for-your-organization), the extension, and the adapters run without any service of ours. Computers run on your E2B team, from the template we publish there unless you [build your own](#your-own-computer-template). Load the manual build of the extension your server offers or you build for it, or force-install it across your company.
 
 ## Contributing
 

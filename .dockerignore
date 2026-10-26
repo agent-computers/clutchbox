@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.next
+**/.output
+**/.wxt
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+apps/*/public/downloads
+apps/*/.extension-download.json

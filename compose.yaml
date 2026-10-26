@@ -1,0 +1,57 @@
+# The web app for one organization with its Postgres, and Mailpit to catch sign-in emails on your machine. Your
+# configuration is .env beside this file (apps/web/.env.example describes every variable); this file sets the
+# database, and the defaults for running on localhost. `docker compose up --build` builds the app for BETTER_AUTH_URL
+# and applies migrations when it starts. Every port listens only on this machine: put an HTTPS reverse proxy in front
+# of the app to serve it elsewhere.
+services:
+  app:
+    build:
+      context: .
+      args:
+        BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://agent_computers:agent_computers@postgres:5432/agent_computers
+      APP_ENV: ${APP_ENV:-development}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      EXTENSION_ORIGINS: ${EXTENSION_ORIGINS:-chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg}
+      # Inside the container; PORT chooses the one on this machine.
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - 127.0.0.1:${PORT:-3000}:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      start_interval: 2s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: agent_computers
+      POSTGRES_PASSWORD: agent_computers
+      POSTGRES_DB: agent_computers
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, -U, agent_computers]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # Sign-in emails, at http://localhost:8025, when .env sets SMTP_URL=smtp://mailpit:1025.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - 127.0.0.1:8025:8025
+    restart: unless-stopped
+
+volumes:
+  postgres:

@@ -13,7 +13,7 @@ Agent Computers handles people's signed-in sessions. Its name has to mean code f
 
 - **Say what's true.** Your product "works with Agent Computers", "uses `@agent-computers/playwright`", or "is built on Agent Computers". Articles, tutorials, talks, and comparisons may use the name and link to us.
 - **Redistribute unmodified releases** under the name, such as the packages from npm or this repository's code as published.
-- **Run it yourself.** Build and run the extension, the self-host server, and the packages for yourself or inside your organization, modified or not, keeping the name. That includes force-installing an extension built for your server across your company.
+- **Run it yourself.** Build and run the extension, the web app, and the packages for yourself or inside your organization, modified or not, keeping the name. That includes force-installing an extension built for your server across your company.
 - **Keep the package names** in code: `@agent-computers/*` imports and dependencies are fine in a fork.
 
 ## Not without permission

@@ -37,20 +37,6 @@
         "wxt": "0.21.4",
       },
     },
-    "apps/server": {
-      "name": "@agent-computers/self-host",
-      "version": "0.1.0",
-      "dependencies": {
-        "@agent-computers/capture": "workspace:*",
-        "@hono/node-server": "2.1.5",
-        "hono": "4.13.13",
-        "tsx": "4.23.15",
-        "zod": "4.6.7",
-      },
-      "devDependencies": {
-        "@types/node": "24.19.2",
-      },
-    },
     "apps/web": {
       "name": "@agent-computers/app",
       "version": "0.1.0",
@@ -258,8 +244,6 @@
 
     "@agent-computers/playwright": ["@agent-computers/playwright@workspace:packages/playwright"],
 
-    "@agent-computers/self-host": ["@agent-computers/self-host@workspace:apps/server"],
-
     "@agent-computers/server": ["@agent-computers/server@workspace:packages/server"],
 
     "@agent-computers/ui": ["@agent-computers/ui@workspace:packages/ui"],
@@ -419,8 +403,6 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.12", "", {}, "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww=="],
 
     "@hexagon/base64": ["@hexagon/base64@1.1.28", "", {}, "sha512-lhqDEAvWixy3bZ+UOYbPwUbBkwBq5C1LAJ/xPC8Oi+lL54oyakv/npbA0aU2hgCsx/1NUd4IBvV03+aUBWxerw=="],
-
-    "@hono/node-server": ["@hono/node-server@2.1.5", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 

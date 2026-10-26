@@ -56,6 +56,25 @@ jobs:
           GOOGLE_CLIENT_SECRET: build-only-placeholder
           EXTENSION_ORIGINS: chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg
 
+  # The README's self-host quickstart: compose builds the image, the app applies migrations to compose's Postgres when
+  # it starts, and serves.
+  compose:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          cat > .env <<EOF
+          BETTER_AUTH_SECRET=$(openssl rand -base64 32)
+          CAPTURE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+          SMTP_URL=smtp://mailpit:1025
+          SMTP_FROM=agents@localhost
+          EOF
+      - run: docker compose up --build --wait --wait-timeout 180
+      - run: curl -sSf http://127.0.0.1:3000/sign-in > /dev/null
+      - if: failure()
+        run: docker compose logs
+
   test:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20

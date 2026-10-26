@@ -1,34 +1,10 @@
 import { applyCookies, cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
-import { type Capture, type CapturedCookie, captureSchema, siteOfCookie } from '@agent-computers/capture';
+import { type Capture, type CapturedCookie, siteOfCookie } from '@agent-computers/capture';
 import type { BrowserContext } from 'playwright-core';
 
 // What was last applied to a browser context: pass it to the next applyCapture so only what changed is written, and
 // the context keeps cookies it refreshed itself. Keep it private: it holds the session cookies.
 export type Applied = { completedAt: string; cookies: CapturedCookie[]; sites: string[] };
-
-// The latest capture from an Agent Computers server (such as the self-host server), or null
-// when there is none yet.
-export async function fetchCapture({
-  server,
-  apiKey,
-  fetcher = fetch,
-}: {
-  server: string;
-  apiKey: string;
-  fetcher?: typeof fetch;
-}): Promise<Capture | null> {
-  const url = new URL('/api/v1/capture', server);
-  // The API key and the capture are secrets: never over plain HTTP, except to this machine.
-  if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
-    throw new Error('The server must use HTTPS');
-  const response = await fetcher(url, {
-    headers: { authorization: `Bearer ${apiKey}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`Could not fetch the capture: ${response.status}`);
-  const body = (await response.json()) as { capture: unknown };
-  return captureSchema.parse(body.capture);
-}
 
 // Applies a capture to a Chromium browser context over CDP. Without `previous`, every synced site is replaced
 // wholesale; with it, only cookies the user's browser added, changed, or deleted since are written, and sites the user

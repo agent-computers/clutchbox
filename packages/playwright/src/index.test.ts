@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { Capture, CapturedCookie } from '@agent-computers/capture';
 import { type Browser, chromium } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyCapture, fetchCapture } from './index';
+import { applyCapture } from './index';
 
 // Synthetic cookies only; no real browser data.
 const cookie = (overrides: Partial<CapturedCookie> = {}): CapturedCookie => ({
@@ -132,29 +132,5 @@ describe('a running Chrome attached over CDP', () => {
     } finally {
       chrome.kill();
     }
-  });
-});
-
-describe('fetching the latest capture', () => {
-  it('sends the API key and reads none as null', async () => {
-    const sent: string[] = [];
-    const answer = (status: number, body: unknown) =>
-      (async (_url: string | URL | Request, init?: RequestInit) => {
-        sent.push(new Headers(init?.headers).get('authorization')!);
-        return Response.json(body, { status });
-      }) as typeof fetch;
-    const stored = capture([cookie()]);
-    expect(
-      await fetchCapture({ server: 'https://sync.test', apiKey: 'k', fetcher: answer(200, { capture: stored }) }),
-    ).toEqual(stored);
-    expect(await fetchCapture({ server: 'https://sync.test', apiKey: 'k', fetcher: answer(404, {}) })).toBeNull();
-    await expect(fetchCapture({ server: 'https://sync.test', apiKey: 'k', fetcher: answer(401, {}) })).rejects.toThrow(
-      '401',
-    );
-    expect(sent).toEqual(['Bearer k', 'Bearer k', 'Bearer k']);
-    await expect(
-      fetchCapture({ server: 'http://sync.test', apiKey: 'k', fetcher: answer(200, { capture: stored }) }),
-    ).rejects.toThrow('HTTPS');
-    expect(sent).toHaveLength(3);
   });
 });

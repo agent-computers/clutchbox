@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in the extension, capture format, runtime, an adapter, or the self-host server doesn't work.
+description: Something in the extension, capture format, runtime, an adapter, or the web app doesn't work.
 labels: [bug]
 body:
   - type: markdown
