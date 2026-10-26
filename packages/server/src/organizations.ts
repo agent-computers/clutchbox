@@ -13,6 +13,22 @@ export type Person = { id: string; name: string; email: string };
 // account, in a transaction, at sign-up and by the backfill for accounts made before organizations.
 export type Tenancy = { join(tx: Transaction, person: Person): Promise<void> };
 
+// A person acting in one organization: what membership-scoped data (schema.ts, memberships) is read and written for.
+export type Member = { userId: string; membershipId: number; organizationId: number };
+
+// The membership a signed-in person acts in: until people can switch organizations, their oldest, the one the tenancy
+// put them in at sign-up. MCP grants use it too until each grant names its own. Null for an account the tenancy has not
+// placed yet (auth.ts, the after-create hook), which the next migration run places.
+export async function currentMember(db: Pick<Database, 'select'>, userId: string): Promise<Member | null> {
+  const [member] = await db
+    .select({ userId: memberships.userId, membershipId: memberships.id, organizationId: memberships.organizationId })
+    .from(memberships)
+    .where(eq(memberships.userId, userId))
+    .orderBy(asc(memberships.id))
+    .limit(1);
+  return member ?? null;
+}
+
 // Within the name CHECK on organizations (1 to 100 characters).
 const organizationName = (name: string, fallback: string) => (name.trim() || fallback).slice(0, 100);
 

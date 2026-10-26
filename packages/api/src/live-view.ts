@@ -16,6 +16,7 @@ import type { Database } from '@agent-computers/server/database';
 import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
 import { RELAY_CLOSE, relay } from '@agent-computers/server/live-view-relay';
 import { logError } from '@agent-computers/server/log';
+import { currentMember } from '@agent-computers/server/organizations';
 import { MAX_FRAME } from '@agent-computers/server/rfb-filter';
 import { upgradeWebSocket } from '@vercel/functions';
 import { WebSocket } from 'ws';
@@ -61,14 +62,18 @@ export function liveViewHandler({
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return refuse('upgrade_required', 426);
     await hooks.operatorAdmin.recordActivity(db, principal.id);
     const userId = principal.id;
-    // The relay's periodic read: the same sign-in (not signed out, revoked, or banned since), then the lease.
-    const headers = new Headers(request.headers);
-    const access = async () =>
-      (await getPrincipal(auth, headers))?.id === userId ? liveViewAccess(db, userId, lease) : ('none' as const);
     let upstream: WebSocket;
+    let access: () => Promise<'control' | 'view' | 'none'>;
     try {
+      // The computer of the member the page acts as; the lease names a hold on it.
+      const member = await currentMember(db, userId);
+      if (!member) throw new Error('account has no membership');
+      // The relay's periodic read: the same sign-in (not signed out, revoked, or banned since), then the lease.
+      const headers = new Headers(request.headers);
+      access = async () =>
+        (await getPrincipal(auth, headers))?.id === userId ? liveViewAccess(db, member, lease) : ('none' as const);
       // Wakes a paused computer until the holds let it pause, as the heartbeat that charged them asked.
-      const session = await connectLiveView(db, computers, userId, lease);
+      const session = await connectLiveView(db, computers, member, lease);
       // No computer yet, or this page load holds no live watch or takeover on it (its heartbeat comes first).
       if (session === 'not_found') return refuse('not_found', 404);
       if (session === 'not_watching') return refuse('not_watching', 409);

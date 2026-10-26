@@ -20,6 +20,7 @@ import { bundle, cookie } from '../../server/src/capture-fixtures';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
+import { singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { extensionCors, tokenPreflight } from './origins';
@@ -41,7 +42,10 @@ let pg: PGlite;
 let db: Database;
 let auth: ReturnType<typeof createAuth>;
 async function identity(id: string) {
-  await db.insert(schema.user).values({ id, name: `Fixture ${id}`, email: `${id}@example.test`, emailVerified: true });
+  const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  // Into the deployment's organization, as sign-up does.
+  await db.transaction(tx => singleOrganization.join(tx, person));
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)

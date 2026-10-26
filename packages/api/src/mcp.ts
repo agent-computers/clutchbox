@@ -27,6 +27,7 @@ import type { Database } from '@agent-computers/server/database';
 import { defaultServerHooks, type Metering, type ServerHooks } from '@agent-computers/server/hooks';
 import { errorLabel, logError } from '@agent-computers/server/log';
 import { grantIsLive, liveMcpPrincipal, MCP_SCOPE, type McpPrincipal } from '@agent-computers/server/mcp';
+import { currentMember, type Member } from '@agent-computers/server/organizations';
 import { noteAgentConnected, noteSetupStep } from '@agent-computers/server/setup';
 import {
   markToolStep,
@@ -65,7 +66,7 @@ const errorCode = (output: ToolResult) => {
 // Wraps a tool's handler to record the call (tool-calls.ts): its timing, outcome, and the step it failed at,
 // never its arguments or results. The session is the one the result names, or else the one the call passed.
 const recordCalls =
-  (db: Database, principal: McpPrincipal) =>
+  (db: Database, principal: McpPrincipal, member: Member) =>
   <Args extends { session_id?: string | undefined }, Rest extends unknown[], R extends ToolResult>(
     tool: string,
     handler: (args: Args, ...rest: Rest) => Promise<R>,
@@ -83,7 +84,7 @@ const recordCalls =
     } finally {
       const named = output?.structuredContent?.session_id ?? args.session_id;
       await recordToolCall(db, {
-        userId: principal.userId,
+        member,
         clientId: principal.clientId,
         tool,
         sessionId: typeof named === 'string' ? named : null,
@@ -133,8 +134,8 @@ function syncNote(sync: SyncSummary, email: string) {
   }
 }
 // Without an allowance (hooks.ts), nothing.
-const freeMinutes = async (metering: Metering, db: Database, userId: string) => {
-  const usage = await metering.usage(db, userId, new Date());
+const freeMinutes = async (metering: Metering, db: Database, member: Member) => {
+  const usage = await metering.usage(db, member, new Date());
   return usage
     ? {
         free_minutes_remaining: Math.floor(usage.remainingSeconds / 60),
@@ -167,6 +168,7 @@ function registerComputerTools(
     computers,
     origin,
     principal,
+    member,
     security,
     recorded,
   }: {
@@ -174,13 +176,14 @@ function registerComputerTools(
     computers: Computers;
     origin: string;
     principal: McpPrincipal;
+    member: Member;
     security: Record<string, unknown>;
     recorded: ReturnType<typeof recordCalls>;
   },
 ) {
   const signInHelp = `If a site needs sign-in, never type credentials. Ask the user to sign in to it in their own Chrome, add the site in the Agent Computers extension if it is not added, choose Sync now, and tell you when they are done. A waiting sign-in then shows as pending_sync in tool results; call computer_open with your session_id to apply it, and use the new session_id it returns. Setup is at ${origin}/app.`;
   const caller: Caller = {
-    userId: principal.userId,
+    ...member,
     clientId: principal.clientId,
     guard: tx => grantIsLive(tx, principal),
   };
@@ -270,7 +273,7 @@ function registerComputerTools(
           account_email: principal.email,
           browser_sync: syncNote(opened.sync, principal.email),
           sign_in_help: signInHelp,
-          ...(await freeMinutes(computers.metering, db, principal.userId)),
+          ...(await freeMinutes(computers.metering, db, member)),
         });
       } catch (error) {
         toolCallFailed('mcp computer_open', error);
@@ -297,7 +300,7 @@ function registerComputerTools(
         return result({
           closed: true,
           browser_sync: syncNote(closed.sync, principal.email),
-          ...(await freeMinutes(computers.metering, db, principal.userId)),
+          ...(await freeMinutes(computers.metering, db, member)),
         });
       } catch (error) {
         toolCallFailed('mcp computer_close', error);
@@ -512,7 +515,7 @@ export function createMcpEndpoint({
   hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'>;
 }) {
   const resource = `${origin}/api/mcp`;
-  const serve = (request: Request, principal: McpPrincipal) =>
+  const serve = (request: Request, principal: McpPrincipal, member: Member) =>
     createMcpHandler(
       () => {
         const server = new McpServer(
@@ -520,7 +523,7 @@ export function createMcpEndpoint({
           { instructions: instructions(principal.email) },
         );
         const security = { securitySchemes: [{ type: 'oauth2', scopes: [MCP_SCOPE] }] };
-        const recorded = recordCalls(db, principal);
+        const recorded = recordCalls(db, principal, member);
         server.registerTool(
           'account_identity',
           {
@@ -550,6 +553,7 @@ export function createMcpEndpoint({
           computers: { provider: computers, metering: hooks.metering },
           origin,
           principal,
+          member,
           security,
           recorded,
         });
@@ -575,7 +579,14 @@ export function createMcpEndpoint({
             },
           },
         );
-      return serve(request, principal);
+      // Every call acts as the person's member in their current organization (organizations.ts). An account the tenancy
+      // has not placed yet has none until the next migration run places it.
+      const member = await currentMember(db, principal.userId);
+      if (!member) {
+        logError('mcp member', new Error('account has no membership'));
+        return Response.json({ error: 'service_unavailable' }, { status: 503 });
+      }
+      return serve(request, principal, member);
     },
     { resource, requiredScopes: [MCP_SCOPE] },
   );

@@ -15,6 +15,7 @@ import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { type MeteringRefusal, noMetering, noOperatorAdmin } from '../../server/src/hooks';
+import { currentMember, singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { recordSetupStep } from '../../server/src/setup';
 import { createApi } from './index';
@@ -36,7 +37,10 @@ let db: Database;
 let auth: ReturnType<typeof createAuth>;
 let fake: ReturnType<typeof fakeComputerProvider>;
 async function identity(id: string) {
-  await db.insert(schema.user).values({ id, name: `Fixture ${id}`, email: `${id}@example.test`, emailVerified: true });
+  const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  // Into the deployment's organization, as sign-up does.
+  await db.transaction(tx => singleOrganization.join(tx, person));
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)
@@ -75,6 +79,8 @@ function client(
 // The extension's connection for a signed-in user: uploads and its settings changes take its token.
 const browser = (cookie: string) => connectBrowser(auth, cookie, { extensionOrigin: extension });
 // Migrate once per file and give each test a clone, which is much faster than a new database.
+// The member a person acts as, which the routes resolve from the session.
+const member = async (userId: string) => (await currentMember(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
@@ -239,7 +245,7 @@ describe('API routes', () => {
     await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: 'a', clientId: 'agent-client' },
+      { ...(await member('a')), clientId: 'agent-client' },
     );
     const now = new Date();
     await db.insert(schema.toolCalls).values(
@@ -430,7 +436,7 @@ describe('API routes', () => {
     await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: 'b', clientId: 'agent-client' },
+      { ...(await member('b')), clientId: 'agent-client' },
     );
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const failing = client({
@@ -458,7 +464,7 @@ describe('API routes', () => {
       await openComputerSession(
         db,
         { provider: fake.provider, metering: noMetering },
-        { userId, clientId: 'agent-client' },
+        { ...(await member(userId)), clientId: 'agent-client' },
       );
     }
     const reset = await request('POST', '/computer/reset', { cookie: a });
@@ -480,7 +486,7 @@ describe('API routes', () => {
       await openComputerSession(
         db,
         { provider: fake.provider, metering: noMetering },
-        { userId: 'a', clientId: 'agent-client' },
+        { ...(await member('a')), clientId: 'agent-client' },
       ),
     ).toHaveProperty('sessionId');
     expect(fake.calls.create).toBe(created + 1);
@@ -503,7 +509,7 @@ describe('API routes', () => {
     await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: 'a', clientId: 'agent-client' },
+      { ...(await member('a')), clientId: 'agent-client' },
     );
     expect((await (await request('GET', '/computer', { cookie: a })).json()).computer).toMatchObject({
       status: 'ready',
@@ -550,7 +556,7 @@ describe('API routes', () => {
     await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: 'a', clientId: 'agent-client' },
+      { ...(await member('a')), clientId: 'agent-client' },
     );
     expect((await beat(a, [lease('visible')])).json.leases[0].status).toMatchObject({
       computer: 'running',
@@ -687,7 +693,7 @@ describe('API routes', () => {
     await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: 'a', clientId: 'agent-client' },
+      { ...(await member('a')), clientId: 'agent-client' },
     );
     const failing: ComputerProvider = {
       ...fake.provider,

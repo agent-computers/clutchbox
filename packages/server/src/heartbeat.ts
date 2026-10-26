@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import { type Computers, liveViewHeartbeat } from './computers';
 import type { Database } from './database';
+import type { Member } from './organizations';
 
 // The general-purpose heartbeat: a page reports each lease it holds, by kind, to
 // POST /api/v1/heartbeat, and each kind's handler keeps its own state where its logic lives, writing only when a
@@ -12,7 +13,7 @@ export type HeartbeatDeps = Computers;
 export type HeartbeatHandler = (
   db: Database,
   deps: HeartbeatDeps,
-  userId: string,
+  member: Member,
   lease: { id: string; state: HeartbeatState },
   now: Date,
 ) => Promise<unknown>;
@@ -35,9 +36,9 @@ export const heartbeatSchema = z
 export type Heartbeat = z.infer<typeof heartbeatSchema>;
 
 // One at a time, so a page's leases on the same row never contend for its lock.
-export async function heartbeat(db: Database, deps: HeartbeatDeps, userId: string, body: Heartbeat, now = new Date()) {
+export async function heartbeat(db: Database, deps: HeartbeatDeps, member: Member, body: Heartbeat, now = new Date()) {
   const leases = [];
   for (const { kind, id, state } of body.leases)
-    leases.push({ kind, id, status: await handlers[kind](db, deps, userId, { id, state }, now) });
+    leases.push({ kind, id, status: await handlers[kind](db, deps, member, { id, state }, now) });
   return { leases };
 }

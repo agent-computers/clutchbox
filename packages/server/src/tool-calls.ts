@@ -5,6 +5,7 @@ import { TOOL_CALL_RETENTION_MS } from './computer-timing';
 import type { Database } from './database';
 import { publicIdPattern } from './ids';
 import { errorLabel, logError } from './log';
+import type { Member } from './organizations';
 import * as schema from './schema';
 
 // MCP tool call records: what each call was, how long it took, and how it ended,
@@ -33,7 +34,7 @@ export function toolCallFailed(scope: string, error: unknown) {
 export async function recordToolCall(
   db: Database,
   call: {
-    userId: string;
+    member: Member;
     clientId: string;
     tool: string;
     // The computer session the call named or opened; linked only if it is the caller's own.
@@ -45,14 +46,16 @@ export async function recordToolCall(
   },
 ) {
   try {
-    const { sessionId, trace, ...row } = call;
+    const { member, sessionId, trace, ...row } = call;
     await db.insert(schema.toolCalls).values({
       ...row,
+      userId: member.userId,
+      membershipId: member.membershipId,
       computerSessionId:
         sessionId && SESSION_ID_PATTERN.test(sessionId)
           ? sql`(SELECT ${schema.computerSessions.id} FROM ${schema.computerSessions} WHERE ${and(
               eq(schema.computerSessions.publicId, sessionId),
-              eq(schema.computerSessions.userId, call.userId),
+              eq(schema.computerSessions.membershipId, member.membershipId),
               eq(schema.computerSessions.clientId, call.clientId),
             )})`
           : null,
@@ -73,7 +76,7 @@ export async function recordToolCall(
   }
 }
 
-// Delete everything.
-export async function deleteToolCalls(db: Database, userId: string) {
-  await db.delete(schema.toolCalls).where(eq(schema.toolCalls.userId, userId));
+// Delete everything: the member's calls in this organization.
+export async function deleteToolCalls(db: Database, member: Member) {
+  await db.delete(schema.toolCalls).where(eq(schema.toolCalls.membershipId, member.membershipId));
 }

@@ -33,10 +33,11 @@ import type { Database } from './database';
 import type { Metering } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
 import { logError } from './log';
+import type { Member } from './organizations';
 import * as schema from './schema';
 import { markToolStep } from './tool-calls';
 
-// Validation prototype: one main computer per user, shared by every agent through
+// Validation prototype: one main computer per member (a person in one organization), shared by every agent through
 // computer sessions. No Workflow orchestration, checkpoints, or mutation-outcome recording
 // yet; those come later. Timings are in computer-timing.ts.
 // Server-issued computer session IDs; access is checked against the caller, never the ID alone.
@@ -86,7 +87,7 @@ export type SessionHandle = {
 // Re-checks the caller's access inside the control transaction (MCP: the live grant), so an in-flight
 // call cannot take control after a revocation ended its sessions. Revocation locks the same user row.
 export type AccessGuard = (tx: Pick<Database, 'select'>) => Promise<boolean>;
-export type Caller = { userId: string; clientId: string; guard?: AccessGuard | undefined };
+export type Caller = Member & { clientId: string; guard?: AccessGuard | undefined };
 // What the computer service runs computers with: the provider, and the metering hook (hooks.ts) it books time to.
 export type Computers = { provider: ComputerProvider; metering: Metering };
 // Every computers column but the sealed baseline, which can run to megabytes: only the apply and the
@@ -97,15 +98,15 @@ type SessionRow = typeof schema.computerSessions.$inferSelect;
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 // The metering refusal (hooks.ts) as the computer service's failure: allowance_exhausted, with when it lifts.
-async function allowanceFailure(metering: Metering, db: Database, userId: string): Promise<ComputerFailure | null> {
-  const refusal = await metering.refusal(db, userId, new Date());
+async function allowanceFailure(metering: Metering, db: Database, member: Member): Promise<ComputerFailure | null> {
+  const refusal = await metering.refusal(db, member, new Date());
   return refusal && { error: 'allowance_exhausted', ...refusal };
 }
 // Metering after the fact: books the computer's running time since the last meter, up to when the provider was due
 // to pause it, to the metering hook, then records `runsUntil`, when the provider will now pause it. Nothing is
 // charged ahead or refunded, so the allowance can be overshot by the calls and live-view holds already running when
 // it runs out, and time since the last meter (at most the idle minute after the last call) is booked at the next one.
-async function meter(tx: Transaction, metering: Metering, computerId: number, userId: string, runsUntil: Date) {
+async function meter(tx: Transaction, metering: Metering, computerId: number, member: Member, runsUntil: Date) {
   const [row] = await tx
     .select({ billedUntil: schema.computers.billedUntil, runsUntil: schema.computers.runsUntil })
     .from(schema.computers)
@@ -119,33 +120,36 @@ async function meter(tx: Transaction, metering: Metering, computerId: number, us
     .update(schema.computers)
     .set({ billedUntil: row.billedUntil && row.billedUntil > now ? row.billedUntil : now, runsUntil })
     .where(eq(schema.computers.id, computerId));
-  if (seconds > 0) await metering.charge(tx, userId, seconds, now);
+  if (seconds > 0) await metering.charge(tx, member, seconds, now);
 }
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
 // The provider runs a computer until timeoutMs after the latest create/connect. Called before the provider call, so
 // a failed call still counts as running until then.
-const meterRun = (db: Database, metering: Metering, computerId: number, userId: string, timeoutMs: number) =>
-  db.transaction(tx => meter(tx, metering, computerId, userId, new Date(Date.now() + timeoutMs)));
+const meterRun = (db: Database, metering: Metering, computerId: number, member: Member, timeoutMs: number) =>
+  db.transaction(tx => meter(tx, metering, computerId, member, new Date(Date.now() + timeoutMs)));
 
 const resetting: ComputerFailure = {
   error: 'starting',
   message: 'The computer is being reset. Try again in a few seconds.',
 };
-// Exactly one caller creates the provider computer; others see `starting`.
+// Exactly one caller creates the member's provider computer; others see `starting`.
 async function ensureComputer(
   db: Database,
   { provider, metering }: Computers,
-  userId: string,
+  member: Member,
 ): Promise<ComputerRow | ComputerFailure> {
   const [inserted] = await db
     .insert(schema.computers)
-    .values({ userId, publicId: newPublicId('computer') })
+    .values({ userId: member.userId, membershipId: member.membershipId, publicId: newPublicId('computer') })
     .onConflictDoNothing()
     .returning(computerColumns);
   let row = inserted;
   if (!row) {
-    [row] = await db.select(computerColumns).from(schema.computers).where(eq(schema.computers.userId, userId));
+    [row] = await db
+      .select(computerColumns)
+      .from(schema.computers)
+      .where(eq(schema.computers.membershipId, member.membershipId));
     if (!row) return resetting;
     if (row.status === 'ready') return row;
     const [claimed] = await db
@@ -164,7 +168,7 @@ async function ensureComputer(
   }
   let sandboxId = await provider.find(row.publicId);
   if (!sandboxId) {
-    await meterRun(db, metering, row.id, userId, IDLE_PAUSE_MS);
+    await meterRun(db, metering, row.id, member, IDLE_PAUSE_MS);
     markToolStep('create');
     sandboxId = await provider.create(row.publicId, IDLE_PAUSE_MS);
   }
@@ -239,7 +243,7 @@ async function lockSession(
 ): Promise<{ session: SessionRow; computer: ComputerRow } | ComputerFailure> {
   const own = and(
     eq(schema.computerSessions.publicId, sessionId),
-    eq(schema.computerSessions.userId, caller.userId),
+    eq(schema.computerSessions.membershipId, caller.membershipId),
     eq(schema.computerSessions.clientId, caller.clientId),
   );
   const [found] = await tx
@@ -358,7 +362,7 @@ async function beginCall(
   return id;
 }
 
-type Call = { id: string; sessionId: number; computerId: number; userId: string };
+type Call = { id: string; sessionId: number; computerId: number; member: Member };
 // Tells the provider when to pause the computer: timeoutMs from now, or at once for 0.
 type PauseAfter = (timeoutMs: number) => Promise<void>;
 // What keeps a computer running, read under the computer row lock.
@@ -397,7 +401,8 @@ async function liveSession(tx: Transaction, computerId: number) {
 async function pauseComputer(
   tx: Transaction,
   metering: Metering,
-  computer: { id: number; userId: string },
+  computerId: number,
+  member: Member,
   until: Date,
   now: Date,
   pauseAfter: PauseAfter,
@@ -409,7 +414,7 @@ async function pauseComputer(
     logError('computer pause timeout', error);
     return;
   }
-  await meter(tx, metering, computer.id, computer.userId, new Date(Date.now() + timeoutMs));
+  await meter(tx, metering, computerId, member, new Date(Date.now() + timeoutMs));
 }
 // Pausing without a connected session, for a hold that ended: setTimeout never wakes a paused computer.
 const pauseByProvider =
@@ -448,7 +453,7 @@ async function finishCall(
       .where(eq(schema.computerSessions.id, call.sessionId));
     if (!pauseAfter) return;
     const until = pauseAt({ ...computer, callsInFlight }, await liveSession(tx, call.computerId), now, !close);
-    return pauseComputer(tx, metering, { id: call.computerId, userId: call.userId }, until, now, pauseAfter);
+    return pauseComputer(tx, metering, call.computerId, call.member, until, now, pauseAfter);
   });
 }
 // Meters and connects for the call's hold. The returned done() must run after the call's work.
@@ -463,7 +468,7 @@ async function startCall(db: Database, { provider, metering }: Computers, call: 
     return finished;
   };
   try {
-    await meterRun(db, metering, call.computerId, call.userId, CALL_HOLD_MS);
+    await meterRun(db, metering, call.computerId, call.member, CALL_HOLD_MS);
     markToolStep('connect');
     session = await provider.connect(sandboxId, CALL_HOLD_MS);
   } catch (error) {
@@ -483,9 +488,9 @@ export async function openComputerSession(
   { sessionId }: { sessionId?: string | undefined } = {},
 ): Promise<(SessionHandle & { sync: SyncSummary }) | ComputerFailure> {
   const deadline = Date.now() + SYNC_DEADLINE_MS;
-  const exhausted = await allowanceFailure(computers.metering, db, caller.userId);
+  const exhausted = await allowanceFailure(computers.metering, db, caller);
   if (exhausted) return exhausted;
-  const row = await ensureComputer(db, computers, caller.userId);
+  const row = await ensureComputer(db, computers, caller);
   if ('error' in row) return row;
   const started = await db.transaction(
     async (
@@ -512,7 +517,7 @@ export async function openComputerSession(
         !!live &&
         !!sessionId &&
         live.publicId === sessionId &&
-        live.userId === caller.userId &&
+        live.membershipId === caller.membershipId &&
         live.clientId === caller.clientId;
       // The user's takeover: the session it suspended waits for the hand-back; everyone else is busy until then.
       if (takenOver(computer, now)) return own && live?.suspendedAt ? userInControl : userBusy;
@@ -533,6 +538,7 @@ export async function openComputerSession(
         .values({
           publicId,
           userId: caller.userId,
+          membershipId: caller.membershipId,
           clientId: caller.clientId,
           computerId: computer.id,
           createdAt: now,
@@ -545,7 +551,7 @@ export async function openComputerSession(
     },
   );
   if ('error' in started) return started;
-  const call = { id: started.callId, sessionId: started.id, computerId: row.id, userId: caller.userId };
+  const call = { id: started.callId, sessionId: started.id, computerId: row.id, member: caller };
   let done: (() => Promise<void>) | undefined;
   try {
     const handle = await startCall(db, computers, call, started.sandboxId);
@@ -585,7 +591,7 @@ export async function useComputerSession(
     (await guardFailure(tx, caller)) ?? (await lockSession(tx, caller, sessionId, new Date()));
   const checked = await db.transaction(control);
   if ('error' in checked) return checked;
-  const exhausted = await allowanceFailure(computers.metering, db, caller.userId);
+  const exhausted = await allowanceFailure(computers.metering, db, caller);
   if (exhausted) return exhausted;
   const started = await db.transaction(
     async (
@@ -606,7 +612,7 @@ export async function useComputerSession(
   );
   if ('error' in started) return started;
   const { computer, handedBackAt } = started;
-  const call = { id: started.callId, sessionId: started.sessionKey, computerId: computer.id, userId: caller.userId };
+  const call = { id: started.callId, sessionId: started.sessionKey, computerId: computer.id, member: caller };
   const { session, done } = await startCall(db, computers, call, computer.sandboxId!);
   try {
     const pending = await pendingSync(db, caller.userId, computer);
@@ -682,7 +688,7 @@ export async function closeComputerSession(
   let sync: SyncSummary;
   let session: ComputerSession | null = null;
   try {
-    await meterRun(db, metering, computer.id, caller.userId, CALL_HOLD_MS);
+    await meterRun(db, metering, computer.id, caller, CALL_HOLD_MS);
     session = await provider.connect(sandboxId, CALL_HOLD_MS);
     sync = (await userTookOver())
       ? await syncState(db, caller.userId, computer)
@@ -697,7 +703,7 @@ export async function closeComputerSession(
   };
   if (session) await closeTabs(session).catch(error => logError('computer close tabs', error));
   // Pauses at once unless another call is in flight or live view holds the computer (pauseAt).
-  const call = { id: callId, sessionId: sessionKey, computerId: computer.id, userId: caller.userId };
+  const call = { id: callId, sessionId: sessionKey, computerId: computer.id, member: caller };
   await finishCall(
     db,
     metering,
@@ -923,7 +929,6 @@ export type LiveViewStatus = {
 type LiveViewComputer = Pick<
   ComputerRow,
   | 'id'
-  | 'userId'
   | 'status'
   | 'sandboxId'
   | 'runsUntil'
@@ -935,7 +940,6 @@ type LiveViewComputer = Pick<
 >;
 const liveViewColumns = {
   id: schema.computers.id,
-  userId: schema.computers.userId,
   status: schema.computers.status,
   sandboxId: schema.computers.sandboxId,
   runsUntil: schema.computers.runsUntil,
@@ -945,12 +949,12 @@ const liveViewColumns = {
   takenOverAt: schema.computers.takenOverAt,
   takeoverUntil: schema.computers.takeoverUntil,
 };
-// The user's ready computer, locked, with a lapsed takeover ended; null without one.
-async function lockLiveView(tx: Transaction, userId: string, now: Date): Promise<LiveViewComputer | null> {
+// The member's ready computer, locked, with a lapsed takeover ended; null without one.
+async function lockLiveView(tx: Transaction, member: Member, now: Date): Promise<LiveViewComputer | null> {
   const [computer] = await tx
     .select(liveViewColumns)
     .from(schema.computers)
-    .where(and(eq(schema.computers.userId, userId), eq(schema.computers.status, 'ready')))
+    .where(and(eq(schema.computers.membershipId, member.membershipId), eq(schema.computers.status, 'ready')))
     .for('update');
   if (!computer?.sandboxId) return null;
   return lapsed(computer, now) ? endTakeover(tx, computer, now) : computer;
@@ -961,6 +965,7 @@ const mine = (computer: Pick<ComputerRow, 'takeoverLease' | 'takeoverUntil'>, le
 async function shortenHolds(
   tx: Transaction,
   { provider, metering }: Computers,
+  member: Member,
   computer: LiveViewComputer,
   next: Pick<LiveViewComputer, 'liveViewWatches' | 'takeoverUntil'>,
   now: Date,
@@ -974,20 +979,20 @@ async function shortenHolds(
     .where(eq(schema.computers.id, computer.id));
   if (!running(computer, now)) return;
   const until = pauseAt({ ...computer, ...next }, await liveSession(tx, computer.id), now);
-  await pauseComputer(tx, metering, computer, until, now, pauseByProvider(provider, computer.sandboxId!));
+  await pauseComputer(tx, metering, computer.id, member, until, now, pauseByProvider(provider, computer.sandboxId!));
 }
 
 // The page's view of live view for one lease. Reads only: a lapsed takeover counts as ended.
 export async function liveViewStatus(
   db: Database,
   metering: Metering,
-  userId: string,
+  member: Member,
   lease: string,
   now = new Date(),
 ): Promise<LiveViewStatus> {
   const [[computer], refusal] = await Promise.all([
-    db.select(liveViewColumns).from(schema.computers).where(eq(schema.computers.userId, userId)),
-    metering.refusal(db, userId, now),
+    db.select(liveViewColumns).from(schema.computers).where(eq(schema.computers.membershipId, member.membershipId)),
+    metering.refusal(db, member, now),
   ]);
   const exhausted = refusal ? { allowanceExhausted: { resetsAt: refusal.resetsAt.toISOString() } } : {};
   if (computer?.status !== 'ready' || !computer.sandboxId)
@@ -1039,15 +1044,15 @@ export async function liveViewStatus(
 export async function liveViewHeartbeat(
   db: Database,
   computers: Computers,
-  userId: string,
+  member: Member,
   { id: lease, state }: { id: string; state: 'visible' | 'hidden' | 'released' },
   now = new Date(),
 ): Promise<LiveViewStatus> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
-  if (state === 'visible') await extendHolds(db, computers, userId, lease, now);
+  if (state === 'visible') await extendHolds(db, computers, member, lease, now);
   else
     await db.transaction(async tx => {
-      const computer = await lockLiveView(tx, userId, now);
+      const computer = await lockLiveView(tx, member, now);
       if (!computer) return;
       const watches = keptWatches(computer.liveViewWatches, now);
       if (state === 'released') {
@@ -1064,6 +1069,7 @@ export async function liveViewHeartbeat(
         return shortenHolds(
           tx,
           computers,
+          member,
           ended,
           { liveViewWatches: watches, takeoverUntil: ended.takeoverUntil },
           now,
@@ -1078,12 +1084,13 @@ export async function liveViewHeartbeat(
       return shortenHolds(
         tx,
         computers,
+        member,
         computer,
         { liveViewWatches: watches, takeoverUntil: shortenTakeover ? lapseAt : computer.takeoverUntil },
         now,
       );
     });
-  return liveViewStatus(db, computers.metering, userId, lease, now);
+  return liveViewStatus(db, computers.metering, member, lease, now);
 }
 // The holds a visible heartbeat extends, once less than HOLD_LAPSE_MS is left: this lease's watch (a new one only
 // below MAX_LIVE_WATCHES, and never for a released lease) and its takeover. Null when nothing needs extending.
@@ -1103,30 +1110,30 @@ function extendedHolds(computer: LiveViewComputer, lease: string, now: Date) {
 // Meters and wakes the computer for an extended hold, as startCall does for a call. Most beats find nothing
 // to extend, or a lapsed takeover to end, in a read without the lock. The wake runs under the computer row lock, so a
 // release or hand-back that follows pauses the computer this wakes, rather than this wake undoing it.
-async function extendHolds(db: Database, computers: Computers, userId: string, lease: string, now: Date) {
+async function extendHolds(db: Database, computers: Computers, member: Member, lease: string, now: Date) {
   const { provider, metering } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
   const ready = () =>
     db
       .select(liveViewColumns)
       .from(schema.computers)
-      .where(and(eq(schema.computers.userId, userId), eq(schema.computers.status, 'ready')));
+      .where(and(eq(schema.computers.membershipId, member.membershipId), eq(schema.computers.status, 'ready')));
   let [current] = await ready();
   // Watching creates the computer when there is none, as a takeover does; later beats see `starting` meanwhile.
   let created = false;
   if (!current?.sandboxId) {
-    if (await allowanceFailure(metering, db, userId)) return;
-    const row = await ensureComputer(db, computers, userId);
+    if (await allowanceFailure(metering, db, member)) return;
+    const row = await ensureComputer(db, computers, member);
     if ('error' in row) return;
     [current] = await ready();
     if (!current?.sandboxId) return;
     created = true;
   }
-  const extend = !!extendedHolds(current, lease, now) && !(await allowanceFailure(metering, db, userId));
+  const extend = !!extendedHolds(current, lease, now) && !(await allowanceFailure(metering, db, member));
   if (!extend && !lapsed(current, now)) return;
   const woken = await db.transaction(async tx => {
     // Also ends a lapsed takeover.
-    const computer = await lockLiveView(tx, userId, now);
+    const computer = await lockLiveView(tx, member, now);
     const next = extend && computer && extendedHolds(computer, lease, now);
     if (!computer || !next) return null;
     await tx
@@ -1141,7 +1148,7 @@ async function extendHolds(db: Database, computers: Computers, userId: string, l
     // A running computer already due to run past the new deadline was already asked to run that long. Metered first,
     // like a call: a failed wake still counts as running, and the page's next beats show the computer paused.
     if (running(computer, now) && computer.runsUntil! >= pause && !created) return null;
-    await meter(tx, metering, computer.id, userId, pause);
+    await meter(tx, metering, computer.id, member, pause);
     const session = await provider
       .connect(computer.sandboxId!, Math.max(1, pause.getTime() - Date.now()))
       .catch(error => logError('live view wake', error));
@@ -1153,7 +1160,7 @@ async function extendHolds(db: Database, computers: Computers, userId: string, l
   if (!woken) return;
   try {
     await Promise.all([
-      applyLatestCapture(db, userId, woken.row.id, woken.session, deadline),
+      applyLatestCapture(db, member.userId, woken.row.id, woken.session, deadline),
       applyTimeZone(db, woken.row.id, woken.session),
     ]);
   } catch (error) {
@@ -1170,22 +1177,22 @@ async function extendHolds(db: Database, computers: Computers, userId: string, l
 export async function takeOverComputer(
   db: Database,
   computers: Computers,
-  userId: string,
+  member: Member,
   lease: string,
 ): Promise<LiveViewStatus | ComputerFailure> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
   const { provider, metering } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
-  const exhausted = await allowanceFailure(metering, db, userId);
+  const exhausted = await allowanceFailure(metering, db, member);
   if (exhausted) return exhausted;
-  const row = await ensureComputer(db, computers, userId);
+  const row = await ensureComputer(db, computers, member);
   if ('error' in row) return row;
   let started: { session: ComputerSession; apply: boolean } | ComputerFailure;
   try {
     started = await db.transaction(
       async (tx): Promise<{ session: ComputerSession; apply: boolean } | ComputerFailure> => {
         const now = new Date();
-        const computer = await lockLiveView(tx, userId, now);
+        const computer = await lockLiveView(tx, member, now);
         if (!computer || computer.id !== row.id) return resetting;
         let live = await liveSession(tx, computer.id);
         if (live && expired(live, now)) {
@@ -1212,7 +1219,7 @@ export async function takeOverComputer(
           .where(eq(schema.computers.id, computer.id));
         // The suspended session keeps nothing running; its calls in flight do (callsInFlight).
         const pause = pauseAt({ ...computer, liveViewWatches: watches, takeoverUntil: until }, null, now);
-        await meter(tx, metering, computer.id, userId, pause);
+        await meter(tx, metering, computer.id, member, pause);
         // Under the lock, so a release or hand-back that follows pauses what this wakes. A failure rolls the takeover
         // and its metering back.
         const session = await provider.connect(computer.sandboxId!, Math.max(1, pause.getTime() - Date.now()));
@@ -1231,15 +1238,15 @@ export async function takeOverComputer(
       // As computer_open does: before the apply, which needs the browser this may restart.
       await refreshComputer(db, provider, row, started.session);
       await Promise.all([
-        applyLatestCapture(db, userId, row.id, started.session, deadline),
+        applyLatestCapture(db, member.userId, row.id, started.session, deadline),
         applyTimeZone(db, row.id, started.session),
       ]);
     } catch (error) {
       // The computer is unreachable: give the takeover back rather than hold a computer nobody can use.
-      await handBackComputer(db, computers, userId, lease).catch(endError => logError('takeover cleanup', endError));
+      await handBackComputer(db, computers, member, lease).catch(endError => logError('takeover cleanup', endError));
       throw error;
     }
-  return liveViewStatus(db, metering, userId, lease);
+  return liveViewStatus(db, metering, member, lease);
 }
 class PublicComputer extends Error {}
 const needsReset: ComputerFailure = {
@@ -1253,25 +1260,32 @@ const needsReset: ComputerFailure = {
 export async function handBackComputer(
   db: Database,
   computers: Computers,
-  userId: string,
+  member: Member,
   lease: string,
 ): Promise<LiveViewStatus> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
   const now = new Date();
   await db.transaction(async tx => {
-    const computer = await lockLiveView(tx, userId, now);
+    const computer = await lockLiveView(tx, member, now);
     if (!computer || !mine(computer, lease, now)) return;
     const ended = await endTakeover(tx, computer, now);
-    await shortenHolds(tx, computers, ended, { liveViewWatches: ended.liveViewWatches, takeoverUntil: null }, now);
+    await shortenHolds(
+      tx,
+      computers,
+      member,
+      ended,
+      { liveViewWatches: ended.liveViewWatches, takeoverUntil: null },
+      now,
+    );
   });
-  return liveViewStatus(db, computers.metering, userId, lease, now);
+  return liveViewStatus(db, computers.metering, member, lease, now);
 }
 
 // What this lease may do through the relay now: control while it holds the user's live takeover, view while it holds
 // a live watch, and nothing once both ended (released, lapsed, or the computer reset). The relay re-reads it.
 export async function liveViewAccess(
   db: Database,
-  userId: string,
+  member: Member,
   lease: string,
   now = new Date(),
 ): Promise<'control' | 'view' | 'none'> {
@@ -1283,7 +1297,7 @@ export async function liveViewAccess(
       liveViewWatches: schema.computers.liveViewWatches,
     })
     .from(schema.computers)
-    .where(and(eq(schema.computers.userId, userId), eq(schema.computers.status, 'ready')));
+    .where(and(eq(schema.computers.membershipId, member.membershipId), eq(schema.computers.status, 'ready')));
   if (!computer) return 'none';
   if (mine(computer, lease, now)) return 'control';
   return liveWatches(computer.liveViewWatches, now).some(([id]) => id === lease) ? 'view' : 'none';
@@ -1295,13 +1309,13 @@ export async function liveViewAccess(
 export async function connectLiveView(
   db: Database,
   provider: ComputerProvider,
-  userId: string,
+  member: Member,
   lease: string,
 ): Promise<ComputerSession | 'not_found' | 'not_watching' | 'needs_reset'> {
   if (!LEASE_PATTERN.test(lease)) return 'not_watching';
   return db.transaction(async tx => {
     const now = new Date();
-    const computer = await lockLiveView(tx, userId, now);
+    const computer = await lockLiveView(tx, member, now);
     if (!computer) return 'not_found';
     if (!mine(computer, lease, now) && !liveWatches(computer.liveViewWatches, now).some(([id]) => id === lease))
       return 'not_watching';
@@ -1321,7 +1335,7 @@ export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
 export async function setLiveViewClipboard(
   db: Database,
   provider: ComputerProvider,
-  userId: string,
+  member: Member,
   lease: string,
   text: string,
 ): Promise<'set' | 'not_in_control' | 'too_large'> {
@@ -1329,7 +1343,7 @@ export async function setLiveViewClipboard(
   if (!LEASE_PATTERN.test(lease)) return 'not_in_control';
   const session = await db.transaction(async tx => {
     const now = new Date();
-    const computer = await lockLiveView(tx, userId, now);
+    const computer = await lockLiveView(tx, member, now);
     if (!computer || !mine(computer, lease, now)) return null;
     const until = pauseAt(computer, await liveSession(tx, computer.id), now);
     return provider.connect(computer.sandboxId!, Math.max(1, until.getTime() - Date.now()));
@@ -1339,7 +1353,7 @@ export async function setLiveViewClipboard(
   return 'set';
 }
 
-export async function computerView(db: Database, metering: Metering, userId: string) {
+export async function computerView(db: Database, metering: Metering, member: Member) {
   const [[row], capture, usage] = await Promise.all([
     db
       .select({
@@ -1349,9 +1363,9 @@ export async function computerView(db: Database, metering: Metering, userId: str
         takeoverUntil: schema.computers.takeoverUntil,
       })
       .from(schema.computers)
-      .where(eq(schema.computers.userId, userId)),
-    captureView(db, userId),
-    metering.usage(db, userId, new Date()),
+      .where(eq(schema.computers.membershipId, member.membershipId)),
+    captureView(db, member.userId),
+    metering.usage(db, member, new Date()),
   ]);
   const [live] = row
     ? await db
@@ -1382,11 +1396,11 @@ export async function computerView(db: Database, metering: Metering, userId: str
 
 // Also resets the computer: the next computer_open creates a fresh one from the current template and applies
 // the latest capture wholesale. Returns whether there was one.
-export async function deleteMainComputer(db: Database, provider: ComputerProvider, userId: string) {
+export async function deleteMainComputer(db: Database, provider: ComputerProvider, member: Member) {
   const [row] = await db
     .select({ id: schema.computers.id, publicId: schema.computers.publicId, sandboxId: schema.computers.sandboxId })
     .from(schema.computers)
-    .where(eq(schema.computers.userId, userId));
+    .where(eq(schema.computers.membershipId, member.membershipId));
   if (!row) return false;
   // Kill both the recorded and any unrecorded provider computer before forgetting the row.
   for (const sandboxId of new Set([row.sandboxId, await provider.find(row.publicId)]))

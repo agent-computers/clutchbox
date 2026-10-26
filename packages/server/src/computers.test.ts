@@ -31,6 +31,7 @@ import { heartbeat, heartbeatSchema } from './heartbeat';
 import { type Metering, type MeteringRefusal, noMetering } from './hooks';
 import { newPublicId } from './ids';
 import { revokeMcpGrant, revokeMcpGrants } from './mcp';
+import { createOrganization, type Member } from './organizations';
 import * as schema from './schema';
 import { setTimeZone } from './time-zones';
 
@@ -38,34 +39,48 @@ let pg: PGlite;
 let db: Database;
 let fake: ReturnType<typeof fakeComputerProvider>;
 // The metering hook as the computer service sees it: what it charged, by UTC month, and a refusal tests turn on.
-let charges: { userId: string; month: string; seconds: number }[];
+let charges: { membershipId: number; month: string; seconds: number }[];
 let refusal: MeteringRefusal | null;
 const metering: Metering = {
   usage: async () => null,
   refusal: async () => refusal,
-  charge: async (_tx, userId, seconds, now) => {
-    charges.push({ userId, month: `${now.toISOString().slice(0, 7)}-01`, seconds });
+  charge: async (_tx, { membershipId }, seconds, now) => {
+    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds });
   },
 };
 let computers: Computers;
-const user = async (id: string) => {
-  await db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true });
-  return id;
+// A person and their membership in an organization of their own.
+const user = async (id: string): Promise<Member> => {
+  const person = { id, name: id, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  return join(person.id, await db.transaction(tx => createOrganization(tx, { name: id, owner: person })));
 };
-const caller = (userId: string, clientId = 'client', guard?: Caller['guard']): Caller => ({
-  userId,
+// The person's membership in an organization.
+const join = async (userId: string, organizationId: number | null): Promise<Member> => {
+  const [membership] = await db
+    .insert(schema.memberships)
+    .values({ publicId: newPublicId('membership'), organizationId: organizationId!, userId, role: 'member' })
+    .onConflictDoUpdate({
+      target: [schema.memberships.organizationId, schema.memberships.userId],
+      set: { updatedAt: new Date() },
+    })
+    .returning();
+  return { userId, membershipId: membership!.id, organizationId: membership!.organizationId };
+};
+const caller = (member: Member, clientId = 'client', guard?: Caller['guard']): Caller => ({
+  ...member,
   clientId,
   guard,
 });
 // Opens and ends the open's own call, as the MCP layer does.
-const open = async (userId: string, clientId = 'client', sessionId?: string) => {
-  const opened = await openComputerSession(db, computers, caller(userId, clientId), { sessionId });
+const open = async (member: Member, clientId = 'client', sessionId?: string) => {
+  const opened = await openComputerSession(db, computers, caller(member, clientId), { sessionId });
   if ('error' in opened) throw new Error(opened.error);
   await opened.done();
   return opened;
 };
-const use = async (userId: string, sessionId: string, clientId = 'client') => {
-  const handle = await useComputerSession(db, computers, caller(userId, clientId), sessionId);
+const use = async (member: Member, sessionId: string, clientId = 'client') => {
+  const handle = await useComputerSession(db, computers, caller(member, clientId), sessionId);
   if ('error' in handle) return handle;
   await handle.done();
   return handle;
@@ -75,9 +90,9 @@ const sessionRow = async (publicId: string) =>
   (await db.select().from(schema.computerSessions).where(eq(schema.computerSessions.publicId, publicId)))[0]!;
 const computerRow = async () => (await db.select().from(schema.computers))[0]!;
 const sandbox = () => [...fake.sandboxes.values()][0]!;
-const used = async (userId: string) => {
+const used = async (member: Member) => {
   const months = new Map<string, number>();
-  for (const charge of charges.filter(entry => entry.userId === userId))
+  for (const charge of charges.filter(entry => entry.membershipId === member.membershipId))
     months.set(charge.month, (months.get(charge.month) ?? 0) + charge.seconds);
   return [...months];
 };
@@ -135,7 +150,7 @@ describe('main computer', () => {
     const a = await user('a');
     const [row] = await db
       .insert(schema.computers)
-      .values({ userId: a, publicId: newPublicId('computer'), updatedAt: new Date(Date.now() - 10 * 60_000) })
+      .values({ userId: a.userId, publicId: newPublicId('computer'), updatedAt: new Date(Date.now() - 10 * 60_000) })
       .returning();
     await fake.provider.create(row!.publicId, 60_000);
     await open(a);
@@ -182,7 +197,7 @@ describe('main computer', () => {
     const [row] = await db
       .update(schema.computers)
       .set({ status: 'ready', sandboxId: 'recorded-elsewhere' })
-      .where(eq(schema.computers.userId, a))
+      .where(eq(schema.computers.membershipId, a.membershipId))
       .returning();
     fake.sandboxes.set('recorded-elsewhere', {
       computerId: row!.publicId,
@@ -196,6 +211,63 @@ describe('main computer', () => {
     expect(fake.calls.kill).toBe(1);
     expect([...fake.sandboxes.keys()]).toEqual(['recorded-elsewhere']);
     expect(await computerRow()).toMatchObject({ status: 'ready', sandboxId: 'recorded-elsewhere' });
+  });
+});
+
+describe('memberships', () => {
+  it("gives each of a person's memberships its own computer, sessions, live view, usage, and reset", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    at('2026-10-20T12:00:00Z');
+    const a = await user('a');
+    // The same person in a second organization, as a member.
+    const team = await join(a.userId, (await user('b')).organizationId);
+    const personal = await open(a);
+    const work = await open(team);
+    expect(fake.calls.create).toBe(2);
+    const rows = await db.select().from(schema.computers);
+    expect(rows.map(row => row.membershipId).sort()).toEqual([a.membershipId, team.membershipId].sort());
+    expect(rows.every(row => row.userId === a.userId)).toBe(true);
+    // A session works only for the membership that opened it, though the person and the agent are the same.
+    for (const [member, sessionId] of [
+      [team, personal.sessionId],
+      [a, work.sessionId],
+    ] as const)
+      for (const action of [useComputerSession, closeComputerSession])
+        expect(await action(db, computers, caller(member), sessionId)).toMatchObject({ error: 'session_not_found' });
+    // Usage is charged to the membership whose computer ran.
+    at('2026-10-20T12:00:30Z');
+    expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
+    expect(await used(a)).toEqual([['2026-10-01', 30]]);
+    expect(await used(team)).toEqual([]);
+    // Live view: taking over the team computer leaves the personal one to its agent.
+    const page = randomUUID();
+    expect(await takeOverComputer(db, computers, team, page)).toMatchObject({ takeover: { mine: true } });
+    expect(await use(team, work.sessionId)).toMatchObject({ error: 'user_in_control' });
+    expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
+    expect(await liveViewAccess(db, team, page)).toBe('control');
+    expect(await liveViewAccess(db, a, page)).toBe('none');
+    expect(await setLiveViewClipboard(db, fake.provider, a, page, 'x')).toBe('not_in_control');
+    expect(await computerView(db, metering, a)).toMatchObject({ computer: { inLiveView: false } });
+    expect(await computerView(db, metering, team)).toMatchObject({ computer: { inLiveView: true } });
+    // Resetting one computer leaves the other and its session.
+    expect(await deleteMainComputer(db, fake.provider, team)).toBe(true);
+    expect((await db.select().from(schema.computers)).map(row => row.membershipId)).toEqual([a.membershipId]);
+    expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
+    expect(await computerView(db, metering, team)).toMatchObject({ computer: null });
+  });
+  it('keeps using a computer made before memberships, with no new create', async () => {
+    const a = await user('a');
+    // Written by code that named only the person: the membership comes from the insert trigger and the backfill.
+    const [row] = await db
+      .insert(schema.computers)
+      .values({ userId: a.userId, publicId: newPublicId('computer') })
+      .returning();
+    const sandboxId = await fake.provider.create(row!.publicId, 60_000);
+    await db.update(schema.computers).set({ status: 'ready', sandboxId }).where(eq(schema.computers.id, row!.id));
+    const opened = await open(a);
+    expect(fake.calls.create).toBe(1);
+    expect(await computerRow()).toMatchObject({ id: row!.id, membershipId: a.membershipId, sandboxId });
+    expect(await sessionRow(opened.sessionId)).toMatchObject({ computerId: row!.id, membershipId: a.membershipId });
   });
 });
 
@@ -335,25 +407,25 @@ describe('computer sessions', () => {
     await db.insert(schema.oauthConsent).values({
       id: randomUUID(),
       clientId,
-      userId: a,
+      userId: a.userId,
       scopes: ['mcp:tools'],
       createdAt: new Date(),
       updatedAt: new Date(),
     });
     const other = await open(a, 'other');
-    expect(await revokeMcpGrant(db, a, clientId)).toBe(true);
+    expect(await revokeMcpGrant(db, a.userId, clientId)).toBe(true);
     expect(await sessionRow(other.sessionId)).toMatchObject({ endedAt: null });
     at('2026-10-20T12:01:01Z');
     const agent = await open(a, clientId);
     await db.insert(schema.oauthConsent).values({
       id: randomUUID(),
       clientId,
-      userId: a,
+      userId: a.userId,
       scopes: ['mcp:tools'],
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    expect(await revokeMcpGrant(db, a, clientId)).toBe(true);
+    expect(await revokeMcpGrant(db, a.userId, clientId)).toBe(true);
     expect(await sessionRow(agent.sessionId)).toMatchObject({ endReason: 'revoked' });
     // Only the guard reports the revocation; once the agent is reconnected, its old session is just ended.
     expect(
@@ -375,7 +447,7 @@ describe('computer sessions', () => {
       ).toMatchObject({ error: 'session_ended' });
     // A revoked session no longer holds control, and revoking every agent ends the rest.
     const next = await open(a, 'next');
-    await revokeMcpGrants(db, a);
+    await revokeMcpGrants(db, a.userId);
     expect(await sessionRow(next.sessionId)).toMatchObject({ endReason: 'revoked' });
   });
 });
@@ -488,7 +560,7 @@ describe('computer_close', () => {
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
     const opened = await open(a, 'claude');
-    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-20T11:59:00Z')));
+    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-20T11:59:00Z')));
     sandbox().tabs = ['https://a.example.com/', 'https://b.example.com/'];
     at('2026-10-20T12:00:20Z');
     expect(await closeComputerSession(db, computers, caller(a, 'chatgpt'), opened.sessionId)).toMatchObject({
@@ -561,7 +633,7 @@ describe('computer_close', () => {
     const a = await user('a');
     const opened = await open(a);
     at('2026-10-20T12:00:30Z');
-    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-20T12:00:30Z')));
+    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-20T12:00:30Z')));
     at('2026-10-20T12:02:00Z');
     const connects = fake.calls.timeouts.length;
     sandbox().tabs = ['https://a.example.com/'];
@@ -580,8 +652,8 @@ describe('computer_close', () => {
 describe('apply between computer sessions', () => {
   // Each open passes the previous session_id, as one agent reopening to apply.
   let last: string | undefined;
-  const reopen = async (userId: string) => {
-    const opened = await open(userId, 'client', last);
+  const reopen = async (member: Member) => {
+    const opened = await open(member, 'client', last);
     last = opened.sessionId;
     return opened;
   };
@@ -610,7 +682,7 @@ describe('apply between computer sessions', () => {
     );
     await saveCapture(
       db,
-      a,
+      a.userId,
       bundle(
         [
           cookie(),
@@ -642,7 +714,7 @@ describe('apply between computer sessions', () => {
     expect((await reopen(a)).sync).toEqual({ status: 'unchanged', captureCompletedAt: '2026-10-15T10:00:00.000Z' });
     expect(fake.calls.sync).toBe(1);
     // Signed out of GitHub and Gmail locally, example.com refreshed.
-    await saveCapture(db, a, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
+    await saveCapture(db, a.userId, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 3 });
     expect(jar()).toEqual(['agent.dev:tmp=agent', 'example.com:sid=fresh']);
     expect((await computerRow()).syncedSites).toEqual(['example.com']);
@@ -651,7 +723,7 @@ describe('apply between computer sessions', () => {
     const a = await user('a');
     await saveCapture(
       db,
-      a,
+      a.userId,
       bundle([
         cookie({ name: 'changed', value: '1' }),
         cookie({ name: 'kept', value: '1' }),
@@ -668,7 +740,7 @@ describe('apply between computer sessions', () => {
     ];
     await saveCapture(
       db,
-      a,
+      a.userId,
       bundle([
         cookie({ name: 'changed', value: '2' }),
         cookie({ name: 'kept', value: '1' }),
@@ -684,13 +756,13 @@ describe('apply between computer sessions', () => {
     ]);
     // A legacy row (or one after Delete everything) has no baseline: the next apply is wholesale again.
     await db.update(schema.computers).set({ appliedCapture: null });
-    await saveCapture(db, a, bundle([cookie({ name: 'kept', value: '1' })]));
+    await saveCapture(db, a.userId, bundle([cookie({ name: 'kept', value: '1' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     expect(jar()).toEqual(['example.com:kept=1']);
   });
   it('tells a running session only about added or deleted cookies, not rotations', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })]));
+    await saveCapture(db, a.userId, bundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })]));
     await reopen(a);
     const pending = async () => {
       const handle = await use(a, last!);
@@ -698,9 +770,17 @@ describe('apply between computer sessions', () => {
       return handle.pending;
     };
     expect(await pending()).toBeUndefined();
-    await saveCapture(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'gh', domain: 'github.com' })]));
+    await saveCapture(
+      db,
+      a.userId,
+      bundle([cookie({ value: 'rotated' }), cookie({ name: 'gh', domain: 'github.com' })]),
+    );
     expect(await pending()).toBeUndefined();
-    await saveCapture(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]));
+    await saveCapture(
+      db,
+      a.userId,
+      bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]),
+    );
     expect(await pending()).toEqual({ sites: ['github.com', 'notion.so'] });
     // Calls within the session never apply.
     expect(fake.calls.sync).toBe(1);
@@ -710,7 +790,7 @@ describe('apply between computer sessions', () => {
   });
   it('still opens when apply fails and retries on the next open', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
+    await saveCapture(db, a.userId, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
     fake.failSync();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failed = await reopen(a);
@@ -725,7 +805,7 @@ describe('apply between computer sessions', () => {
     const a = await user('a');
     await reopen(a);
     expect(fake.calls.timeZones).toEqual([]);
-    await setTimeZone(db, a, 'America/Los_Angeles');
+    await setTimeZone(db, a.userId, 'America/Los_Angeles');
     fake.failTimeZone();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await reopen(a)).sync).toEqual({ status: 'none' });
@@ -737,13 +817,13 @@ describe('apply between computer sessions', () => {
     expect((await computerRow()).timeZone).toBe('America/Los_Angeles');
     await reopen(a);
     expect(fake.calls.timeZones).toEqual(['America/Los_Angeles', 'America/Los_Angeles']);
-    await setTimeZone(db, a, 'Europe/London');
+    await setTimeZone(db, a.userId, 'Europe/London');
     await reopen(a);
     expect(sandbox().timeZone).toBe('Europe/London');
   });
   it('brings a computer behind the provider revision current on open, before the apply, and retries a failure', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     await reopen(a);
     // A new computer from a current template is only checked, once.
     expect((await computerRow()).revision).toBe('revision-1');
@@ -752,7 +832,7 @@ describe('apply between computer sessions', () => {
     fake.setRevision('revision-2');
     fake.failRefresh();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
+    await saveCapture(db, a.userId, bundle([cookie({ value: 'new' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
     expect(error).toHaveBeenCalled();
     expect((await computerRow()).revision).toBe('revision-1');
@@ -769,19 +849,19 @@ describe('apply between computer sessions', () => {
   it('re-applies a re-upload wholesale after captures are deleted', async () => {
     const a = await user('a');
     const capture = bundle([cookie()]);
-    await saveCapture(db, a, capture);
+    await saveCapture(db, a.userId, capture);
     await reopen(a);
-    await deleteCaptures(db, a);
+    await deleteCaptures(db, a.userId);
     expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
     expect((await reopen(a)).sync).toEqual({ status: 'none' });
-    await saveCapture(db, a, capture);
+    await saveCapture(db, a.userId, capture);
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
     expect(fake.calls.sync).toBe(2);
   });
   it('does not overwrite a concurrent apply of another capture, and re-applies wholesale next time', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     // A close racing this open applies a different capture while this one runs.
     const connect = fake.provider.connect;
     fake.provider.connect = async (sandboxId, timeoutMs) => {
@@ -804,7 +884,7 @@ describe('apply between computer sessions', () => {
   it('skips the apply when the open has no time left, without failing the open', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     const now = Date.now.bind(Date);
     let skew = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => now() + skew);
@@ -825,7 +905,7 @@ describe('apply between computer sessions', () => {
   it('gives the provider its budget, so a sync cut short never changes cookies after the open returns', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -883,10 +963,10 @@ describe('metering', () => {
 
 describe('live view', () => {
   const lease = () => randomUUID();
-  const beat = (userId: string, id: string, state: 'visible' | 'hidden' | 'released') =>
-    liveViewHeartbeat(db, computers, userId, { id, state }, new Date());
-  const takeOver = async (userId: string, id: string) => {
-    const status = await takeOverComputer(db, computers, userId, id);
+  const beat = (member: Member, id: string, state: 'visible' | 'hidden' | 'released') =>
+    liveViewHeartbeat(db, computers, member, { id, state }, new Date());
+  const takeOver = async (member: Member, id: string) => {
+    const status = await takeOverComputer(db, computers, member, id);
     if ('error' in status) throw new Error(status.error);
     return status;
   };
@@ -897,7 +977,7 @@ describe('live view', () => {
     const claudeCode = 'https://claude.ai/oauth/claude-code-client-metadata';
     await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId: claudeCode, redirectUris: [] });
     const agent = await open(a, claudeCode);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     const page = lease();
     at('2026-10-20T12:00:20Z');
     expect(await takeOver(a, page)).toEqual({
@@ -925,7 +1005,7 @@ describe('live view', () => {
     // The MCP layer records the agent's user_in_control call; the page names the waiting agent from it.
     const { id: sessionKey } = await sessionRow(agent.sessionId);
     await db.insert(schema.toolCalls).values({
-      userId: a,
+      userId: a.userId,
       clientId: claudeCode,
       computerSessionId: sessionKey,
       tool: 'computer_screenshot',
@@ -990,8 +1070,8 @@ describe('live view', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
-    await setTimeZone(db, a, 'Europe/London');
+    await saveCapture(db, a.userId, bundle([cookie()]));
+    await setTimeZone(db, a.userId, 'Europe/London');
     const page = lease();
     // Creates the computer, then applies the capture and time zone.
     expect(await takeOver(a, page)).toMatchObject({ computer: 'running', takeover: { mine: true } });
@@ -1006,7 +1086,7 @@ describe('live view', () => {
     const agent = await open(a, 'claude');
     // An agent idle past its minute, but not ended, is still working: the next takeover suspends it, no apply.
     at('2026-10-20T12:05:00Z');
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
+    await saveCapture(db, a.userId, bundle([cookie({ value: 'new' })]));
     await takeOver(a, page);
     expect(fake.calls.sync).toBe(1);
     expect(await sessionRow(agent.sessionId)).toMatchObject({ suspendedAt: new Date('2026-10-20T12:05:00Z') });
@@ -1115,7 +1195,7 @@ describe('live view', () => {
   it('lets an agent close its suspended session without touching the computer', async () => {
     const a = await user('a');
     const agent = await open(a, 'claude');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     const page = lease();
     await takeOver(a, page);
     const connects = fake.calls.timeouts.length;
@@ -1152,7 +1232,7 @@ describe('live view', () => {
   });
   it('creates the computer for a watch with the latest capture, without marking the user set up', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     const page = lease();
     expect(await beat(a, page, 'visible')).toEqual({
       computer: 'running',
@@ -1187,7 +1267,7 @@ describe('live view', () => {
   it('lets a close that ends its session just before a takeover neither apply nor close tabs under the user', async () => {
     const a = await user('a');
     const agent = await open(a, 'claude');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveCapture(db, a.userId, bundle([cookie()]));
     sandbox().tabs = ['https://a.example.com/'];
     const page = lease();
     // The user takes control while the close connects, after it ended its session but before its apply.
@@ -1259,8 +1339,8 @@ describe('live view', () => {
     const a = await user('a');
     const b = await user('b');
     const page = lease();
-    const paste = (userId: string, id: string, text: string) =>
-      setLiveViewClipboard(db, fake.provider, userId, id, text);
+    const paste = (member: Member, id: string, text: string) =>
+      setLiveViewClipboard(db, fake.provider, member, id, text);
     expect(await paste(a, page, 'x')).toBe('not_in_control');
     await beat(a, page, 'visible');
     // Watching is not control.

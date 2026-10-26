@@ -15,6 +15,7 @@ import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { heartbeat } from '../../server/src/heartbeat';
 import { noMetering } from '../../server/src/hooks';
+import { currentMember, singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { liveViewHandler } from './live-view';
 import { nodeServer } from './node-upgrade';
@@ -36,7 +37,10 @@ let db: Database;
 let auth: ReturnType<typeof createAuth>;
 let fake: ReturnType<typeof fakeComputerProvider>;
 async function identity(id: string) {
-  await db.insert(schema.user).values({ id, name: `Fixture ${id}`, email: `${id}@example.test`, emailVerified: true });
+  const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  // Into the deployment's organization, as sign-up does.
+  await db.transaction(tx => singleOrganization.join(tx, person));
   const token = randomBytes(32).toString('base64url');
   await db
     .insert(schema.session)
@@ -45,13 +49,19 @@ async function identity(id: string) {
   return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
 }
 // A visible heartbeat: the page load's live watch, which the relay needs.
-const watch = (userId: string, lease: string) =>
-  heartbeat(db, { provider: fake.provider, metering: noMetering }, userId, {
+const watch = async (userId: string, lease: string) =>
+  heartbeat(db, { provider: fake.provider, metering: noMetering }, await member(userId), {
     leases: [{ kind: 'live-view', id: lease, state: 'visible' }],
   });
-const open = (userId: string) =>
-  openComputerSession(db, { provider: fake.provider, metering: noMetering }, { userId, clientId: 'agent-client' });
+const open = async (userId: string) =>
+  openComputerSession(
+    db,
+    { provider: fake.provider, metering: noMetering },
+    { ...(await member(userId)), clientId: 'agent-client' },
+  );
 
+// The member a person acts as, which the routes resolve from the session.
+const member = async (userId: string) => (await currentMember(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
@@ -232,7 +242,9 @@ describe('live view relay route', () => {
       await until(() => sent().length >= handshake.length + update.length);
       expect(sent()).toEqual(Buffer.concat([handshake, update]));
       // Taking over lets input through without reconnecting, once the relay re-reads control.
-      expect(await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, 'a', page)).toMatchObject({
+      expect(
+        await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member('a'), page),
+      ).toMatchObject({
         takeover: { mine: true },
       });
       await until(

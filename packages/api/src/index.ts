@@ -38,6 +38,7 @@ import { heartbeat, heartbeatSchema } from '@agent-computers/server/heartbeat';
 import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
 import { logError } from '@agent-computers/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@agent-computers/server/mcp';
+import { currentMember } from '@agent-computers/server/organizations';
 import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
 import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
 import { deleteToolCalls } from '@agent-computers/server/tool-calls';
@@ -94,6 +95,13 @@ export function createApi({
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
   const { metering, operatorAdmin } = hooks;
   const running = { provider: computers, metering };
+  // The member a signed-in request acts as, for its computer (organizations.ts). An account the tenancy has not placed
+  // yet has none until the next migration run places it: the request fails like any unavailable service.
+  const memberOf = async (c: Context<Env>) => {
+    const member = await currentMember(db, c.get('principal').id);
+    if (!member) throw new Error('account has no membership');
+    return member;
+  };
   // The Agent Computers site is never synced or added.
   const serverSite = siteOfHost(new URL(origin).hostname);
   const app = new Hono<Env>().basePath('/api/v1');
@@ -177,7 +185,7 @@ export function createApi({
     return c.json(await setTimeZone(db, c.get('principal').id, parsed.data.timeZone));
   });
   // Main computer (validation prototype).
-  app.get('/computer', async c => c.json(await computerView(db, metering, c.get('principal').id)));
+  app.get('/computer', async c => c.json(await computerView(db, metering, await memberOf(c))));
   // Connected browsers, for the account page. Disconnecting one revokes its tokens and deletes the capture if it
   // sent it. Neither path takes a sync token or the extension's origin.
   app.get('/browsers', async c => c.json({ browsers: await listBrowsers(db, c.get('principal').id) }));
@@ -193,18 +201,19 @@ export function createApi({
   });
   // Delete everything: synced browser data first, then the computer and its sign-ins.
   app.delete('/computer', async c => {
+    const member = await memberOf(c);
     // Every browser disconnects, and sync turns off. Agents stay connected.
     await disconnectAllBrowsers(db, c.get('principal').id);
     await deleteCaptures(db, c.get('principal').id, { disconnect: true, forget: true });
     // Before the provider, so a provider failure cannot skip it. Agents stay connected.
     await resetSetup(db, c.get('principal').id);
-    await deleteToolCalls(db, c.get('principal').id);
-    await deleteMainComputer(db, computers, c.get('principal').id);
+    await deleteToolCalls(db, member);
+    await deleteMainComputer(db, computers, member);
     return c.json({ deleted: true });
   });
   // Reset: only the computer, so it is rebuilt from the current template; synced data and setup stay.
   app.post('/computer/reset', async c =>
-    (await deleteMainComputer(db, computers, c.get('principal').id))
+    (await deleteMainComputer(db, computers, await memberOf(c)))
       ? c.json({ reset: true })
       : c.json({ error: 'not_found' }, 404),
   );
@@ -213,7 +222,7 @@ export function createApi({
   app.post('/heartbeat', async c => {
     const parsed = heartbeatSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return c.json(await heartbeat(db, running, c.get('principal').id, parsed.data));
+    return c.json(await heartbeat(db, running, await memberOf(c), parsed.data));
   });
   // Take control for this page load (lease), or move the user's takeover to it; hand back ends it. Both
   // answer with the lease's live view status, which shows whether it holds the takeover.
@@ -221,14 +230,14 @@ export function createApi({
   app.post('/computer/takeover', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const result = await takeOverComputer(db, running, c.get('principal').id, parsed.data.lease);
+    const result = await takeOverComputer(db, running, await memberOf(c), parsed.data.lease);
     if ('error' in result) return computerFailure(c, result);
     return c.json(result);
   });
   app.post('/computer/hand-back', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return c.json(await handBackComputer(db, running, c.get('principal').id, parsed.data.lease));
+    return c.json(await handBackComputer(db, running, await memberOf(c), parsed.data.lease));
   });
   // Live view's paste: the page sends the user's clipboard text here, then Ctrl+V through the relay, while this page load
   // holds the takeover. The body limit is the uploads' (JSON escapes can grow text);
@@ -242,13 +251,7 @@ export function createApi({
         .strict()
         .safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-      const result = await setLiveViewClipboard(
-        db,
-        computers,
-        c.get('principal').id,
-        parsed.data.lease,
-        parsed.data.text,
-      );
+      const result = await setLiveViewClipboard(db, computers, await memberOf(c), parsed.data.lease, parsed.data.text);
       if (result === 'too_large') return c.json({ error: 'too_large' }, 413);
       if (result === 'not_in_control') return c.json({ error: 'not_in_control' }, 409);
       return c.json({});

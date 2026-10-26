@@ -25,6 +25,7 @@ import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { noMetering, noOperatorAdmin } from '../../server/src/hooks';
 import { hasLiveGrant, liveMcpPrincipal, MCP_SCOPE, revokeMcpGrant, revokeMcpGrants } from '../../server/src/mcp';
+import { currentMember, singleOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
 import { createApi } from './index';
 import { createMcpEndpoint } from './mcp';
@@ -44,7 +45,10 @@ let db: Database;
 let auth: ReturnType<typeof createAuth>;
 let endpoint: ReturnType<typeof createMcpEndpoint>;
 async function identity(id: string) {
-  await db.insert(schema.user).values({ id, name: `Fixture ${id}`, email: `${id}@example.test`, emailVerified: true });
+  const person = { id, name: `Fixture ${id}`, email: `${id}@example.test` };
+  await db.insert(schema.user).values({ ...person, emailVerified: true });
+  // Into the deployment's organization, as sign-up does.
+  await db.transaction(tx => singleOrganization.join(tx, person));
   const token = randomBytes(32).toString('base64url');
   const sessionId = randomUUID();
   await db
@@ -181,6 +185,8 @@ async function rpc(response: Response) {
   return JSON.parse(data ? data.slice(6) : text);
 }
 // Migrate once per file and give each test a clone, which is much faster than a new database.
+// The member a person acts as, which the routes resolve from the session.
+const member = async (userId: string) => (await currentMember(db, userId))!;
 let template: PGlite;
 beforeAll(async () => {
   template = new PGlite();
@@ -686,7 +692,9 @@ describe('main computer tools', () => {
     expect(initialized.result.instructions).not.toContain('took over');
     const id = (await tool(claude.access_token, 'computer_open', {})).result.structuredContent.session_id;
     const page = randomUUID();
-    expect(await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, a.id, page)).toMatchObject({
+    expect(
+      await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page),
+    ).toMatchObject({
       takeover: { mine: true },
     });
     const waiting = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result;
@@ -697,10 +705,10 @@ describe('main computer tools', () => {
     expect(busy).toMatchObject({ isError: true, structuredContent: { error: 'busy' } });
     expect(busy.structuredContent.busy_until).toBeUndefined();
     // The recorded user_in_control call is what the live view shows as a waiting agent.
-    expect((await liveViewStatus(db, noMetering, a.id, page)).agentWaiting).toMatchObject({
+    expect((await liveViewStatus(db, noMetering, await member(a.id), page)).agentWaiting).toMatchObject({
       since: expect.any(String),
     });
-    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, a.id, page);
+    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
     const back = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result;
     expect(back.isError).toBe(false);
     expect(back.structuredContent).toMatchObject({
@@ -710,8 +718,8 @@ describe('main computer tools', () => {
     const after = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result;
     expect(after.structuredContent.user_had_control).toBeUndefined();
     // A reopen with the session_id right after a hand-back says so too.
-    await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, a.id, page);
-    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, a.id, page);
+    await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
+    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
     const reopened = (await tool(claude.access_token, 'computer_open', { session_id: id })).result;
     expect(reopened.structuredContent).toMatchObject({
       user_had_control: { message: expect.stringContaining('screenshot') },
@@ -859,7 +867,11 @@ describe('main computer tools', () => {
       session!.id,
       null,
     ]);
-    expect(rows.every(row => row.userId === a.id && row.endedAt >= row.startedAt)).toBe(true);
+    const { membershipId } = await member(a.id);
+    expect(
+      rows.every(row => row.userId === a.id && row.membershipId === membershipId && row.endedAt >= row.startedAt),
+    ).toBe(true);
+    expect(session!.membershipId).toBe(membershipId);
     expect(JSON.stringify(rows)).not.toContain('hunter2');
   });
   it('prunes expired call records and keeps tools working when one cannot be written', async () => {
@@ -998,7 +1010,7 @@ describe('main computer tools', () => {
         );
         expect((await tool(other, 'computer_close', { session_id: taken })).result.isError).toBe(false);
       } finally {
-        await deleteMainComputer(db, provider, a.id);
+        await deleteMainComputer(db, provider, await member(a.id));
       }
     },
     360_000,
@@ -1195,7 +1207,7 @@ describe('agent connections and setup', () => {
     const other = await openComputerSession(
       db,
       { provider: fake.provider, metering: noMetering },
-      { userId: a.id, clientId: 'other-agent' },
+      { ...(await member(a.id)), clientId: 'other-agent' },
     );
     if ('error' in other) throw new Error(other.error);
     await other.done();

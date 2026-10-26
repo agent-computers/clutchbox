@@ -3,7 +3,7 @@ import type { ComputerProvider } from '@agent-computers/computer';
 import type { BetterAuthPlugin } from 'better-auth';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
-import { singleOrganization, type Tenancy } from './organizations';
+import { type Member, singleOrganization, type Tenancy } from './organizations';
 
 // A deployment's own layers, such as the hosted service's, plug in here. The product calls metering, operator admin,
 // a per-organization provider account, and tenancy only through these hooks, and never imports their implementations:
@@ -13,17 +13,19 @@ import { singleOrganization, type Tenancy } from './organizations';
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
-// A member's computer time against an allowance.
+// A member's computer time against an allowance. The hook decides what the allowance covers: the member, or their
+// whole organization.
 export type Usage = { usedSeconds: number; allowanceSeconds: number; remainingSeconds: number; resetsAt: Date };
 // Why metering refuses to start or extend a computer's run: shown to agents and the page, with when it lifts.
 export type MeteringRefusal = { message: string; resetsAt: Date };
 export type Metering = {
   // The usage the account page and agents show; null without an allowance.
-  usage(db: Database, userId: string, now: Date): Promise<Usage | null>;
+  usage(db: Database, member: Member, now: Date): Promise<Usage | null>;
   // Checked before a computer is created, woken, or used, and before live view extends its holds.
-  refusal(db: Database, userId: string, now: Date): Promise<MeteringRefusal | null>;
-  // Running time the computer service booked after the fact, inside the transaction that recorded it.
-  charge(tx: Transaction, userId: string, seconds: number, now: Date): Promise<void>;
+  refusal(db: Database, member: Member, now: Date): Promise<MeteringRefusal | null>;
+  // Running time the computer service booked after the fact to the member's computer, inside the transaction that
+  // recorded it.
+  charge(tx: Transaction, member: Member, seconds: number, now: Date): Promise<void>;
 };
 export const noMetering: Metering = {
   usage: async () => null,

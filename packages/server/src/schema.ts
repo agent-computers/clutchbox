@@ -141,7 +141,8 @@ export const organizations = pgTable(
 );
 // A person's place in one organization. Per-user tables below carry it as membership_id beside user_id while data
 // moves from per-user to per-membership: a trigger fills it on insert from the person's membership, and the migration
-// runner fills older rows (organizations.ts, backfillMemberships). Nothing reads it yet.
+// runner fills older rows (organizations.ts, backfillMemberships). Computers, their sessions, tool calls, and usage are
+// read by it; the rest are still read by user_id.
 export const memberships = pgTable(
   'memberships',
   {
@@ -166,7 +167,7 @@ export const memberships = pgTable(
 const membershipId = () => key('membership_id').references(() => memberships.id, { onDelete: 'cascade' });
 
 export const COMPUTER_STATUSES = ['creating', 'ready'] as const;
-// Validation prototype: one persistent main computer per user.
+// Validation prototype: one persistent main computer per member.
 export const computers = pgTable(
   'computers',
   {
@@ -175,9 +176,8 @@ export const computers = pgTable(
     publicId: text('public_id').notNull().unique(),
     userId: text('user_id')
       .notNull()
-      .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId(),
+    membershipId: membershipId().unique(),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
     sandboxId: text('sandbox_id'),
     // The last applied capture, the sites it wrote (cleared when absent later), and its cookies sealed
@@ -222,7 +222,7 @@ export const computers = pgTable(
     ...timestamps(),
   },
   table => [
-    index('computers_membership_idx').on(table.membershipId),
+    index('computers_user_idx').on(table.userId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
     check('computers_time_zone', timeZoneName(table.timeZone)),
     check(
@@ -233,7 +233,7 @@ export const computers = pgTable(
 );
 // superseded: another agent's computer_open replaced this session after its idle minute.
 export const SESSION_END_REASONS = ['closed', 'idle', 'superseded', 'replaced', 'revoked'] as const;
-// Computer sessions: a server-issued public ID that works only for the user and OAuth client
+// Computer sessions: a server-issued public ID that works only for the member and OAuth client
 // that opened it. At most one is live per computer. `lastCallAt` is when the latest call ended; a call in
 // flight writes its deadline. A user's takeover suspends the live session: `suspendedAt` stops its idle
 // clock, and the resume shifts `lastCallAt` past the suspension and sets `handedBackAt`, which its next call
@@ -402,7 +402,8 @@ export const syncSettings = pgTable(
   },
   table => [index('sync_settings_membership_idx').on(table.membershipId)],
 );
-// Computer seconds charged per user per UTC calendar month, against the free allowance.
+// Computer seconds charged per member per UTC calendar month, against the free allowance. The unique user_id and month
+// stays until the code that wrote it is gone, so a person charges one membership a month until then.
 export const computerUsage = pgTable(
   'computer_usage',
   {
@@ -416,7 +417,7 @@ export const computerUsage = pgTable(
     ...timestamps(),
   },
   table => [
-    index('computer_usage_membership_idx').on(table.membershipId),
+    unique('computer_usage_membership_month_unique').on(table.membershipId, table.month),
     unique('computer_usage_user_month_unique').on(table.userId, table.month),
   ],
 );
