@@ -26,14 +26,16 @@ export default defineConfig({
     // No host permissions at install: the extension reaches its server with OAuth tokens, and each site is
     // granted when added.
     optional_host_permissions: [...browserOrigins],
-    // The OAuth redirect page, which the server's redirect opens. When the user signs in with Google mid-connect,
-    // Google's last hop is the navigation's initiator, so it is listed too.
-    web_accessible_resources: [
-      { resources: ['connected.html'], matches: [...serverOrigins(server), 'https://accounts.google.com/*'] },
-    ],
+    // The OAuth redirect page, which the server's redirect opens. The navigation's initiator is the server, or the
+    // identity provider the person signed in with mid-connect, and a connection can be on any HTTPS server, so any
+    // HTTPS page may open it; it only finishes a flow this extension started (controller.ts, exchange).
+    web_accessible_resources: [{ resources: ['connected.html'], matches: [...serverOrigins(server), 'https://*/*'] }],
     incognito: 'not_allowed',
+    // Connections reach their servers over HTTPS, and the build's own server, which may be on HTTP on this machine.
     content_security_policy: {
-      extension_pages: `script-src 'self'; object-src 'none'; connect-src ${server}`,
+      extension_pages: `script-src 'self'; object-src 'none'; connect-src ${server} https:`,
     },
+    // Chrome Enterprise policy: `approvedServers` connect without the warning (README.md, Connecting to another server).
+    storage: { managed_schema: 'managed-schema.json' },
   }),
 });

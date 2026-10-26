@@ -2,6 +2,7 @@ import {
   type AccountState,
   authorizeUrl,
   browserOrigins,
+  builtInVerifiedServers,
   type Capture,
   type CaptureMode,
   type CaptureRequest,
@@ -34,11 +35,13 @@ import {
   refreshRetryMs,
   requestSchema,
   requestTokens,
+  type ServerResponse,
   type StatusResponse,
   type SyncChange,
   type SyncRecord,
   type SyncSettings,
   type SyncTokens,
+  serverOriginOfInput,
   siteOfHost,
   siteOrigins,
   sitesOfOrigins,
@@ -48,6 +51,9 @@ import {
   type TokenResult,
   timeoutSignal,
   uploadResultSchema,
+  type VerifiedServer,
+  verifiedServersPath,
+  verifiedServersSchema,
   within,
 } from '@agent-computers/capture';
 
@@ -87,6 +93,9 @@ type Pending = {
   tab?: number;
   connection?: string;
   another?: true;
+  // Connecting another organization on this server, and whether the person agreed to its warning.
+  origin?: string;
+  warned?: true;
 };
 // `sites` are added once connected; `reconnect` resumes a connection whose tokens ended. `connection` is the one the
 // click came from, if any: the exchange finds the connection by the organization the server names, so a flow may end
@@ -122,13 +131,15 @@ type Account = { id: string; email: string };
 type Me = { account: Account; organization?: Organization };
 type Access = string | 'reconnect' | 'unavailable';
 type StorageArea = Pick<typeof chrome.storage.session, 'get' | 'set' | 'remove' | 'setAccessLevel'>;
+// Chrome Enterprise policy for this extension (managed-schema.json): `approvedServers` connect without the warning.
+export const approvedServersKey = 'approvedServers';
 // Chrome Web Store builds update through Chrome and offer added sites only; manual (unpacked) builds update by hand from
 // the server's account page and also offer all sites.
 export type Distribution = 'store' | 'manual';
 export interface CaptureBrowser {
   permissions: Pick<typeof chrome.permissions, 'contains' | 'remove' | 'getAll'>;
   cookies: Pick<typeof chrome.cookies, 'getAll'>;
-  storage: { session: StorageArea; local: StorageArea };
+  storage: { session: StorageArea; local: StorageArea; managed: Pick<typeof chrome.storage.managed, 'get'> };
   alarms: {
     get(name: string): Promise<{ periodInMinutes?: number } | undefined>;
     create(name: string, info: { periodInMinutes: number } | { when: number }): Promise<void>;
@@ -185,7 +196,7 @@ interface Host {
   distribution: Distribution;
   redirectUri: string;
   enqueue<T>(work: () => Promise<T>): Promise<T>;
-  handle(request: CaptureRequest): Promise<Response | ExchangeResponse>;
+  handle(request: CaptureRequest): Promise<Response | ExchangeResponse | ServerResponse>;
   // What the other connections still use: sites they capture while connected, and whether one captures all sites.
   others(connection: string): Promise<{ sites: Set<string>; all: boolean }>;
   // Every connection's server site, which no connection captures.
@@ -1072,7 +1083,8 @@ export class CaptureController {
   private readonly host: Host;
   constructor(
     private readonly api: CaptureBrowser,
-    // The build's server: where existing installs and new connections connect (another origin comes later).
+    // The build's server: where existing installs and new connections connect unless the person names another, and
+    // where the verified list comes from.
     private readonly serverOrigin: string,
     private readonly version: string,
     private readonly distribution: Distribution,
@@ -1260,10 +1272,19 @@ export class CaptureController {
 
   // `context.tab` is the sender's tab, which a connect tab returns to. A request acts on the connection it names, or
   // the first; `another` connects whichever organization the server names.
-  async handle(input: unknown, context: { tab?: number | undefined } = {}): Promise<Response | ExchangeResponse> {
+  async handle(
+    input: unknown,
+    context: { tab?: number | undefined } = {},
+  ): Promise<Response | ExchangeResponse | ServerResponse> {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) return { ok: false, error: 'invalid_request' };
     const request = parsed.data;
+    // Outside the queue: it changes nothing, and the verified list may take a while to arrive.
+    if (request.type === 'server') {
+      await this.ready;
+      const origin = serverOriginOfInput(request.origin);
+      return origin ? await this.trust(origin) : { ok: false, error: 'invalid_request' };
+    }
     const named = 'connection' in request ? request.connection : undefined;
     const another = 'another' in request && request.another === true;
     const target = another ? undefined : this.find(named);
@@ -1279,12 +1300,17 @@ export class CaptureController {
           if (request.connect === 'all' && this.distribution === 'store')
             return { ok: false, error: 'invalid_request' };
           if (named !== undefined && !this.find(named)) return { ok: false, error: 'invalid_request' };
+          // Refused before Chrome's prompt, not after it.
+          const server = another ? await this.serverFor(request) : undefined;
+          if (server && 'error' in server) return server;
           const pending: Pending = {
             sites: request.sites,
             at: Date.now(),
             ...(request.connect ? { connect: request.connect } : {}),
             ...(context.tab === undefined ? {} : { tab: context.tab }),
             ...(another ? { another: true as const } : named === undefined ? {} : { connection: named }),
+            ...(server?.origin === undefined ? {} : { origin: server.origin }),
+            ...(another && request.warned ? { warned: true as const } : {}),
           };
           await this.api.storage.session.set({ [pendingKey]: pending });
           return await this.status(another ? undefined : this.find(named));
@@ -1294,7 +1320,8 @@ export class CaptureController {
         const connection = another ? undefined : this.find(named);
         if (named !== undefined && !another && !connection) return { ok: false, error: 'invalid_request' };
         if (!connection) {
-          if (request.type === 'connect') return await this.connectAnother(request.mode, [], context.tab);
+          if (request.type === 'connect')
+            return await this.connectAnother(request.mode, [], context.tab, another ? request : {});
           if (request.type === 'status' || request.type === 'check' || request.type === 'clear')
             return await this.status(undefined);
           // Remove browser access, before any connection.
@@ -1323,7 +1350,7 @@ export class CaptureController {
       } catch {
         return { ok: false, error: 'capture_failed' };
       }
-    }).catch(() => ({ ok: false, error: 'capture_failed' }));
+    }).catch((): Response => ({ ok: false, error: 'capture_failed' }));
   }
   private async status(connection: Connection | undefined) {
     return this.withList(connection ? await connection.status() : await this.blank());
@@ -1338,21 +1365,72 @@ export class CaptureController {
       return await this.status(connection);
     await this.api.storage.session.remove(pendingKey);
     if (!connection) {
-      if (pending.connect) return await this.connectAnother(pending.connect, pending.sites, pending.tab ?? context.tab);
+      if (pending.connect)
+        return await this.connectAnother(pending.connect, pending.sites, pending.tab ?? context.tab, pending);
       return await this.status(undefined);
     }
     return await this.withList(await connection.finish(pending, context, connection.epoch));
   }
-  // A flow for whichever organization the person acts in on the server's website.
-  private async connectAnother(mode: CaptureMode, sites: string[], opener: number | undefined): Promise<Response> {
+  // A flow for whichever organization the person acts in on the server's website: the build's, or `origin`.
+  private async connectAnother(
+    mode: CaptureMode,
+    sites: string[],
+    opener: number | undefined,
+    choice: { origin?: string | undefined; warned?: true | undefined },
+  ): Promise<Response> {
     if (mode === 'all' && this.distribution === 'store') return { ok: false, error: 'invalid_request' };
+    const server = await this.serverFor(choice);
+    if ('error' in server) return server;
     if (
       mode === 'all' &&
       !(await this.api.permissions.contains({ origins: [...browserOrigins], permissions: ['cookies'] }))
     )
       return { ok: false, error: 'permission_required' };
-    await this.startFlow({ mode, sites, reconnect: false, origin: this.serverOrigin }, opener);
+    await this.startFlow({ mode, sites, reconnect: false, origin: server.origin ?? this.serverOrigin }, opener);
     return await this.status(undefined);
+  }
+  // The server a connect click names, once it may be connected to: a server that needs the warning needs `warned`.
+  private async serverFor(choice: {
+    origin?: string | undefined;
+    warned?: true | undefined;
+  }): Promise<{ origin?: string } | { ok: false; error: 'invalid_request' | 'unverified_server' }> {
+    if (choice.origin === undefined) return {};
+    const origin = serverOriginOfInput(choice.origin);
+    if (!origin) return { ok: false, error: 'invalid_request' };
+    if (!choice.warned && (await this.trust(origin)).trust === 'unverified')
+      return { ok: false, error: 'unverified_server' };
+    return { origin };
+  }
+  // Whether connecting to a server needs the warning. The administrator's approval needs no request; the verified list
+  // is asked of the build's server, without anything about the person, and falls back to the built-in copy.
+  private async trust(origin: string): Promise<ServerResponse> {
+    if (origin === this.serverOrigin) return { ok: true, origin, trust: 'build' };
+    if (this.entries.some(entry => entry.origin === origin)) return { ok: true, origin, trust: 'connected' };
+    const approved = (
+      await this.api.storage.managed.get(approvedServersKey).catch(() => ({}) as { [key: string]: unknown })
+    )[approvedServersKey];
+    if (
+      Array.isArray(approved) &&
+      approved.some(each => typeof each === 'string' && serverOriginOfInput(each) === origin)
+    )
+      return { ok: true, origin, trust: 'policy' };
+    const verified = (await this.verifiedServers()).find(each => each.origin === origin);
+    return verified
+      ? { ok: true, origin, trust: 'verified', name: verified.name }
+      : { ok: true, origin, trust: 'unverified' };
+  }
+  private async verifiedServers(): Promise<VerifiedServer[]> {
+    try {
+      const response = await this.api.fetch(`${this.serverOrigin}${verifiedServersPath}`, {
+        credentials: 'omit',
+        signal: AbortSignal.timeout(checkTimeoutMs),
+      });
+      const parsed = verifiedServersSchema.safeParse(await response.json());
+      if (response.ok && parsed.success) return parsed.data.servers;
+    } catch {
+      // The built-in copy below.
+    }
+    return builtInVerifiedServers;
   }
   // Update now, in store builds only: asks Chrome for the store's update and reloads into it when Chrome has one, which
   // ends this worker. Otherwise Chrome installs it later on its own (`noUpdate`).
@@ -1456,7 +1534,8 @@ export function trustedSender(
   if (sender.id !== extensionId || !sender.url) return false;
   const base = `chrome-extension://${extensionId}/`;
   const exchange = (message as { type?: unknown } | null)?.type === 'exchange';
-  if (['popup.html', 'setup.html'].some(page => sender.url === `${base}${page}`)) return !exchange;
+  // `setup.html#server` is the setup tab opened at Connect to another server.
+  if (['popup.html', 'setup.html', 'setup.html#server'].some(page => sender.url === `${base}${page}`)) return !exchange;
   let url: URL;
   try {
     url = new URL(sender.url);

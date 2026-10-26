@@ -14,7 +14,7 @@ services:
       DATABASE_URL: postgres://agent_computers:agent_computers@postgres:5432/agent_computers
       APP_ENV: ${APP_ENV:-development}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      EXTENSION_ORIGINS: ${EXTENSION_ORIGINS:-chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg}
+      EXTENSION_ORIGINS: ${EXTENSION_ORIGINS:-chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg,chrome-extension://bjmfpnkjkdkfimdfgbgepmdgdnodpmmi}
       # Inside the container; PORT chooses the one on this machine.
       HOST: 0.0.0.0
       PORT: 3000

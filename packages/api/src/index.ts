@@ -1,5 +1,6 @@
 import 'server-only';
 import {
+  builtInVerifiedServers,
   captureSchema,
   compareVersions,
   defaultExtensionConfig,
@@ -7,6 +8,7 @@ import {
   siteOfHost,
   syncChangeSchema,
   syncSettingsSchema,
+  verifiedServersPath,
 } from '@agent-computers/capture';
 import {
   API_KEY_ID_PATTERN,
@@ -189,6 +191,15 @@ export function createApi({
     maxAge: 600,
   });
   for (const path of SYNC_PATHS) app.use(path.slice('/api/v1'.length), extensionCors);
+  // The verified servers, which extensions connect to without a warning: public, the same for everyone, and asked
+  // for without credentials, so it comes before authentication.
+  app.get(verifiedServersPath.slice('/api/v1'.length), c =>
+    c.json({ servers: builtInVerifiedServers }, 200, {
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    }),
+  );
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'private, no-store');
     c.header('X-Content-Type-Options', 'nosniff');

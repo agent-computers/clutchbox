@@ -306,6 +306,7 @@ export const syncResponseSchema = z.object({
 });
 // The connection a request acts on, by the extension's own ID for it; without one, the first connection.
 const connection = z.string().min(1).max(64).optional();
+const server = { origin: z.string().max(2048).optional(), warned: z.literal(true).optional() };
 export const requestSchema = z.discriminatedUnion('type', [
   // `check` fetches the account's settings. `reconnect` starts a connect flow for a connection whose tokens ended,
   // without the disclosure. `narrow` leaves all sites for added sites, keeping the connection. `update` asks Chrome for
@@ -328,9 +329,17 @@ export const requestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   // `another` connects the organization the person acts in on the server's website, adding a connection unless that
-  // organization is already connected, rather than connecting the given or first connection again.
+  // organization is already connected, rather than connecting the given or first connection again. `origin` is that
+  // server, the build's without one; `warned` says the person agreed to the warning a server outside the verified list
+  // needs.
   z
-    .object({ type: z.literal('connect'), mode: captureModeSchema, connection, another: z.literal(true).optional() })
+    .object({
+      type: z.literal('connect'),
+      mode: captureModeSchema,
+      connection,
+      another: z.literal(true).optional(),
+      ...server,
+    })
     .strict(),
   // A click that needs Chrome's permission prompt: `prepare` records what it is for, and `finish` does it once
   // granted, from the popup or from the permission event if the prompt closed the popup.
@@ -341,9 +350,12 @@ export const requestSchema = z.discriminatedUnion('type', [
       sites: sitesSchema,
       connection,
       another: z.literal(true).optional(),
+      ...server,
     })
     .strict(),
   z.object({ type: z.literal('finish') }).strict(),
+  // How the extension treats a server before connecting to it (ServerResponse).
+  z.object({ type: z.literal('server'), origin: z.string().max(2048) }).strict(),
   z.object({ type: z.literal('sites'), sites: sitesSchema, connection }).strict(),
   // The redirect page's address, which carries the authorization code (connected.html only).
   z.object({ type: z.literal('exchange'), url: z.string().max(4096) }).strict(),
@@ -467,8 +479,20 @@ export type Response =
         // A connect flow that expired, was already used, or that this extension did not start.
         | 'expired'
         // Connecting was canceled on the server's website.
-        | 'denied';
+        | 'denied'
+        // A server outside the verified list, without agreeing to its warning.
+        | 'unverified_server';
     };
+// How the extension treats a server before connecting to it: its own build's, one it is already connected to, one on
+// the verified list (with the list's name for it), one the browser's administrator approved, or else one that needs
+// the warning first.
+export type ServerTrust = 'build' | 'connected' | 'verified' | 'policy' | 'unverified';
+export interface ServerResponse {
+  ok: true;
+  origin: string;
+  trust: ServerTrust;
+  name?: string;
+}
 // The answer to `exchange`, for connected.html only: never a status, and never carries tokens.
 export interface ExchangeResponse {
   ok: true;
@@ -478,5 +502,6 @@ export interface ExchangeResponse {
   opener?: number;
 }
 export * from './oauth';
+export * from './servers';
 export * from './sites';
 export * from './sync';

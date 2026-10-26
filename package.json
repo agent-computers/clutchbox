@@ -19,6 +19,7 @@
     "zip:manual": "node --import tsx scripts/zip-manual.ts",
     "check:extension-version": "node --import tsx scripts/check-extension-version.ts",
     "check:extension": "node --import tsx scripts/check-extension.ts",
+    "check:verified-servers": "node --import tsx scripts/check-verified-servers.ts",
     "typecheck": "bun --filter \"*\" typecheck && tsc -p tsconfig.json",
     "test": "vitest run",
     "lint": "biome check .",

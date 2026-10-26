@@ -15,6 +15,7 @@ What syncs and who can use it:
 - **The extension reads only what you authorize.** It holds no host permissions at install; each site you add requests its own Chrome permission. Capturing every site takes an explicit **Allow all sites**, which the Chrome Web Store build doesn't offer. Excluded domains are never captured, and partitioned cookies under an excluded site are dropped.
 - **Sync is one way.** Captures go from your browser to your server and on to your agents' browsers. Nothing an agent does changes your browser.
 - **Uploads are authenticated per browser.** The extension signs in to its server with OAuth and PKCE. Access tokens last five minutes, and refresh tokens rotate; a rotated token replayed after 30 seconds is treated as stolen, which disconnects that browser and deletes what it uploaded.
+- **Another server is a choice you confirm.** Each connection syncs only to its own server. The extension connects to a server other than its build's after a full-page warning, unless the server is on the verified list, which CI checks against each server's `/.well-known/agent-computers.json`, or the browser's administrator approved it by policy. Its OAuth redirect page can be opened from any HTTPS page, so a site can tell the extension is installed; it completes only a flow the extension started.
 - **Captures are encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, a key kept outside the database, and stores tokens only as SHA-256 hashes.
 
 What it does not protect against:

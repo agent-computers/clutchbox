@@ -364,13 +364,24 @@ function Connect(props: {
                 ? `Connects ${connectionName(current)} again. Opens Agent Computers in a tab, where you sign in if needed.`
                 : 'Opens Agent Computers in a tab, where you sign in if needed.'}
         </p>
-        {another && (
-          <div>
+        <div className="flex gap-4">
+          {/* The setup tab has room for the address and the warning other servers need. */}
+          {(another || !current) && (
+            <Button
+              variant="link"
+              className="h-auto px-0"
+              disabled={busy}
+              onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('/setup.html#server') })}
+            >
+              Another server…
+            </Button>
+          )}
+          {another && (
             <Button variant="link" className="h-auto px-0" disabled={busy} onClick={props.onCancel}>
               Cancel
             </Button>
-          </div>
-        )}
+          )}
+        </div>
         {saved > 0 && (
           <p className={hint}>
             Also restores the {saved === 1 ? 'site' : `${saved} sites`} you added before, if you connect to the same

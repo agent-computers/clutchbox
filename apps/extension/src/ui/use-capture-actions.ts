@@ -32,25 +32,29 @@ async function pendingUntil() {
 export const pendingMessage =
   "Waiting for your answer to the browser's access prompt. If it closed, try again in two minutes.";
 
+// Another server to connect to, and whether the person agreed to its warning.
+export type ServerChoice = { origin: string; warned?: true };
 // The worker's status and the actions the popup and the setup tab share, for one connection: `connection`, or the first
 // without one. With `another`, connecting connects whichever organization the person acts in on the server's website,
-// adding a connection unless it is already connected.
+// the build's or `server`, adding a connection unless it is already connected.
 export function useCaptureActions({
   connection,
   another = false,
+  server,
   onGranted,
 }: {
   connection?: string | undefined;
   another?: boolean;
+  server?: ServerChoice | undefined;
   onGranted?: () => void;
 } = {}) {
   const queryClient = useQueryClient();
   const [notice, setNotice] = useState('');
   const scoped = (request: CaptureRequest): CaptureRequest =>
-    request.type === 'finish' || request.type === 'exchange'
+    request.type === 'finish' || request.type === 'exchange' || request.type === 'server'
       ? request
       : another && (request.type === 'connect' || request.type === 'prepare')
-        ? { ...request, another: true }
+        ? { ...request, another: true, ...server }
         : connection
           ? { ...request, connection }
           : request;
@@ -105,8 +109,10 @@ export function useCaptureActions({
               : error.message === 'expired'
                 ? 'That connection attempt expired. Try again.'
                 : error.message === 'unavailable'
-                  ? "Couldn't reach Agent Computers. Try again."
-                  : 'Operation did not finish. Check browser access and try again.',
+                  ? "Couldn't reach the server. Try again."
+                  : error.message === 'unverified_server'
+                    ? 'That server needs your agreement to its warning first.'
+                    : 'Operation did not finish. Check browser access and try again.',
       );
       return queryClient.invalidateQueries({ queryKey: statusKey });
     },

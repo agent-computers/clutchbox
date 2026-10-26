@@ -7,10 +7,28 @@ The Chrome extension (Manifest V3) that keeps your agents signed in to the sites
 - **Only the sites you add,** each behind its own Chrome permission; it requests no host permissions at install. Builds outside the Chrome Web Store also offer **Allow all sites**, as an explicit choice.
 - **Excluded domains** are never captured, even under Allow all sites.
 - **Pause, remove a site, or disconnect** at any time. Disconnecting deletes what this browser uploaded.
-- **Several organizations,** on one server, each connected on its own: its own sites, exclusions, pause, and disconnect. A site goes only to the organizations you add it to.
+- **Several organizations,** on any server, each connected on its own: its own sites, exclusions, pause, and disconnect. A site goes only to the organizations you add it to.
+- **A warning before another server,** unless it is on the verified list or your administrator approved it, since that server receives what you sync to it.
 - **Uploads only on change,** in the background while Chrome runs, over OAuth with PKCE and short-lived tokens.
 
 Works in Chrome 130 and later, and in other Chromium browsers (Edge, Brave, Arc).
+
+## Connecting to another server
+
+The store build connects to agent-computers.com unless you choose **Connect to another server** in its setup tab (the popup's **Another server…** opens it) and enter a server's address, such as `agents.example.com`. The server must use HTTPS and allow the store build's ID in `EXTENSION_ORIGINS`, as a self-hosted web app does by default.
+
+A server outside the verified list gets a full-page warning first, before any permission prompt: it, not Agent Computers, receives your sign-ins. Servers on the list, servers you already connected to, and servers your administrator approved connect without it.
+
+**The verified list** is [`packages/capture/verified-servers.json`](../../packages/capture/verified-servers.json), changed by pull request: add `{"origin": "https://agents.example.com", "name": "Example Inc"}`, kept sorted by origin. Your server must serve `/.well-known/agent-computers.json` as `{"origin": "https://agents.example.com"}`, which the web app does on its own; CI checks it for each entry when the list changes and weekly. The extension asks its build's server for the list, with nothing about you, and uses the copy it was built with when that fails.
+
+**Approving a server for your company:** set the extension's `approvedServers` policy to a list of origins with Chrome Enterprise policy, and its setup tab offers them first, without the warning. For the store build (`bjmfpnkjkdkfimdfgbgepmdgdnodpmmi`):
+
+- Google Admin console: Chrome browser, Apps & extensions, the extension, **Policy for extensions**: `{"approvedServers": {"Value": ["https://agents.example.com"]}}`.
+- Linux: a JSON file in `/etc/opt/chrome/policies/managed/`: `{"3rdparty": {"extensions": {"bjmfpnkjkdkfimdfgbgepmdgdnodpmmi": {"approvedServers": ["https://agents.example.com"]}}}}`.
+- Windows: the registry key `HKLM\Software\Policies\Google\Chrome\3rdparty\extensions\bjmfpnkjkdkfimdfgbgepmdgdnodpmmi\policy\approvedServers`, with the origins as values `1`, `2`, and so on.
+- macOS: the preference domain `com.google.Chrome.extensions.bjmfpnkjkdkfimdfgbgepmdgdnodpmmi`, key `approvedServers`, in a configuration profile.
+
+`chrome://policy` shows what Chrome loaded. The schema is [`public/managed-schema.json`](public/managed-schema.json).
 
 ## Build it for your server
 

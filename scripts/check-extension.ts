@@ -17,17 +17,20 @@ assert.deepEqual(manifest.permissions.toSorted(), ['activeTab', 'alarms', 'cooki
 assert.deepEqual(manifest.optional_host_permissions.toSorted(), ['http://*/*', 'https://*/*']);
 // No install-time site: the extension reaches the server with OAuth tokens.
 assert.equal(manifest.host_permissions, undefined);
-// Only the OAuth redirect page, reachable from our server and Google's sign-in.
+// Only the OAuth redirect page, reachable from the build's server and any HTTPS server or identity provider.
 assert.deepEqual(manifest.web_accessible_resources, [
-  { resources: ['connected.html'], matches: [`${serverOrigin}/*`, 'https://accounts.google.com/*'] },
+  { resources: ['connected.html'], matches: [`${serverOrigin}/*`, 'https://*/*'] },
 ]);
+assert.deepEqual(manifest.storage, { managed_schema: 'managed-schema.json' });
+const policy = JSON.parse(await readFile(path.join(output, 'managed-schema.json'), 'utf8'));
+assert.equal(policy.properties.approvedServers.type, 'array', 'Policy schema missing approvedServers');
 for (const forbidden of ['content_scripts', 'externally_connectable'])
   assert.equal(manifest[forbidden], undefined, `Unexpected manifest capability: ${forbidden}`);
 assert.equal(manifest.incognito, 'not_allowed');
 assert.equal(manifest.minimum_chrome_version, '130');
 assert.equal(
   manifest.content_security_policy.extension_pages,
-  `script-src 'self'; object-src 'none'; connect-src ${serverOrigin}`,
+  `script-src 'self'; object-src 'none'; connect-src ${serverOrigin} https:`,
 );
 assert.equal(typeof manifest.key, 'string', 'Pinned public key missing');
 const derivedId = [...createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex').slice(0, 32)]
@@ -49,5 +52,5 @@ for (const file of files.filter(file => /\.(js|html)$/.test(file))) {
 }
 assert.ok(originBuilt, 'Server origin in the bundle does not match the manifest CSP');
 console.log(
-  `PASS: MV3 permissions, pinned ID ${extensionId}, CSP connect-src ${serverOrigin} only, OAuth redirect page, packaging, and credential/fixture guards.`,
+  `PASS: MV3 permissions, pinned ID ${extensionId}, CSP connect-src ${serverOrigin} and HTTPS, OAuth redirect page, packaging, and credential/fixture guards.`,
 );

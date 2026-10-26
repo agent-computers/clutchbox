@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { builtInVerifiedServers } from '@agent-computers/capture';
 import { PGlite } from '@electric-sql/pglite';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -169,6 +170,20 @@ describe('API routes', () => {
     expect(await response.json()).toEqual({ user: 'a' });
     expect(await (await request('GET', '/me', { cookie: a })).json()).toMatchObject({ user: { id: 'a' } });
     expect((await client()('PUT', '/extra', { cookie: a })).status).toBe(404);
+  });
+
+  it('serve the verified servers to anyone, without a session, the same for everyone', async () => {
+    const request = client();
+    const a = await identity('a');
+    for (const options of [{ from: null }, { from: extension }, { cookie: a }]) {
+      const response = await request('GET', '/verified-servers', options);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('cache-control')).toBe('public, max-age=3600');
+      expect(response.headers.get('set-cookie')).toBeNull();
+      expect(await response.json()).toEqual({ servers: builtInVerifiedServers });
+    }
+    expect((await request('POST', '/verified-servers', { cookie: a })).status).toBe(404);
   });
 
   it('accept capture uploads from a connected browser, reject malformed or oversized ones, and keep them per user', async () => {

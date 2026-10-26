@@ -26,6 +26,8 @@ import {
 
 const origin = 'https://server.test';
 const issuer = `${origin}/api/auth`;
+// A server other than the build's, run by someone else.
+const elsewhere = 'https://agents.elsewhere.test';
 const redirectUri = 'chrome-extension://own/connected.html';
 const emails: { [user: string]: string } = { 'user-a': 'a@example.test', 'user-b': 'b@example.test' };
 const answer = (status: number, json: unknown) => new Response(JSON.stringify(json), { status });
@@ -68,7 +70,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
   );
   // GET /api/v1/me for the token's owner and the organization it acts in: the one the person acted in on the
   // server's website when they connected (`acting`).
-  const organizations: { [id: string]: string } = { 'org-a': 'Acme', 'org-b': 'Beta' };
+  const organizations: { [id: string]: string } = { 'org-a': 'Acme', 'org-b': 'Beta', 'org-x': 'Elsewhere' };
   const acting: { [user: string]: string } = { 'user-a': 'org-a', 'user-b': 'org-a' };
   const me = vi.fn(async (user: string, organization: string) =>
     answer(200, {
@@ -110,15 +112,19 @@ function setup(installed: { [key: string]: unknown } = {}) {
   // app: single-use codes bound to the PKCE challenge and redirect URI; rotating refresh tokens whose rotated token gets the same answer for 30 seconds and
   // disconnects its family after; a disconnected family's tokens refused.
   let counter = 0;
-  const codes = new Map<string, { user: string; organization: string; challenge: string; redirectUri: string }>();
-  type Holder = { user: string; organization: string; family: string };
+  const codes = new Map<
+    string,
+    { user: string; organization: string; challenge: string; redirectUri: string; server: string }
+  >();
+  // Each token works only on the server that issued it.
+  type Holder = { user: string; organization: string; family: string; server: string };
   const accessTokens = new Map<string, Holder>();
   const refreshTokens = new Map<string, Holder & { rotatedAt?: number; answer?: object }>();
   const revoked = new Set<string>();
   const failures: TokenFailure[] = [];
   // Set by refuseAccess: access tokens minted from then on are refused too.
   let refuseIssued = false;
-  const issue = ({ user, organization, family }: Holder) => {
+  const issue = ({ user, organization, family, server }: Holder) => {
     counter++;
     const tokens = {
       access_token: `access-${counter}`,
@@ -127,12 +133,12 @@ function setup(installed: { [key: string]: unknown } = {}) {
       refresh_token: `refresh-${counter}`,
       scope: 'offline_access sync',
     };
-    if (!refuseIssued) accessTokens.set(tokens.access_token, { user, organization, family });
-    refreshTokens.set(tokens.refresh_token, { user, organization, family });
+    if (!refuseIssued) accessTokens.set(tokens.access_token, { user, organization, family, server });
+    refreshTokens.set(tokens.refresh_token, { user, organization, family, server });
     return tokens;
   };
   const invalidGrant = () => answer(400, { error: 'invalid_grant' });
-  const grantTokens = (body: URLSearchParams) => {
+  const grantTokens = (body: URLSearchParams, server: string) => {
     if (body.get('client_id') !== 'agent-computers-extension') return answer(401, { error: 'invalid_client' });
     if (body.get('grant_type') === 'authorization_code') {
       const code = codes.get(body.get('code') ?? '');
@@ -140,11 +146,20 @@ function setup(installed: { [key: string]: unknown } = {}) {
       const challenge = createHash('sha256')
         .update(body.get('code_verifier') ?? '')
         .digest('base64url');
-      if (!code || code.redirectUri !== body.get('redirect_uri') || code.challenge !== challenge) return invalidGrant();
-      return answer(200, issue({ user: code.user, organization: code.organization, family: `family-${counter + 1}` }));
+      if (
+        !code ||
+        code.server !== server ||
+        code.redirectUri !== body.get('redirect_uri') ||
+        code.challenge !== challenge
+      )
+        return invalidGrant();
+      return answer(
+        200,
+        issue({ user: code.user, organization: code.organization, family: `family-${counter + 1}`, server }),
+      );
     }
     const presented = refreshTokens.get(body.get('refresh_token') ?? '');
-    if (!presented || revoked.has(presented.family)) return invalidGrant();
+    if (!presented || presented.server !== server || revoked.has(presented.family)) return invalidGrant();
     if (presented.answer) {
       if (Date.now() - presented.rotatedAt! <= 30_000) return answer(200, presented.answer);
       revoked.add(presented.family);
@@ -154,39 +169,43 @@ function setup(installed: { [key: string]: unknown } = {}) {
     presented.rotatedAt = Date.now();
     return answer(200, presented.answer);
   };
-  const token = vi.fn(async (body: URLSearchParams) => {
+  const token = vi.fn(async (body: URLSearchParams, server = origin) => {
     const failure = failures.shift();
     if (failure === 'network') throw new TypeError('network');
     if (failure === '5xx') return answer(503, { error: 'server_error' });
     if (failure === '429') return answer(429, { error: 'rate_limited' });
     if (failure === 'replay_pending') return invalidGrant();
-    const response = grantTokens(body);
+    const response = grantTokens(body, server);
     if (failure === 'lost') throw new TypeError('network');
     return response;
   });
-  const bearer = (init: RequestInit) => {
+  const bearer = (init: RequestInit, server: string) => {
     const presented = /^Bearer (.+)$/.exec(
       (init.headers as { [name: string]: string } | undefined)?.authorization ?? '',
     );
     const found = presented ? accessTokens.get(presented[1]!) : undefined;
-    return found && !revoked.has(found.family) ? found : undefined;
+    return found && found.server === server && !revoked.has(found.family) ? found : undefined;
   };
   const requests: { url: string; init: RequestInit }[] = [];
   // The captures each organization accepted.
   const received: { organization: string; capture: { scope: unknown; cookies: { domain: string }[] } }[] = [];
+  // The build's server's verified list, asked for without a token.
+  const verified = vi.fn(async () => answer(200, { servers: [] as { origin: string; name: string }[] }));
   const route = async (url: string, init: RequestInit = {}) => {
     requests.push({ url, init });
     if (init.credentials !== 'omit') credentialed.push(url);
-    if (url === `${issuer}/oauth2/token`) return token(new URLSearchParams(String(init.body)));
-    const caller = bearer(init);
+    const server = new URL(url).origin;
+    if (url === `${origin}/api/v1/verified-servers`) return verified();
+    if (url === `${server}/api/auth/oauth2/token`) return token(new URLSearchParams(String(init.body)), server);
+    const caller = bearer(init, server);
     if (!caller) return failure(401, 'unauthenticated');
-    if (url === `${origin}/api/v1/me`) return me(caller.user, caller.organization);
-    if (url.startsWith(`${origin}/api/v1/sync`)) return syncApi(url, init, memberOf(caller.user, caller.organization));
+    if (url === `${server}/api/v1/me`) return me(caller.user, caller.organization);
+    if (url.startsWith(`${server}/api/v1/sync`)) return syncApi(url, init, memberOf(caller.user, caller.organization));
     const response = await fetch(url, init);
     if (init.method === 'POST' && response.ok)
       received.push({ organization: caller.organization, capture: JSON.parse(String(init.body)).capture });
     // DELETE /captures disconnects the browser that sent it.
-    if (url === `${origin}/api/v1/captures` && init.method === 'DELETE' && response.ok) revoked.add(caller.family);
+    if (url === `${server}/api/v1/captures` && init.method === 'DELETE' && response.ok) revoked.add(caller.family);
     return response;
   };
   const remove = (area: () => { [key: string]: unknown }, assign: (next: { [key: string]: unknown }) => void) =>
@@ -195,6 +214,8 @@ function setup(installed: { [key: string]: unknown } = {}) {
       for (const key of [keys].flat()) delete next[key];
       assign(next);
     });
+  // Chrome Enterprise policy for the extension.
+  let managed: { [key: string]: unknown } = {};
   let badge = '';
   let tabId = 100;
   const api = {
@@ -234,6 +255,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
         ),
         setAccessLevel: vi.fn(async () => undefined),
       },
+      managed: { get: vi.fn(async () => structuredClone(managed)) },
     },
     alarms: {
       get: vi.fn(async (name: string) => alarms.get(name)),
@@ -267,9 +289,9 @@ function setup(installed: { [key: string]: unknown } = {}) {
     for (const origin of browserOrigins) grants.add(origin);
   };
   // The authorize URL the last connect opened, which must ask for the sync scope with PKCE and nothing more.
-  const authorizeRequest = () => {
+  const authorizeRequest = (server = origin) => {
     const url = new URL(api.tabs.create.mock.calls.at(-1)![0].url);
-    expect(`${url.origin}${url.pathname}`).toBe(`${issuer}/oauth2/authorize`);
+    expect(`${url.origin}${url.pathname}`).toBe(`${server}/api/auth/oauth2/authorize`);
     const params = Object.fromEntries(url.searchParams);
     expect(params).toEqual({
       response_type: 'code',
@@ -283,15 +305,16 @@ function setup(installed: { [key: string]: unknown } = {}) {
     return { state: params.state!, challenge: params.code_challenge! };
   };
   // The server signs the user in and redirects with a code for them.
-  const mint = (user = 'user-a') => {
-    const { state, challenge } = authorizeRequest();
+  const mint = (user = 'user-a', server = origin) => {
+    const { state, challenge } = authorizeRequest(server);
     const code = `code-${++counter}`;
-    codes.set(code, { user, organization: acting[user]!, challenge, redirectUri });
+    codes.set(code, { user, organization: acting[user]!, challenge, redirectUri, server });
     return { code, state };
   };
   const exchange = (url: string) => controller.handle({ type: 'exchange', url });
   const redirect = (params: { [name: string]: string }) => `${redirectUri}?${new URLSearchParams(params)}`;
-  const authorize = (user = 'user-a') => exchange(redirect({ ...mint(user), iss: issuer }));
+  const authorize = (user = 'user-a', server = origin) =>
+    exchange(redirect({ ...mint(user, server), iss: `${server}/api/auth` }));
   // Waits for the work the exchange queued: the account's settings and the first sync.
   const drain = () => controller.handle({ type: 'status' });
   // Connecting with all sites captures right away. Here that first upload fails, so each test starts connected with
@@ -350,6 +373,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
     exchange,
     redirect,
     authorize,
+    authorizeRequest,
     drain,
     // The server disconnects every browser (Turn off sync, the account page's Disconnect).
     revokeFamily: () => {
@@ -363,6 +387,10 @@ function setup(installed: { [key: string]: unknown } = {}) {
       refuseIssued = true;
     },
     failNextToken: (...kinds: TokenFailure[]) => failures.push(...kinds),
+    verified,
+    policy: (next: { [key: string]: unknown }) => {
+      managed = next;
+    },
   };
 }
 type Test = ReturnType<typeof setup>;
@@ -912,11 +940,13 @@ describe('whole-browser authorization and lifecycle', () => {
     const exchange = { type: 'exchange', url: `${redirectUri}?code=x` };
     expect(trustedSender(page('popup.html'), 'own', status)).toBe(true);
     expect(trustedSender(page('setup.html', tab), 'own', status)).toBe(true);
+    expect(trustedSender(page('setup.html#server', tab), 'own', status)).toBe(true);
     expect(trustedSender(page('connected.html', tab), 'own', exchange)).toBe(true);
     expect(trustedSender(page('connected.html?code=x&state=y', tab), 'own', exchange)).toBe(true);
     for (const [sender, message] of [
       [{ id: 'own', url: 'https://capture.test/' }, status],
       [page('setup.html?x'), status],
+      [page('setup.html#other'), status],
       [page('other.html'), status],
       [{ ...page('popup.html'), id: 'other' }, status],
       [{ ...page('setup.html'), id: 'other' }, status],
@@ -2081,5 +2111,133 @@ describe('several organizations', () => {
     expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
       account: { state: 'reconnect' },
     });
+  });
+});
+
+describe('another server', () => {
+  const trust = (test: Test, server: string) => test.controller.handle({ type: 'server', origin: server });
+  const opened = (test: Test) => test.api.tabs.create.mock.calls.length;
+
+  it('warns for a server outside the verified list, unless it is the build’s, verified, approved, or connected', async () => {
+    const test = setup();
+    expect(await trust(test, origin)).toEqual({ ok: true, origin, trust: 'build' });
+    expect(await trust(test, 'agents.elsewhere.test/some/page')).toEqual({
+      ok: true,
+      origin: elsewhere,
+      trust: 'unverified',
+    });
+    // The list comes from the build's server, without cookies or anything else about the person.
+    const asked = test.requests.filter(({ url }) => url === `${origin}/api/v1/verified-servers`);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.init).toEqual({ credentials: 'omit', signal: expect.any(AbortSignal) });
+    test.verified.mockResolvedValueOnce(answer(200, { servers: [{ origin: elsewhere, name: 'Elsewhere Inc' }] }));
+    expect(await trust(test, elsewhere)).toEqual({
+      ok: true,
+      origin: elsewhere,
+      trust: 'verified',
+      name: 'Elsewhere Inc',
+    });
+    // Unreachable or malformed, the built-in copy decides.
+    test.verified.mockRejectedValueOnce(new TypeError('network'));
+    expect(await trust(test, elsewhere)).toMatchObject({ trust: 'unverified' });
+    test.verified.mockResolvedValueOnce(answer(200, { servers: [{ origin: 'http://plain.test', name: 'Plain' }] }));
+    expect(await trust(test, 'http://plain.test')).toEqual({ ok: false, error: 'invalid_request' });
+    // The browser's administrator approves servers through policy, which needs no request.
+    test.policy({ approvedServers: ['https://agents.elsewhere.test/', 42] });
+    test.verified.mockClear();
+    expect(await trust(test, elsewhere)).toEqual({ ok: true, origin: elsewhere, trust: 'policy' });
+    expect(test.verified).not.toHaveBeenCalled();
+    for (const invalid of ['http://agents.elsewhere.test', 'not a server', 'https://user:pw@agents.elsewhere.test', ''])
+      expect(await trust(test, invalid)).toEqual({ ok: false, error: 'invalid_request' });
+  });
+
+  it('connects another server only after its warning, and syncs that connection to it alone', async () => {
+    const test = setup();
+    const before = opened(test);
+    // Refused before Chrome's prompt and before any tab, whether or not the click needs a grant.
+    expect(await test.controller.handle({ type: 'connect', mode: 'sites', another: true, origin: elsewhere })).toEqual({
+      ok: false,
+      error: 'unverified_server',
+    });
+    expect(
+      await test.controller.handle({
+        type: 'prepare',
+        connect: 'sites',
+        sites: ['capture.test'],
+        another: true,
+        origin: elsewhere,
+      }),
+    ).toEqual({ ok: false, error: 'unverified_server' });
+    expect(test.session().pendingGrant).toBeUndefined();
+    expect(opened(test)).toBe(before);
+    // Agreed: the grant, then the server's authorize page.
+    expect(
+      await test.controller.handle({
+        type: 'prepare',
+        connect: 'sites',
+        sites: ['capture.test'],
+        another: true,
+        origin: elsewhere,
+        warned: true,
+      }),
+    ).toMatchObject({ ok: true });
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.permissionsAdded();
+    // A redirect naming another issuer than the flow's server is refused.
+    const { code, state } = test.mint('user-a', elsewhere);
+    expect(await test.exchange(test.redirect({ code, state, iss: issuer }))).toEqual({
+      ok: false,
+      error: 'invalid_request',
+    });
+    expect(test.entries()).toEqual([]);
+    await test.controller.handle({
+      type: 'connect',
+      mode: 'sites',
+      another: true,
+      origin: elsewhere,
+      warned: true,
+    });
+    test.acting['user-a'] = 'org-x';
+    expect(await test.authorize('user-a', elsewhere)).toMatchObject({ ok: true, organization: 'Elsewhere' });
+    await test.drain();
+    const [entry] = test.entries();
+    expect(entry).toEqual({
+      id: expect.any(String),
+      origin: elsewhere,
+      organization: { id: 'org-x', name: 'Elsewhere' },
+    });
+    // Its sync and settings go to that server only.
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.handle({ type: 'sites', sites: ['capture.test'], connection: entry!.id });
+    test.getAll.mockResolvedValue([{ ...cookie, value: 'changed' }]);
+    expect(await test.controller.handle({ type: 'capture', connection: entry!.id })).toMatchObject({
+      origin: elsewhere,
+      sync: { state: 'synced' },
+    });
+    const servers = new Set(
+      test.requests
+        .map(({ url }) => new URL(url))
+        .filter(url => url.pathname !== '/api/v1/verified-servers')
+        .map(url => url.origin),
+    );
+    expect([...servers]).toEqual([elsewhere]);
+    expect(test.accounts['user-a@org-x']!.settings).toMatchObject({ sites: ['capture.test'] });
+    // Connected once, it needs no warning again.
+    expect(await trust(test, elsewhere)).toMatchObject({ trust: 'connected' });
+  });
+
+  it('connects a verified or approved server without the warning', async () => {
+    const test = setup();
+    test.verified.mockResolvedValue(answer(200, { servers: [{ origin: elsewhere, name: 'Elsewhere Inc' }] }));
+    expect(
+      await test.controller.handle({ type: 'connect', mode: 'sites', another: true, origin: elsewhere }),
+    ).toMatchObject({ ok: true });
+    test.authorizeRequest(elsewhere);
+    test.verified.mockResolvedValue(answer(200, { servers: [] }));
+    test.policy({ approvedServers: [elsewhere] });
+    expect(
+      await test.controller.handle({ type: 'connect', mode: 'sites', another: true, origin: elsewhere }),
+    ).toMatchObject({ ok: true });
+    test.authorizeRequest(elsewhere);
   });
 });
