@@ -28,9 +28,6 @@ export async function currentMember(db: Pick<Database, 'select'>, userId: string
     .limit(1);
   return member ?? null;
 }
-// The same membership's ID, as SQL for a write that names it.
-export const currentMembershipId = (userId: string) =>
-  sql`(SELECT ${memberships.id} FROM ${memberships} WHERE ${memberships.userId} = ${userId} ORDER BY ${memberships.id} LIMIT 1)`;
 
 // Within the name CHECK on organizations (1 to 100 characters).
 const organizationName = (name: string, fallback: string) => (name.trim() || fallback).slice(0, 100);
@@ -78,18 +75,9 @@ export const singleOrganization: Tenancy = {
   },
 };
 
-// Tables still keyed by user that carry membership_id beside it (schema.ts, memberships).
-export const MEMBERSHIP_SCOPED_TABLES = [
-  'connected_browsers',
-  'captures',
-  'sync_revocations',
-  'sync_settings',
-  'setups',
-] as const;
-
 // Puts every person without a membership into an organization, oldest account first, so a single organization's first
-// owner is its first user; then fills membership_id on older rows of people with exactly one membership, the only
-// ones whose rows have an unambiguous membership. Safe to run again: it touches only what is still missing.
+// owner is its first user: accounts made before organizations, and any whose sign-up hook failed (auth.ts). Safe to
+// run again: it touches only people still without one.
 export async function backfillMemberships(db: Database, tenancy: Tenancy) {
   const people = await db
     .select({ id: user.id, name: user.name, email: user.email })
@@ -97,10 +85,5 @@ export async function backfillMemberships(db: Database, tenancy: Tenancy) {
     .where(notExists(db.select({ id: memberships.id }).from(memberships).where(eq(memberships.userId, user.id))))
     .orderBy(asc(user.createdAt), asc(user.id));
   for (const person of people) await db.transaction(tx => tenancy.join(tx, person));
-  for (const table of MEMBERSHIP_SCOPED_TABLES)
-    await db.execute(sql`
-      UPDATE ${sql.identifier(table)} AS scoped SET membership_id = sole.id
-      FROM (SELECT min(id) AS id, user_id FROM memberships GROUP BY user_id HAVING count(*) = 1) AS sole
-      WHERE scoped.user_id = sole.user_id AND scoped.membership_id IS NULL`);
   return people.length;
 }

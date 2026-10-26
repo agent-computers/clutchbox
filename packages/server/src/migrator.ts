@@ -5,7 +5,6 @@ import type { PoolClient } from 'pg';
 import type { Database } from './database';
 import { backfillMemberships, type Tenancy } from './organizations';
 import * as schema from './schema';
-import { resealForMemberships } from './sealing';
 
 export const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
 
@@ -28,8 +27,7 @@ export function migrationTarget(
 // Applies pending migrations on one session, under an advisory lock so concurrent deploys or replicas take turns, and
 // records whether the database holds production data so the other kind of deployment refuses it. Then it puts accounts
 // made before organizations into one, with the deployment's own tenancy (ServerHooks.tenancy): required, so a
-// deployment cannot backfill with another's choice by leaving it out. Then it re-seals synced data still sealed for a
-// person for their membership (sealing.ts), with the capture key when the environment has it. `afterMigrate` runs
+// deployment cannot backfill with another's choice by leaving it out. `afterMigrate` runs
 // on the same session before the lock is released, with every public table, so a deployment can grant its own roles
 // access to exactly the tables the migrations left.
 export async function runMigrations({
@@ -60,14 +58,6 @@ export async function runMigrations({
     );
     const db = drizzle(client, { schema }) as unknown as Database;
     await backfillMemberships(db, tenancy);
-    // Counts only, never values.
-    const sealed = await resealForMemberships(db);
-    if (sealed.resealed || sealed.unreadable)
-      console.log(
-        `Re-sealed ${sealed.resealed} values for their membership; ${sealed.unreadable} could not be opened.`,
-      );
-    if (sealed.waiting)
-      console.log(`${sealed.waiting} values wait to be re-sealed for their membership: no capture key.`);
     if (afterMigrate) {
       const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).rows.map(
         row => row.tablename as string,

@@ -113,6 +113,13 @@
       "when": 1792978326575,
       "tag": "0015_drop_per_user_uniques",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792984607695,
+      "tag": "0016_sync_membership_required",
+      "breakpoints": true
     }
   ]
 }

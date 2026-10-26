@@ -462,7 +462,9 @@ describe('connected browsers', () => {
     // The second did: its capture goes, behind a deletion tombstone.
     expect(await disconnectBrowser(db, await member('a'), { id: second.browser.id })).toBe(true);
     expect(await db.select().from(schema.captures)).toEqual([]);
-    expect(await db.select().from(schema.syncRevocations)).toMatchObject([{ userId: 'a', disconnected: false }]);
+    expect(await db.select().from(schema.syncRevocations)).toMatchObject([
+      { membershipId: (await member('a')).membershipId, disconnected: false },
+    ]);
     expect((await refresh(two.refresh_token)).status).toBe(400);
     expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
     // Another client's token is never a sync token, even with the scope.
@@ -492,7 +494,12 @@ describe('connected browsers', () => {
       await db
         .select()
         .from(schema.connectedBrowsers)
-        .where(and(eq(schema.connectedBrowsers.userId, 'a'), isNotNull(schema.connectedBrowsers.disconnectedAt))),
+        .where(
+          and(
+            eq(schema.connectedBrowsers.membershipId, (await member('a')).membershipId),
+            isNotNull(schema.connectedBrowsers.disconnectedAt),
+          ),
+        ),
     ).toHaveLength(2);
     for (const tokens of [used, unused]) {
       expect(await principal(tokens)).toBeNull();

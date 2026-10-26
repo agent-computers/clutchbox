@@ -393,7 +393,7 @@ describe('API routes', () => {
       sync: { mode: 'sites', sites: ['github.com', 'notion.so'], readable: true },
     });
     expect((await db.select().from(schema.setups))[0]).toMatchObject({
-      userId: 'a',
+      membershipId: (await member('a')).membershipId,
       browserSyncedAt: expect.any(Date),
     });
     expect((await setup(b)).items.browserSync).toBe(false);
@@ -434,7 +434,10 @@ describe('API routes', () => {
       setUpAt: null,
       noticeOpen: false,
     });
-    const [row] = await db.select().from(schema.setups).where(eq(schema.setups.userId, 'a'));
+    const [row] = await db
+      .select()
+      .from(schema.setups)
+      .where(eq(schema.setups.membershipId, (await member('a')).membershipId));
     expect(row).toMatchObject({ setUpAt: null, browserSyncedAt: expect.any(Date), firstSetUpAt: expect.any(Date) });
     // A provider failure answers 503 after set-up is already reset.
     const request = client();

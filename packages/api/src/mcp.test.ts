@@ -1033,7 +1033,12 @@ describe('agent connections and setup', () => {
     (await db.select().from(schema.computerSessions).where(isNull(schema.computerSessions.endedAt)))[0]?.clientId ??
     null;
   const setup = async (userId: string) =>
-    (await db.select().from(schema.setups).where(eq(schema.setups.userId, userId)))[0];
+    (
+      await db
+        .select()
+        .from(schema.setups)
+        .where(eq(schema.setups.membershipId, (await member(userId)).membershipId))
+    )[0];
   function web(cookie: string) {
     const api = createApi({ db, auth, origin, computers: fakeComputerProvider().provider });
     return (method: string, path: string, body?: unknown, from = origin) =>

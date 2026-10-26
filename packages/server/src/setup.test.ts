@@ -68,7 +68,7 @@ describe('setup progress', () => {
     const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
     const a = await user('a');
     const old = await user('old');
-    await db.insert(schema.setups).values({ userId: old.userId, membershipId: old.membershipId, preexisting: true });
+    await db.insert(schema.setups).values({ membershipId: old.membershipId, preexisting: true });
     for (const id of [a, old]) {
       await noteSetupStep(db, id, 'browserSynced');
       await noteSetupStep(db, id, 'browserSynced');

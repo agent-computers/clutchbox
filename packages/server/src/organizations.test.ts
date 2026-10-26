@@ -53,13 +53,6 @@ async function person(id: string) {
     createdAt: new Date(Date.UTC(2026, 9, 1, 0, created)),
   });
 }
-// A row in one table of each kind: one row per person, and many rows per person.
-async function rows(userId: string) {
-  await db.insert(schema.syncSettings).values({ userId, sealed: 'sealed' });
-  await db
-    .insert(schema.connectedBrowsers)
-    .values({ userId, publicId: `brw_${userId}`, authorizationCodeId: `code-${userId}` });
-}
 const membershipsOf = (userId: string) =>
   db
     .select({
@@ -73,23 +66,9 @@ const membershipsOf = (userId: string) =>
     .innerJoin(schema.organizations, eq(schema.organizations.id, schema.memberships.organizationId))
     .where(eq(schema.memberships.userId, userId))
     .orderBy(asc(schema.memberships.id));
-const scopedRows = async (userId: string) => [
-  ...(await db
-    .select({ membershipId: schema.syncSettings.membershipId })
-    .from(schema.syncSettings)
-    .where(eq(schema.syncSettings.userId, userId))),
-  ...(await db
-    .select({ membershipId: schema.connectedBrowsers.membershipId })
-    .from(schema.connectedBrowsers)
-    .where(eq(schema.connectedBrowsers.userId, userId))),
-];
-
 describe('backfill for accounts made before organizations', () => {
-  it('puts everyone in one organization, owned by the oldest account, and fills their rows', async () => {
-    for (const id of ['first', 'second', 'third']) {
-      await person(id);
-      await rows(id);
-    }
+  it('puts everyone in one organization, owned by the oldest account', async () => {
+    for (const id of ['first', 'second', 'third']) await person(id);
     expect(await backfillMemberships(db, singleOrganization)).toBe(3);
     const [owner] = await membershipsOf('first');
     expect(owner).toMatchObject({ role: 'owner', personalUserId: null, name: 'acme.test' });
@@ -98,33 +77,24 @@ describe('backfill for accounts made before organizations', () => {
         expect.objectContaining({ role: 'member', organizationId: owner!.organizationId }),
       ]);
     expect(await db.select().from(schema.organizations)).toHaveLength(1);
-    for (const id of ['first', 'second', 'third']) {
-      const [membership] = await membershipsOf(id);
-      expect(await scopedRows(id)).toEqual([{ membershipId: membership!.id }, { membershipId: membership!.id }]);
-    }
   });
 
   it('gives everyone a personal organization they own under a personal tenancy', async () => {
-    for (const id of ['first', 'second']) {
-      await person(id);
-      await rows(id);
-    }
+    for (const id of ['first', 'second']) await person(id);
     await backfillMemberships(db, personal);
     const [first] = await membershipsOf('first');
     const [second] = await membershipsOf('second');
     expect(first).toMatchObject({ role: 'owner', personalUserId: 'first', name: 'Fixture first' });
     expect(second).toMatchObject({ role: 'owner', personalUserId: 'second' });
     expect(first!.organizationId).not.toBe(second!.organizationId);
-    expect(await scopedRows('second')).toEqual([{ membershipId: second!.id }, { membershipId: second!.id }]);
   });
 
   it('changes nothing when run again', async () => {
     await person('first');
-    await rows('first');
     await backfillMemberships(db, personal);
-    const before = { memberships: await membershipsOf('first'), rows: await scopedRows('first') };
+    const before = await membershipsOf('first');
     expect(await backfillMemberships(db, personal)).toBe(0);
-    expect({ memberships: await membershipsOf('first'), rows: await scopedRows('first') }).toEqual(before);
+    expect(await membershipsOf('first')).toEqual(before);
     expect(await db.select().from(schema.organizations)).toHaveLength(1);
   });
 });
@@ -163,45 +133,9 @@ describe('sign-up', () => {
       expect.objectContaining({ role: 'owner', personalUserId: 'second' }),
     ]);
   });
-
-  it('fills membership_id on rows written after sign-up, without the writer naming it', async () => {
-    await signUp(personal, 'first');
-    await rows('first');
-    const [membership] = await membershipsOf('first');
-    expect(await scopedRows('first')).toEqual([{ membershipId: membership!.id }, { membershipId: membership!.id }]);
-  });
 });
 
 describe('a person in two organizations', () => {
-  it('fills new rows with their oldest membership and leaves older, ambiguous rows to the move', async () => {
-    await person('first');
-    await rows('first');
-    await person('outsider');
-    await db.transaction(tx => personal.join(tx, { id: 'first', name: 'First', email: 'first@acme.test' }));
-    const shared = await db.transaction(tx =>
-      createOrganization(tx, {
-        name: 'Team',
-        owner: { id: 'outsider', name: 'Outsider', email: 'outsider@other.test' },
-      }),
-    );
-    await db.insert(schema.memberships).values({
-      publicId: 'mem_test',
-      organizationId: shared!,
-      userId: 'first',
-      role: 'member',
-    });
-    const [oldest, team] = await membershipsOf('first');
-    expect(team).toMatchObject({ organizationId: shared, role: 'member' });
-
-    // Rows from before the person had any membership could belong to either organization: the backfill leaves them.
-    await backfillMemberships(db, personal);
-    expect(await scopedRows('first')).toEqual([{ membershipId: null }, { membershipId: null }]);
-
-    await db.insert(schema.setups).values({ userId: 'first' });
-    const [setup] = await db.select().from(schema.setups).where(eq(schema.setups.userId, 'first'));
-    expect(setup!.membershipId).toBe(oldest!.id);
-  });
-
   it('keeps one personal organization per person', async () => {
     await person('first');
     const owner = { id: 'first', name: 'First', email: 'first@acme.test' };

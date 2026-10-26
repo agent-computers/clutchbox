@@ -5,9 +5,8 @@ import { and, asc, eq, exists, gt, isNotNull, isNull, lte, ne, notInArray, or, s
 import { deleteCapturesIn, lockMember, type Transaction } from './captures';
 import type { Database } from './database';
 import { newPublicId, publicIdPattern } from './ids';
-import { currentMember, currentMembershipId, type Member } from './organizations';
+import { currentMember, type Member } from './organizations';
 import * as schema from './schema';
-import type { Owner } from './sealing';
 
 // Browsers connected with OAuth. The extension is a first-party client of our Better Auth server whose
 // opaque `sync` tokens work only on the extension's routes. A connected browser is one refresh-token family: the
@@ -163,19 +162,13 @@ export async function syncPrincipal(
     .select({
       id: schema.connectedBrowsers.id,
       publicId: schema.connectedBrowsers.publicId,
-      userId: schema.connectedBrowsers.userId,
+      userId: schema.memberships.userId,
       disconnectedAt: schema.connectedBrowsers.disconnectedAt,
       membershipId: schema.memberships.id,
       organizationId: schema.memberships.organizationId,
     })
     .from(schema.connectedBrowsers)
-    .innerJoin(
-      schema.memberships,
-      and(
-        eq(schema.memberships.id, schema.connectedBrowsers.membershipId),
-        eq(schema.memberships.userId, schema.connectedBrowsers.userId),
-      ),
-    )
+    .innerJoin(schema.memberships, eq(schema.memberships.id, schema.connectedBrowsers.membershipId))
     .where(eq(schema.connectedBrowsers.authorizationCodeId, family));
   if (!row || row.userId !== found.userId || row.disconnectedAt) return null;
   await pruneFamily(db, found.userId, family, now);
@@ -187,14 +180,17 @@ export async function syncPrincipal(
     member: { userId: found.userId, membershipId: row.membershipId, organizationId: row.organizationId },
   };
 }
-// Records a family's browser, in the person's current membership. Never overwrites, so a tombstone always wins.
+// Records a family's browser, in the person's current membership. Never overwrites, so a tombstone always wins. An
+// account the tenancy has not placed yet records none, so its browser cannot sync until the next migration run places
+// it.
 async function recordFamily(db: Database, userId: string, family: string, userAgent: string | undefined, now: Date) {
+  const member = await currentMember(db, userId);
+  if (!member) return;
   await db
     .insert(schema.connectedBrowsers)
     .values({
       publicId: newPublicId('browser', now.getTime()),
-      userId,
-      membershipId: currentMembershipId(userId),
+      membershipId: member.membershipId,
       authorizationCodeId: family,
       ...browserOf(userAgent),
       createdAt: now,
@@ -225,6 +221,8 @@ async function pruneFamily(db: Database, userId: string, family: string, now: Da
       .where(and(extensionTokens(table, userId), eq(table.authorizationCodeId, family), lte(table.expiresAt, now)));
 }
 
+// The member whose browsers these are, with the person: Better Auth keys the extension's tokens by user.
+type Owner = Pick<Member, 'userId' | 'membershipId'>;
 export type ConnectedBrowser = {
   id: string;
   browser: (typeof schema.BROWSER_NAMES)[number] | null;
@@ -276,7 +274,6 @@ async function disconnectFamily(tx: Transaction, member: Owner, family: string, 
     .insert(schema.connectedBrowsers)
     .values({
       publicId: newPublicId('browser', now.getTime()),
-      userId,
       membershipId: member.membershipId,
       authorizationCodeId: family,
       disconnectedAt: now,
@@ -289,10 +286,7 @@ async function disconnectFamily(tx: Transaction, member: Owner, family: string, 
         platform: null,
         lastSyncedAt: null,
       },
-      setWhere: and(
-        eq(schema.connectedBrowsers.userId, userId),
-        eq(schema.connectedBrowsers.membershipId, member.membershipId),
-      )!,
+      setWhere: eq(schema.connectedBrowsers.membershipId, member.membershipId),
     })
     .returning({ id: schema.connectedBrowsers.id });
   if (!row) return;
@@ -311,7 +305,6 @@ export async function disconnectBrowser(db: Database, member: Owner, which: { pu
       .from(browsers)
       .where(
         and(
-          eq(browsers.userId, member.userId),
           eq(browsers.membershipId, member.membershipId),
           isNull(browsers.disconnectedAt),
           'publicId' in which ? eq(browsers.publicId, which.publicId) : eq(browsers.id, which.id),
@@ -336,7 +329,8 @@ export async function disconnectAllBrowsers(db: Database, member: Owner) {
     const elsewhere = tx
       .select({ family: browsers.authorizationCodeId })
       .from(browsers)
-      .where(and(eq(browsers.userId, userId), ne(browsers.membershipId, member.membershipId)));
+      .innerJoin(schema.memberships, eq(schema.memberships.id, browsers.membershipId))
+      .where(and(eq(schema.memberships.userId, userId), ne(browsers.membershipId, member.membershipId)));
     const mine = <T extends typeof schema.oauthAccessToken | typeof schema.oauthRefreshToken>(table: T) =>
       and(
         extensionTokens(table, userId),
@@ -362,7 +356,6 @@ export async function disconnectAllBrowsers(db: Database, member: Owner) {
         .values(
           families.map(({ family }) => ({
             publicId: newPublicId('browser', now.getTime()),
-            userId,
             membershipId: member.membershipId,
             authorizationCodeId: family!,
             disconnectedAt: now,
@@ -371,18 +364,12 @@ export async function disconnectAllBrowsers(db: Database, member: Owner) {
         .onConflictDoUpdate({
           target: browsers.authorizationCodeId,
           set: { disconnectedAt: sql`coalesce(${browsers.disconnectedAt}, ${now})`, ...cleared },
-          setWhere: and(eq(browsers.userId, userId), eq(browsers.membershipId, member.membershipId))!,
+          setWhere: eq(browsers.membershipId, member.membershipId),
         });
     await tx
       .update(browsers)
       .set({ disconnectedAt: now, ...cleared })
-      .where(
-        and(
-          eq(browsers.userId, userId),
-          eq(browsers.membershipId, member.membershipId),
-          isNull(browsers.disconnectedAt),
-        ),
-      );
+      .where(and(eq(browsers.membershipId, member.membershipId), isNull(browsers.disconnectedAt)));
     await tx.delete(schema.oauthAccessToken).where(mine(schema.oauthAccessToken));
     await tx.delete(refresh).where(mine(refresh));
   });

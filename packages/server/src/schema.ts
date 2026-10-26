@@ -139,11 +139,8 @@ export const organizations = pgTable(
   },
   table => [check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`)],
 );
-// A person's place in one organization. Per-user tables below carry it as membership_id beside user_id while data
-// moves from per-user to per-membership: a trigger fills it on insert from the person's membership, and the migration
-// runner fills older rows (organizations.ts, backfillMemberships). Everything below is read by it, and computers, their
-// sessions, tool calls, and usage have no user_id; on the rest it stays beside it until the contract step, and
-// user_settings stays the person's.
+// A person's place in one organization. Every app table below belongs to one, as membership_id, except user_settings,
+// which is the person's in every organization.
 export const memberships = pgTable(
   'memberships',
   {
@@ -305,10 +302,7 @@ export const connectedBrowsers = pgTable(
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId(),
+    membershipId: membershipId().notNull(),
     // oauth_refresh_token.authorization_code_id: stable across rotation, but not a key there, so no foreign key.
     authorizationCodeId: text('authorization_code_id').notNull().unique(),
     // From the User-Agent at first use; null when unknown, and cleared on disconnect.
@@ -321,7 +315,6 @@ export const connectedBrowsers = pgTable(
   },
   table => [
     index('connected_browsers_membership_idx').on(table.membershipId),
-    index('connected_browsers_user_idx').on(table.userId),
     check('connected_browsers_browser', oneOf(table.browser, BROWSER_NAMES)),
     check('connected_browsers_platform', oneOf(table.platform, BROWSER_PLATFORMS)),
   ],
@@ -333,10 +326,7 @@ export const captures = pgTable(
   'captures',
   {
     id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId().unique(),
+    membershipId: membershipId().notNull().unique(),
     // The extension's ID for this capture.
     captureId: uuid('capture_id').notNull(),
     digest: text('digest').notNull(),
@@ -352,42 +342,25 @@ export const captures = pgTable(
     connectedBrowserId: key('connected_browser_id').references(() => connectedBrowsers.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
-  table => [
-    index('captures_user_idx').on(table.userId),
-    index('captures_connected_browser_idx').on(table.connectedBrowserId),
-  ],
+  table => [index('captures_connected_browser_idx').on(table.connectedBrowserId)],
 );
 // Last capture deletion per member: uploads received before it are refused. `disconnected`
 // (dashboard Delete everything) refuses all uploads until the extension reconnects.
-export const syncRevocations = pgTable(
-  'sync_revocations',
-  {
-    id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId().unique(),
-    deletedAt: time('deleted_at').notNull(),
-    disconnected: boolean('disconnected').notNull().default(false),
-    ...timestamps(),
-  },
-  table => [index('sync_revocations_user_idx').on(table.userId)],
-);
+export const syncRevocations = pgTable('sync_revocations', {
+  id: id(),
+  membershipId: membershipId().notNull().unique(),
+  deletedAt: time('deleted_at').notNull(),
+  disconnected: boolean('disconnected').notNull().default(false),
+  ...timestamps(),
+});
 // Browser sync settings per member: added sites, exclusions, and pause, sealed like the
 // capture (sealing.ts). The extension adopts them; the account page edits them.
-export const syncSettings = pgTable(
-  'sync_settings',
-  {
-    id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId().unique(),
-    sealed: text('sealed').notNull(),
-    ...timestamps(),
-  },
-  table => [index('sync_settings_user_idx').on(table.userId)],
-);
+export const syncSettings = pgTable('sync_settings', {
+  id: id(),
+  membershipId: membershipId().notNull().unique(),
+  sealed: text('sealed').notNull(),
+  ...timestamps(),
+});
 // Computer seconds charged per member per UTC calendar month, against the free allowance.
 export const computerUsage = pgTable(
   'computer_usage',
@@ -403,25 +376,18 @@ export const computerUsage = pgTable(
 // Setup progress, one row per member. First-completion times and
 // firstSetUpAt are never cleared, so they record the funnel; Delete everything clears only
 // setUpAt and noticeClosedAt. `preexisting`: the user existed before setup shipped (no events).
-export const setups = pgTable(
-  'setups',
-  {
-    id: id(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    membershipId: membershipId().unique(),
-    preexisting: boolean('preexisting').notNull().default(false),
-    browserSyncedAt: time('browser_synced_at'),
-    // The earliest live consent's createdAt.
-    agentConnectedAt: time('agent_connected_at'),
-    firstSetUpAt: time('first_set_up_at'),
-    setUpAt: time('set_up_at'),
-    noticeClosedAt: time('notice_closed_at'),
-    ...timestamps(),
-  },
-  table => [index('setups_user_idx').on(table.userId)],
-);
+export const setups = pgTable('setups', {
+  id: id(),
+  membershipId: membershipId().notNull().unique(),
+  preexisting: boolean('preexisting').notNull().default(false),
+  browserSyncedAt: time('browser_synced_at'),
+  // The earliest live consent's createdAt.
+  agentConnectedAt: time('agent_connected_at'),
+  firstSetUpAt: time('first_set_up_at'),
+  setUpAt: time('set_up_at'),
+  noticeClosedAt: time('notice_closed_at'),
+  ...timestamps(),
+});
 // Per-user app preferences, kept off Better Auth's tables.
 export const userSettings = pgTable(
   'user_settings',

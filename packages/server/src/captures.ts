@@ -146,7 +146,7 @@ export async function saveCapture(
     };
     const [stored] = await tx
       .insert(schema.captures)
-      .values({ userId: member.userId, membershipId: member.membershipId, ...values })
+      .values({ membershipId: member.membershipId, ...values })
       .onConflictDoUpdate({
         target: schema.captures.membershipId,
         set: values,
@@ -176,7 +176,7 @@ async function writeSettings(tx: Transaction, member: Owner, settings: SyncSetti
   const values = { sealed: sealSettings(settings, member, key), updatedAt: new Date() };
   await tx
     .insert(schema.syncSettings)
-    .values({ userId: member.userId, membershipId: member.membershipId, ...values })
+    .values({ membershipId: member.membershipId, ...values })
     .onConflictDoUpdate({ target: schema.syncSettings.membershipId, set: values });
 }
 // Re-seals the stored capture with only what the settings allow, so a removed site or new exclusion leaves the
@@ -286,7 +286,7 @@ export async function deleteCapturesIn(
   const deletedAt = new Date();
   await tx
     .insert(schema.syncRevocations)
-    .values({ userId: member.userId, membershipId: member.membershipId, deletedAt, disconnected: disconnect })
+    .values({ membershipId: member.membershipId, deletedAt, disconnected: disconnect })
     .onConflictDoUpdate({
       target: schema.syncRevocations.membershipId,
       set: disconnect ? { deletedAt, disconnected: true } : { deletedAt },

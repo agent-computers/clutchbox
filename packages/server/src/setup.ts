@@ -48,7 +48,7 @@ export async function recordSetupStep(
         : { agentConnectedAt: at };
   const [inserted] = await db
     .insert(schema.setups)
-    .values({ userId: member.userId, membershipId: member.membershipId, ...values })
+    .values({ membershipId: member.membershipId, ...values })
     .onConflictDoNothing()
     .returning({ preexisting: schema.setups.preexisting });
   if (inserted) return { first: true, firstEver: true, preexisting: inserted.preexisting };

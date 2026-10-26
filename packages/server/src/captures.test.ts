@@ -25,7 +25,6 @@ import {
 import type { Database } from './database';
 import { membership, person } from './member-fixtures';
 import * as schema from './schema';
-import { resealForMemberships } from './sealing';
 
 let pg: PGlite;
 let db: Database;
@@ -52,7 +51,7 @@ afterEach(async () => {
   await pg.close();
 });
 
-// A value sealed for its person, as values were before memberships (sealing.ts, version v1).
+// A value sealed for its person, as values were before memberships (version v1, retired).
 function sealedForPerson(plaintext: string, purpose: string, userId: string, ...extra: string[]) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', captureKey()!, iv).setAAD(
@@ -87,39 +86,11 @@ describe('sealed captures', () => {
       openCapture([version, iv, Buffer.from(tag!, 'base64').subarray(0, 4).toString('base64'), data].join('.'), A),
     ).toThrow('invalid sealed capture');
   });
-  it('still opens values sealed for the person before memberships, and seals anew for the membership', async () => {
-    const a = await user('a');
-    const capture = bundle([cookie()], new Date('2026-10-15T10:00:00Z'));
-    const settings = { sites: ['example.com'], excludedDomains: [], paused: false };
-    await db.insert(schema.captures).values({
-      userId: a.userId,
-      captureId: capture.id,
-      digest: await captureDigest(capture.cookies),
-      cookieCount: 1,
-      sealed: sealedForPerson(JSON.stringify(capture), 'capture', a.userId),
-      sealedScope: sealedForPerson(
-        JSON.stringify({ mode: 'sites', sites: ['example.com'] }),
-        'capture-scope',
-        a.userId,
-      ),
-      completedAt: new Date(capture.completedAt),
-    });
-    await db
-      .insert(schema.syncSettings)
-      .values({ userId: a.userId, sealed: sealedForPerson(JSON.stringify(settings), 'sync-settings', a.userId) });
-    expect((await loadLatestCapture(db, a))!.capture).toEqual(capture);
-    expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['example.com'] });
-    expect((await syncView(db, a)).settings).toEqual(settings);
-    const applied = { completedAt: capture.completedAt, cookies: capture.cookies };
-    const baseline = sealedForPerson(JSON.stringify(applied), 'applied-capture', a.userId, 'computer-1');
-    expect(openAppliedCapture(baseline, a, 'computer-1')).toEqual(applied);
-    expect(() => openAppliedCapture(baseline, a, 'computer-2')).toThrow();
-    // Bound to its person: another person's membership can't open it.
-    expect(() => openCapture(sealedForPerson(JSON.stringify(capture), 'capture', 'b'), a)).toThrow();
-    // The next write seals for the membership.
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
-    const [row] = await db.select().from(schema.captures);
-    expect([row!.sealed.slice(0, 3), row!.sealedScope!.slice(0, 3)]).toEqual(['v2.', 'v2.']);
+  it('refuses values sealed for the person, as before memberships (v1)', () => {
+    const capture = bundle([cookie()]);
+    expect(() => openCapture(sealedForPerson(JSON.stringify(capture), 'capture', 'a'), A)).toThrow(
+      'invalid sealed capture',
+    );
   });
   it('stores only digest and counts in plaintext, and skips unchanged uploads', async () => {
     const a = await user('a');
@@ -228,7 +199,13 @@ describe('sealed captures', () => {
     const a = await user('a');
     const [one, two] = await db
       .insert(schema.connectedBrowsers)
-      .values(['one', 'two'].map(name => ({ publicId: `brw_${name}`, userId: a.userId, authorizationCodeId: name })))
+      .values(
+        ['one', 'two'].map(name => ({
+          publicId: `brw_${name}`,
+          membershipId: a.membershipId,
+          authorizationCodeId: name,
+        })),
+      )
       .returning({ id: schema.connectedBrowsers.id });
     const state = async () => ({
       sender: (await db.select().from(schema.captures))[0]?.connectedBrowserId ?? null,
@@ -269,8 +246,8 @@ describe('sealed captures', () => {
     const [one, two] = await db
       .insert(schema.connectedBrowsers)
       .values([
-        { publicId: 'brw_one', userId: a.userId, authorizationCodeId: 'one' },
-        { publicId: 'brw_two', userId: a.userId, authorizationCodeId: 'two', disconnectedAt: new Date() },
+        { publicId: 'brw_one', membershipId: a.membershipId, authorizationCodeId: 'one' },
+        { publicId: 'brw_two', membershipId: a.membershipId, authorizationCodeId: 'two', disconnectedAt: new Date() },
       ])
       .returning({ id: schema.connectedBrowsers.id });
     await deleteCaptures(db, a, { disconnect: true });
@@ -438,56 +415,5 @@ describe('memberships', () => {
     expect(await captureView(db, a)).not.toBeNull();
     expect(await syncView(db, a)).toEqual({ settings: { ...settings, sites: ['example.com'] }, disconnected: false });
     expect(await saveCapture(db, a, bundle([cookie({ value: 'later' })]))).toMatchObject({ status: 'stored' });
-  });
-});
-
-describe('re-sealing for memberships', () => {
-  it('moves values sealed for the person to their membership, leaving what will not open', async () => {
-    const a = await user('a');
-    const capture = bundle([cookie()], new Date('2026-10-15T10:00:00Z'));
-    const scope = JSON.stringify({ mode: 'sites', sites: ['example.com'] });
-    const settings = { sites: ['example.com'], excludedDomains: [], paused: false };
-    const applied = { completedAt: capture.completedAt, cookies: capture.cookies };
-    await db.insert(schema.captures).values({
-      userId: a.userId,
-      captureId: capture.id,
-      digest: await captureDigest(capture.cookies),
-      cookieCount: 1,
-      sealed: sealedForPerson(JSON.stringify(capture), 'capture', a.userId),
-      sealedScope: sealedForPerson(scope, 'capture-scope', a.userId),
-      completedAt: new Date(capture.completedAt),
-    });
-    await db
-      .insert(schema.syncSettings)
-      .values({ userId: a.userId, sealed: sealedForPerson(JSON.stringify(settings), 'sync-settings', a.userId) });
-    const [computer] = await db
-      .insert(schema.computers)
-      .values({ membershipId: a.membershipId, publicId: 'computer_one' })
-      .returning({ id: schema.computers.id });
-    await db
-      .update(schema.computers)
-      .set({ appliedCapture: sealedForPerson(JSON.stringify(applied), 'applied-capture', a.userId, 'computer_one') })
-      .where(eq(schema.computers.id, computer!.id));
-    // Sealed for someone else: it can't be opened for this row, so it stays as it is.
-    const b = await user('b');
-    const foreign = sealedForPerson(JSON.stringify(settings), 'sync-settings', 'someone-else');
-    await db.insert(schema.syncSettings).values({ userId: b.userId, sealed: foreign });
-
-    expect(await resealForMemberships(db, null)).toEqual({ resealed: 0, unreadable: 0, waiting: 5 });
-    expect(await resealForMemberships(db)).toEqual({ resealed: 4, unreadable: 1, waiting: 0 });
-    const [row] = await db.select().from(schema.captures);
-    expect([row!.sealed.slice(0, 3), row!.sealedScope!.slice(0, 3)]).toEqual(['v2.', 'v2.']);
-    expect((await loadLatestCapture(db, a))!.capture).toEqual(capture);
-    expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['example.com'] });
-    expect((await syncView(db, a)).settings).toEqual(settings);
-    const [moved] = await db.select().from(schema.computers);
-    expect(openAppliedCapture(moved!.appliedCapture!, a, 'computer_one')).toEqual(applied);
-    const [left] = await db
-      .select({ sealed: schema.syncSettings.sealed })
-      .from(schema.syncSettings)
-      .where(eq(schema.syncSettings.userId, b.userId));
-    expect(left!.sealed).toBe(foreign);
-    // A second run finds only what would not open.
-    expect(await resealForMemberships(db)).toEqual({ resealed: 0, unreadable: 1, waiting: 0 });
   });
 });
