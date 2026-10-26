@@ -29,7 +29,9 @@ if (!before) {
 // The capture package ships inside the extension.
 const changed = git('diff', '--name-only', base, 'HEAD', '--', 'apps/extension', 'packages/capture/src')
   .split('\n')
-  .filter(file => file && !/\.(test\.ts|md)$/.test(file));
+  // The store images lived in apps/extension/store before they moved to brand/, and a diff limited to the
+  // extension shows that move as deletions.
+  .filter(file => file && !/\.(test\.ts|md)$/.test(file) && !file.startsWith('apps/extension/store/'));
 // YY.MDD.PATCH: 26.1016.0 is the first release on October 16, 2026 (January 1 is 101); PATCH counts up within a day.
 const calendar = /^\d{2}\.(?:[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\.(?:0|[1-9]\d*)$/;
 if (before !== after && (!calendar.test(after) || compareVersions(after, before) <= 0)) {
