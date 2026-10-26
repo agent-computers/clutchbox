@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "The Agent Computers web app's design system: shadcn components on Base UI, the theme, and the fonts.",
   "homepage": "https://www.agent-computers.com",
-  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "bugs": "https://github.com/agent-computers/clutchbox/issues",
   "author": "Agent Computers",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "url": "git+https://github.com/agent-computers/clutchbox.git",
     "directory": "packages/ui"
   },
   "private": true,

@@ -4,7 +4,7 @@
   "description": "Agents that work signed in: sync the sites you choose from your browser into the browsers your AI agents use.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agent-computers/agent-computers.git"
+    "url": "git+https://github.com/agent-computers/clutchbox.git"
   },
   "homepage": "https://www.agent-computers.com",
   "license": "Apache-2.0",

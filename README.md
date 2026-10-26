@@ -5,8 +5,8 @@
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0d060b?style=flat" alt="Apache-2.0 license"></a>
-    <a href="https://github.com/agent-computers/agent-computers/actions/workflows/ci.yml"><img src="https://github.com/agent-computers/agent-computers/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/agent-computers/agent-computers/releases/latest"><img src="https://img.shields.io/github/v/release/agent-computers/agent-computers?style=flat&color=0d060b&label=release" alt="Latest release"></a>
+    <a href="https://github.com/agent-computers/clutchbox/actions/workflows/ci.yml"><img src="https://github.com/agent-computers/clutchbox/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/agent-computers/clutchbox/releases/latest"><img src="https://img.shields.io/github/v/release/agent-computers/clutchbox?style=flat&color=0d060b&label=release" alt="Latest release"></a>
   </p>
 
   <p>
@@ -18,7 +18,7 @@
     ·
     <a href="SECURITY.md">Security</a>
     ·
-    <a href="https://github.com/agent-computers/agent-computers/issues">Issues</a>
+    <a href="https://github.com/agent-computers/clutchbox/issues">Issues</a>
   </p>
 </div>
 
@@ -68,7 +68,7 @@ You need Docker with Compose, Chrome, and an [E2B API key](https://e2b.dev/dashb
 1. Clone the repository and write `.env` beside [`compose.yaml`](compose.yaml), with two new secrets, your E2B key, and email links caught by the bundled [Mailpit](https://mailpit.axllent.org):
 
    ```sh
-   git clone https://github.com/agent-computers/agent-computers && cd agent-computers
+   git clone https://github.com/agent-computers/clutchbox && cd clutchbox
    cat > .env <<EOF
    BETTER_AUTH_SECRET=$(openssl rand -base64 32)
    CAPTURE_ENCRYPTION_KEY=$(openssl rand -base64 32)

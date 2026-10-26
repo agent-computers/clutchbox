@@ -43,7 +43,7 @@ Load `apps/extension/.output/chrome-mv3` unpacked from `chrome://extensions` (De
 
 ## Verify the store build
 
-Each [release](https://github.com/agent-computers/agent-computers/releases) carries the Chrome Web Store build, made by CI from the tagged commit, and the same workflow uploads that zip to the store. The build is reproducible from a clone of this repository, so you can check the listed extension against its source:
+Each [release](https://github.com/agent-computers/clutchbox/releases) carries the Chrome Web Store build, made by CI from the tagged commit, and the same workflow uploads that zip to the store. The build is reproducible from a clone of this repository, so you can check the listed extension against its source:
 
 ```sh
 curl -sL -o store.crx 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130&acceptformat=crx3&x=id%3Dbjmfpnkjkdkfimdfgbgepmdgdnodpmmi%26uc'

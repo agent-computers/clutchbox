@@ -12,11 +12,11 @@
     "cdp"
   ],
   "homepage": "https://www.agent-computers.com",
-  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "bugs": "https://github.com/agent-computers/clutchbox/issues",
   "author": "Agent Computers",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "url": "git+https://github.com/agent-computers/clutchbox.git",
     "directory": "packages/e2b"
   },
   "private": true,

@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "The Agent Computers web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay.",
   "homepage": "https://www.agent-computers.com",
-  "bugs": "https://github.com/agent-computers/agent-computers/issues",
+  "bugs": "https://github.com/agent-computers/clutchbox/issues",
   "author": "Agent Computers",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agent-computers/agent-computers.git",
+    "url": "git+https://github.com/agent-computers/clutchbox.git",
     "directory": "packages/api"
   },
   "private": true,
