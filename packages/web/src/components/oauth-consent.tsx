@@ -33,10 +33,10 @@ import {
 } from '@better-auth-ui/core/plugins/oauth-provider';
 import { useAuth, useSignOut } from '@better-auth-ui/react';
 import { useOAuthConsent } from '@better-auth-ui/react/plugins/oauth-provider';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetActiveOrganization } from '@better-auth-ui/react/plugins/organization';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppWindow, Check, ChevronsUpDown, Ellipsis, Link as LinkIcon, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { authResult } from '../lib/api';
 import { authClient as appAuthClient } from '../lib/auth-client';
 import { UserAvatar } from './auth/user-avatar';
 
@@ -84,10 +84,7 @@ export function OAuthConsent({
   const termsUrl = sanitizeOAuthClientUrl(client.terms);
   // A grant is for one organization: the one the person acts in, which they can switch here before allowing.
   const router = useRouter();
-  const switchOrganization = useMutation({
-    mutationFn: (organizationId: string) => authResult(appAuthClient.organization.setActive({ organizationId })),
-    onSuccess: () => router.refresh(),
-  });
+  const switchOrganization = useSetActiveOrganization(appAuthClient, { onSuccess: () => router.refresh() });
   const current = organizations.find(organization => organization.current);
   const pending =
     consent.isPending ||
@@ -148,7 +145,9 @@ export function OAuthConsent({
                   <DropdownMenuContent align="center" className="min-w-48">
                     <DropdownMenuRadioGroup
                       value={current.id}
-                      onValueChange={id => id !== current.id && switchOrganization.mutate(id as string)}
+                      onValueChange={id =>
+                        id !== current.id && switchOrganization.mutate({ organizationId: id as string })
+                      }
                     >
                       {organizations.map(organization => (
                         <DropdownMenuRadioItem

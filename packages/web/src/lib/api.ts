@@ -6,7 +6,6 @@ import type { LiveViewStatus } from '@agent-computers/server/computers';
 import type { Role } from '@agent-computers/server/members';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
-import { authClient } from './auth-client';
 
 export type ComputerView = {
   // Null without a free allowance (the metering hook).
@@ -42,21 +41,16 @@ export type Browser = Omit<ConnectedBrowser, 'connectedAt' | 'lastSyncedAt'> & {
 // The account's browser sync settings; null until an extension adopts them.
 export type SyncView = { settings: SyncSettings | null; disconnected: boolean };
 export type { Role, SyncChange };
-// The organization the app acts in, who is in it, and your role there.
+// The organization the app acts in, and your role there. Who is in it is Better Auth's list.
 export type OrganizationView = {
   organization: { id: string; name: string; personal: boolean; joinDomains: string[] };
   role: Role;
-  members: { id: string; name: string; email: string; role: Role; joinedAt: string; you: boolean }[];
 };
-// An invitation for one email address (Better Auth's organization plugin), still waiting to be accepted.
-export type Invitation = { id: string; email: string; role: Role; status: string; expiresAt: string | Date };
 // Every organization you are in, and whether this deployment lets you create more.
 export type OrganizationsView = {
   organizations: { id: string; name: string; personal: boolean; role: Role; current: boolean }[];
   canCreate: boolean;
 };
-// An organization API key (Better Auth's api-key plugin), never with its secret, which only creating it returns.
-export type ApiKey = { id: string; name: string | null; start: string | null; lastRequest: string | Date | null };
 // Where the signed-in person stands in a Connect app's request (/connect).
 export type ConnectStatus = {
   app: { id: string; name: string };
@@ -87,13 +81,6 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
           : 'Something went wrong. Please try again.'),
     );
   return data;
-}
-// Unwraps a Better Auth client call, throwing its error as an ApiError with Better Auth's message and code.
-type AuthError = { status: number; code?: string | undefined; message?: string | undefined };
-export async function authResult<T>(call: Promise<{ data: T | null; error: AuthError | null }>): Promise<T> {
-  const { data, error } = await call;
-  if (error) throw new ApiError(error.status, error.code, error.message || 'Something went wrong. Please try again.');
-  return data as T;
 }
 export class ApiError extends Error {
   constructor(
@@ -133,25 +120,10 @@ export const connectAppsQuery = queryOptions({
   queryFn: () => api<{ apps: ConnectApp[] }>('/organization/connect-apps'),
   select: data => data.apps,
 });
-export const apiKeysQuery = (organizationId: string) =>
-  queryOptions({
-    queryKey: ['organization', organizationId, 'api-keys'],
-    queryFn: () => authResult(authClient.apiKey.list({ query: { organizationId } })),
-    select: data => data.apiKeys as ApiKey[],
-  });
 export const organizationsQuery = queryOptions({
   queryKey: ['organizations'],
   queryFn: () => api<OrganizationsView>('/organizations'),
 });
-export const invitationsQuery = (organizationId: string) =>
-  queryOptions({
-    queryKey: ['organization', organizationId, 'invitations'],
-    queryFn: () => authResult(authClient.organization.listInvitations({ query: { organizationId } })),
-    select: data =>
-      (data as Invitation[]).filter(
-        invitation => invitation.status === 'pending' && new Date(invitation.expiresAt) > new Date(),
-      ),
-  });
 // A public repository's star count, straight from GitHub's API, which allows 60 unauthenticated calls an hour per
 // address; fetched once per load, it never fails the page.
 export const repoStarsQuery = (repo: string) =>

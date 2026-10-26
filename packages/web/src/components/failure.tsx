@@ -9,13 +9,19 @@ const refusals: Record<string, string> = {
   not_found: 'That is no longer here. Reload to see the latest.',
   invalid_domain: 'Enter domains only, like acme.com.',
   organization_limit: 'You have created as many organizations as you can.',
-  api_key_limit: 'This organization has as many API keys as it can. Revoke one first.',
+  api_key_limit: 'This organization has as many API keys as it can. Delete one first.',
   connect_app_limit: 'This organization has as many Connect apps as it can. Delete one first.',
   invalid_redirect_uri: 'Each redirect URI must be a full https address (http only on localhost), without a #fragment.',
   public_email_domain:
-    'Anyone can get an address at that domain, so it cannot let people join. Use your own domain, or invite by link.',
+    'Anyone can get an address at that domain, so it cannot let people join. Use your own domain, or invite people by email.',
 };
-const message = (error: Error) => (error instanceof ApiError && error.code && refusals[error.code]) || error.message;
+// Our API's errors carry their code; Better Auth's (through Better Auth UI's mutations) carry its body, whose message is
+// already in words.
+const message = (error: Error) => {
+  if (error instanceof ApiError) return (error.code && refusals[error.code]) || error.message;
+  const body = (error as { error?: { code?: string; message?: string } }).error;
+  return (body?.code && refusals[body.code]) || body?.message || error.message;
+};
 
 // A failed request's refusal, in words.
 export function Failure({ error }: { error: Error | null }) {

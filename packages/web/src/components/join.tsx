@@ -2,10 +2,12 @@
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
 import { Button } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import { useAcceptInvitation, useInvitation, useRejectInvitation } from '@better-auth-ui/react/plugins/organization';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { ApiError, api, authResult, joinableQuery, type Role } from '../lib/api';
+import { ApiError, api, joinableQuery, type Role } from '../lib/api';
 import { authClient } from '../lib/auth-client';
+import { Failure } from './failure';
 
 export const roleNames: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 export const aRole: Record<Role, string> = { owner: 'an owner', admin: 'an admin', member: 'a member' };
@@ -41,17 +43,34 @@ function useJoin(join: () => Promise<unknown>) {
   });
 }
 
-// /join/<invitation>: an invitation, for the person signed in with its address to accept.
-export function AcceptInvitation({
-  id,
-  email,
-  invitation,
-}: {
-  id: string;
-  email: string;
-  invitation: { organization: string; role: Role } | null;
-}) {
-  const join = useJoin(() => authResult(authClient.organization.acceptInvitation({ invitationId: id })));
+// /join/<invitation>: an invitation, for the person signed in with its address to accept or decline. Adapted from
+// Better Auth UI v1.7.30's AcceptInvitation to our shared controls, our disclosure, and inline errors. MIT license:
+// auth/LICENSE.
+export function AcceptInvitation({ id, email }: { id: string; email: string }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  // Better Auth shows an invitation only to an account with its address, while it is pending and unexpired.
+  const { data: invitation, isPending } = useInvitation(authClient, { query: { id }, retry: false });
+  // The app's data is the new organization's from here; marked stale, it refetches in the app rather than here, where
+  // the invitation is no longer pending.
+  const done = () => {
+    void queryClient.invalidateQueries({ refetchType: 'none' });
+    router.push('/app');
+  };
+  const accept = useAcceptInvitation(authClient, { onSuccess: done });
+  const decline = useRejectInvitation(authClient, { onSuccess: done });
+  const busy = accept.isPending || accept.isSuccess || decline.isPending || decline.isSuccess;
+  if (isPending)
+    return (
+      <Card className="w-full" aria-busy>
+        <CardHeader>
+          <CardTitle className="text-3xl">
+            <h1>Invitation</h1>
+          </CardTitle>
+          <CardDescription>Signed in as {email}.</CardDescription>
+        </CardHeader>
+      </Card>
+    );
   if (!invitation)
     return (
       <Card className="w-full">
@@ -66,26 +85,28 @@ export function AcceptInvitation({
         </CardHeader>
       </Card>
     );
+  const organization = invitation.organizationName;
   return (
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="text-3xl">
-          <h1>Join {invitation.organization}</h1>
+          <h1>Join {organization}</h1>
         </CardTitle>
-        <CardDescription>You were invited as {aRole[invitation.role]}.</CardDescription>
+        <CardDescription>
+          You were invited as {aRole[invitation.role as Role]}. Signed in as {email}.
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <JoinDisclosure organization={invitation.organization} />
-        <div>
-          <Button size="lg" disabled={join.isPending || join.isSuccess} onClick={() => join.mutate()}>
-            {join.isPending ? 'Joining…' : `Join ${invitation.organization}`}
+        <JoinDisclosure organization={organization} />
+        <div className="flex flex-wrap gap-3">
+          <Button size="lg" disabled={busy} onClick={() => accept.mutate({ invitationId: id })}>
+            {accept.isPending ? 'Joining…' : `Join ${organization}`}
+          </Button>
+          <Button size="lg" variant="secondary" disabled={busy} onClick={() => decline.mutate({ invitationId: id })}>
+            {decline.isPending ? 'Declining…' : 'Decline'}
           </Button>
         </div>
-        {join.isError && (
-          <Alert variant="destructive">
-            <AlertDescription>{join.error.message}</AlertDescription>
-          </Alert>
-        )}
+        <Failure error={accept.error ?? decline.error} />
       </CardContent>
     </Card>
   );

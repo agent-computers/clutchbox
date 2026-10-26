@@ -13,20 +13,19 @@ import {
 } from '@agent-computers/ui/components/dropdown-menu';
 import { Spinner } from '@agent-computers/ui/components/spinner';
 import { cn } from '@agent-computers/ui/lib/utils';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSetActiveOrganization } from '@better-auth-ui/react/plugins/organization';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronsUpDown, Plus } from 'lucide-react';
-import { authResult, organizationsQuery } from '../lib/api';
+import { organizationsQuery } from '../lib/api';
 import { authClient } from '../lib/auth-client';
 
 // Switches the organization the app acts in. Every page's data is that organization's, so a switch refetches it all.
-// Shown only to someone in several organizations, or who can create one.
+// Shown only to someone in several organizations, or who can create one. The list is ours rather than Better Auth's,
+// which says neither which organization is personal nor whether the deployment lets you create one.
 export function OrganizationSwitcher({ onCreate }: { onCreate: () => void }) {
   const queryClient = useQueryClient();
   const { data } = useQuery(organizationsQuery);
-  const change = useMutation({
-    mutationFn: (organizationId: string) => authResult(authClient.organization.setActive({ organizationId })),
-    onSettled: () => queryClient.invalidateQueries(),
-  });
+  const change = useSetActiveOrganization(authClient, { onSettled: () => queryClient.invalidateQueries() });
   const current = data?.organizations.find(organization => organization.current);
   if (!data || !current || (data.organizations.length < 2 && !data.canCreate)) return null;
   return (
@@ -44,7 +43,7 @@ export function OrganizationSwitcher({ onCreate }: { onCreate: () => void }) {
           <DropdownMenuLabel>Organizations</DropdownMenuLabel>
           <DropdownMenuRadioGroup
             value={current.id}
-            onValueChange={id => id !== current.id && change.mutate(id as string)}
+            onValueChange={id => id !== current.id && change.mutate({ organizationId: id as string })}
           >
             {data.organizations.map(organization => (
               <DropdownMenuRadioItem closeOnClick key={organization.id} value={organization.id} className="min-h-11">

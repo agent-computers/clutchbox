@@ -176,13 +176,19 @@ describe('members and roles', () => {
       organization: { id: organizationId, name: 'Acme', personal: false, joinDomains: [] },
       role: 'member',
     });
-    expect(
-      view.members.map((row: { email: string; role: string; you: boolean }) => [row.email, row.role, row.you]),
-    ).toEqual([
-      ['founder@acme.test', 'owner', false],
-      ['admin@acme.test', 'admin', false],
-      ['plain@acme.test', 'member', true],
+    // Who is in it is Better Auth's list, which the page sorts as here.
+    const query = new URLSearchParams({ organizationId, sortBy: 'createdAt', sortDirection: 'asc' });
+    const listed = await authRequest(plain.cookie, 'GET', `/organization/list-members?${query}`);
+    expect(listed.status).toBe(200);
+    const { members } = (await listed.json()) as { members: { role: string; user: { email: string } }[] };
+    expect(members.map(row => [row.user.email, row.role])).toEqual([
+      ['founder@acme.test', 'owner'],
+      ['admin@acme.test', 'admin'],
+      ['plain@acme.test', 'member'],
     ]);
+    // Not to someone outside it.
+    const outsider = await signedIn('outsider');
+    expect((await authRequest(outsider, 'GET', `/organization/list-members?${query}`)).ok).toBe(false);
   });
 
   it('invite an address with a role no higher than the inviter may grant, for only that address to accept', async () => {

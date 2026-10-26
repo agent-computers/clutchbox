@@ -77,37 +77,22 @@ const ownerCount = async (db: Pick<Database, 'select'>, organizationId: string) 
 const lockOrganization = (tx: Pick<Database, 'execute'>, organizationId: string) =>
   tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('agent-computers-organization'), hashtext(${organizationId}))`);
 
-// The member's organization, their role, and everyone in it.
+// The member's organization and their role there. Who is in it is Better Auth's list-members.
 export async function organizationView(db: Database, member: Member) {
-  const [organization] = await db
+  const [view] = await db
     .select({
       id: schema.organizations.publicId,
       name: schema.organizations.name,
       personal: sql<boolean>`${schema.organizations.personalUserId} IS NOT NULL`,
       joinDomains: schema.organizations.joinDomains,
-    })
-    .from(schema.organizations)
-    .where(eq(schema.organizations.publicId, member.organizationId));
-  const members = await db
-    .select({
-      id: schema.memberships.publicId,
-      membershipId: schema.memberships.id,
-      name: schema.user.name,
-      email: schema.user.email,
       role: schema.memberships.role,
-      joinedAt: schema.memberships.createdAt,
     })
     .from(schema.memberships)
-    .innerJoin(schema.user, eq(schema.user.id, schema.memberships.userId))
-    .where(eq(schema.memberships.organizationId, member.organizationId))
-    .orderBy(asc(schema.memberships.id));
-  const you = members.find(row => row.membershipId === member.membershipId);
-  if (!organization || !you) return null;
-  return {
-    organization,
-    role: you.role,
-    members: members.map(({ membershipId, ...row }) => ({ ...row, you: membershipId === member.membershipId })),
-  };
+    .innerJoin(schema.organizations, eq(schema.organizations.publicId, schema.memberships.organizationId))
+    .where(eq(schema.memberships.id, member.membershipId));
+  if (!view) return null;
+  const { role, ...organization } = view;
+  return { organization, role };
 }
 
 export async function join(

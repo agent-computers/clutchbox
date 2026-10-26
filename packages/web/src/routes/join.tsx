@@ -1,5 +1,4 @@
 import { getPrincipal } from '@agent-computers/server/auth';
-import type { Role } from '@agent-computers/server/members';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -22,23 +21,16 @@ export const joinPage = (getServices: GetServices) =>
     );
   };
 
-// /join/<invitation>: an invitation, for the address it names. Signing in first comes back here. Better Auth shows it
-// only to an account with that address, while it is pending.
+// /join/<invitation>: an invitation, for the address it names. Signing in first comes back here.
 export const invitationPage = (getServices: GetServices) =>
   async function Invitation({ params }: { params: Promise<{ invitation: string }> }) {
     const { invitation: id } = await params;
     const { auth } = await getServices();
-    const requestHeaders = await headers();
-    const principal = await getPrincipal(auth, requestHeaders);
+    const principal = await getPrincipal(auth, await headers());
     if (!principal) redirect(`/sign-in?${new URLSearchParams({ next: `/join/${id}` })}`);
-    const invitation = await auth.api.getInvitation({ headers: requestHeaders, query: { id } }).catch(() => null);
     return (
       <main id="main" className={page}>
-        <AcceptInvitation
-          id={id}
-          email={principal.email}
-          invitation={invitation && { organization: invitation.organizationName, role: invitation.role as Role }}
-        />
+        <AcceptInvitation id={id} email={principal.email} />
       </main>
     );
   };

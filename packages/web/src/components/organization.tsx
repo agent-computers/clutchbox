@@ -1,4 +1,7 @@
 'use client';
+// The members, invitations, and API keys parts adapt Better Auth UI v1.7.30's OrganizationMembers,
+// OrganizationInvitations, InviteMemberDialog, and ApiKeys to our shared controls and inline errors, on its hooks.
+// MIT license: auth/LICENSE.
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
 import {
   AlertDialog,
@@ -26,22 +29,21 @@ import {
 import { Input } from '@agent-computers/ui/components/input';
 import { Label } from '@agent-computers/ui/components/label';
 import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
+import { useSession } from '@better-auth-ui/react';
+import { useCreateApiKey, useDeleteApiKey, useListApiKeys } from '@better-auth-ui/react/plugins/api-key';
+import {
+  useCancelInvitation,
+  useCreateOrganization,
+  useInviteMember,
+  useListOrganizationInvitations,
+  useListOrganizationMembers,
+  useUpdateMemberRole,
+} from '@better-auth-ui/react/plugins/organization';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ellipsis } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useRef, useState } from 'react';
-import {
-  type ApiKey,
-  api,
-  apiKeysQuery,
-  authResult,
-  invitationsQuery,
-  joinableQuery,
-  type OrganizationView,
-  organizationQuery,
-  organizationsQuery,
-  type Role,
-} from '../lib/api';
+import { api, joinableQuery, organizationQuery, organizationsQuery, type Role } from '../lib/api';
 import { authClient } from '../lib/auth-client';
 import { AppPage } from './app-shell';
 import { ConnectApps } from './connect-apps';
@@ -49,16 +51,26 @@ import { CopyButton } from './copy-button';
 import { Failure } from './failure';
 import { aRole, JoinableOrganizations, roleNames } from './join';
 
-// Owners manage everyone; admins manage admins and members. Only owners make owners.
+// Owners manage everyone; admins manage admins and members. Only owners make owners. The server holds the same rules
+// (organization-auth.ts); these only decide what to offer.
 const manages = (role: Role) => role === 'owner' || role === 'admin';
 const grantable = (actor: Role): Role[] => (actor === 'owner' ? ['owner', 'admin', 'member'] : ['admin', 'member']);
 const mayManage = (actor: Role, target: Role) => manages(actor) && (actor === 'owner' || target !== 'owner');
 const day = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
+// The organization's members, oldest first, from Better Auth.
+function useMembers(organizationId: string | undefined) {
+  const { data } = useListOrganizationMembers(authClient, {
+    query: { organizationId, sortBy: 'createdAt', sortDirection: 'asc' },
+  });
+  return data?.members;
+}
+
 // The Organization page: who is in it and their roles, and for owners and admins invitations and join domains;
 // for anyone, leaving, and other organizations that allow their email address's domain.
 export function Organization() {
   const { data, isError } = useQuery(organizationQuery);
+  const members = useMembers(data?.organization.id);
   return (
     <AppPage title="Organization" description={data && `You are ${aRole[data.role]} of ${data.organization.name}.`}>
       {isError && (
@@ -68,7 +80,7 @@ export function Organization() {
       )}
       {data && (
         <>
-          <Members view={data} />
+          <Members organization={data.organization} role={data.role} />
           {manages(data.role) && <Invitations organizationId={data.organization.id} role={data.role} />}
           {manages(data.role) && <JoinDomains domains={data.organization.joinDomains} />}
           {manages(data.role) && <ApiKeys organizationId={data.organization.id} />}
@@ -77,7 +89,7 @@ export function Organization() {
           <NewOrganization />
           <Leave
             name={data.organization.name}
-            onlyOwner={data.role === 'owner' && data.members.filter(member => member.role === 'owner').length === 1}
+            onlyOwner={data.role === 'owner' && members?.filter(member => member.role === 'owner').length === 1}
           />
         </>
       )}
@@ -85,21 +97,20 @@ export function Organization() {
   );
 }
 
-function Members({ view }: { view: OrganizationView }) {
+type MemberRow = NonNullable<ReturnType<typeof useMembers>>[number];
+
+function Members({ organization, role }: { organization: { id: string; name: string }; role: Role }) {
   const queryClient = useQueryClient();
-  const refresh = () => queryClient.invalidateQueries({ queryKey: organizationQuery.queryKey });
-  const [removing, setRemoving] = useState<OrganizationView['members'][number] | null>(null);
-  const changeRole = useMutation({
-    mutationFn: ({ id, role }: { id: string; role: Role }) =>
-      authResult(
-        authClient.organization.updateMemberRole({ memberId: id, role, organizationId: view.organization.id }),
-      ),
-    onSettled: refresh,
-  });
+  const members = useMembers(organization.id);
+  const { data: session } = useSession(authClient);
+  const [removing, setRemoving] = useState<MemberRow | null>(null);
+  const changeRole = useUpdateMemberRole(authClient);
+  // Removing deletes the member's computer and grants too, which Better Auth's remove-member doesn't, so it is ours
+  // (members.ts).
   const remove = useMutation({
     mutationFn: (id: string) => api(`/organization/members/${id}`, 'DELETE'),
     onSuccess: () => setRemoving(null),
-    onSettled: refresh,
+    onSettled: () => queryClient.invalidateQueries(),
   });
   return (
     <Card>
@@ -113,67 +124,80 @@ function Members({ view }: { view: OrganizationView }) {
       </CardHeader>
       <CardContent className="grid gap-4">
         <ul className="grid divide-y">
-          {view.members.map(member => (
-            <li key={member.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-              <div className="min-w-0">
-                <p className="truncate font-medium">
-                  {member.name}
-                  {member.you && <span className="font-normal text-muted-foreground"> (you)</span>}
-                </p>
-                <p className="truncate text-sm text-muted-foreground">{member.email}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant={member.role === 'member' ? 'outline' : 'secondary'}>{roleNames[member.role]}</Badge>
-                {!member.you && mayManage(view.role, member.role) && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      aria-label={`Manage ${member.name}`}
-                      disabled={changeRole.isPending || remove.isPending}
-                      className={buttonVariants({ variant: 'ghost', size: 'icon' })}
-                    >
-                      <Ellipsis aria-hidden />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="min-w-44">
-                      <DropdownMenuGroup>
-                        <DropdownMenuLabel>Role</DropdownMenuLabel>
-                        <DropdownMenuRadioGroup
-                          value={member.role}
-                          onValueChange={role => changeRole.mutate({ id: member.id, role: role as Role })}
-                        >
-                          {grantable(view.role).map(role => (
-                            <DropdownMenuRadioItem closeOnClick key={role} value={role} className="min-h-11">
-                              {roleNames[role]}
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuGroup>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        variant="destructive"
-                        className="min-h-11"
-                        onClick={() => {
-                          remove.reset();
-                          setRemoving(member);
-                        }}
+          {members?.map(member => {
+            const you = member.userId === session?.user.id;
+            const memberRole = member.role as Role;
+            return (
+              <li
+                key={member.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">
+                    {member.user.name}
+                    {you && <span className="font-normal text-muted-foreground"> (you)</span>}
+                  </p>
+                  <p className="truncate text-sm text-muted-foreground">{member.user.email}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={memberRole === 'member' ? 'outline' : 'secondary'}>{roleNames[memberRole]}</Badge>
+                  {!you && mayManage(role, memberRole) && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        aria-label={`Manage ${member.user.name}`}
+                        disabled={changeRole.isPending || remove.isPending}
+                        className={buttonVariants({ variant: 'ghost', size: 'icon' })}
                       >
-                        Remove…
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
-            </li>
-          ))}
+                        <Ellipsis aria-hidden />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-44">
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>Role</DropdownMenuLabel>
+                          <DropdownMenuRadioGroup
+                            value={memberRole}
+                            onValueChange={next =>
+                              changeRole.mutate({
+                                memberId: member.id,
+                                role: next as Role,
+                                organizationId: organization.id,
+                              })
+                            }
+                          >
+                            {grantable(role).map(each => (
+                              <DropdownMenuRadioItem closeOnClick key={each} value={each} className="min-h-11">
+                                {roleNames[each]}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuGroup>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant="destructive"
+                          className="min-h-11"
+                          onClick={() => {
+                            remove.reset();
+                            setRemoving(member);
+                          }}
+                        >
+                          Remove…
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
         <Failure error={changeRole.error} />
       </CardContent>
       <AlertDialog open={!!removing} onOpenChange={open => !open && !remove.isPending && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Remove {removing?.user.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes everything they had in {view.organization.name}: their computer, its files and sign-ins, and
-              their synced browser data. Their browsers and agents disconnect from it. Their other organizations are not
+              This deletes everything they had in {organization.name}: their computer, its files and sign-ins, and their
+              synced browser data. Their browsers and agents disconnect from it. Their other organizations are not
               affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -197,23 +221,15 @@ function Members({ view }: { view: OrganizationView }) {
 // Invitations name one email address, and only an account with that address can accept. They are emailed when the
 // server sends email; the link works either way.
 function Invitations({ organizationId, role }: { organizationId: string; role: Role }) {
-  const queryClient = useQueryClient();
-  const query = invitationsQuery(organizationId);
-  const { data: invitations } = useQuery(query);
+  const { data: invitations } = useListOrganizationInvitations(authClient, { query: { organizationId } });
+  const waiting = invitations?.filter(
+    invitation => invitation.status === 'pending' && new Date(invitation.expiresAt) > new Date(),
+  );
   const fieldId = useId();
   const [email, setEmail] = useState('');
   const [inviteAs, setInviteAs] = useState<Role>('member');
-  const refresh = () => queryClient.invalidateQueries({ queryKey: query.queryKey });
-  const create = useMutation({
-    mutationFn: () =>
-      authResult(authClient.organization.inviteMember({ email: email.trim(), role: inviteAs, organizationId })),
-    onSuccess: () => setEmail(''),
-    onSettled: refresh,
-  });
-  const cancel = useMutation({
-    mutationFn: (invitationId: string) => authResult(authClient.organization.cancelInvitation({ invitationId })),
-    onSettled: refresh,
-  });
+  const create = useInviteMember(authClient, { onSuccess: () => setEmail('') });
+  const cancel = useCancelInvitation(authClient);
   const linkOf = (id: string) => `${window.location.origin}/join/${id}`;
   const sent = create.data;
   return (
@@ -232,7 +248,7 @@ function Invitations({ organizationId, role }: { organizationId: string; role: R
           className="grid gap-3"
           onSubmit={event => {
             event.preventDefault();
-            create.mutate();
+            create.mutate({ email: email.trim(), role: inviteAs, organizationId });
           }}
         >
           <Label htmlFor={fieldId}>Email address</Label>
@@ -274,17 +290,17 @@ function Invitations({ organizationId, role }: { organizationId: string; role: R
           </div>
         )}
         <Failure error={create.error} />
-        {!!invitations?.length && (
+        {!!waiting?.length && (
           <div className="grid gap-2">
             <h3 className="text-sm font-medium">Waiting to join</h3>
             <ul className="grid divide-y">
-              {invitations.map(invitation => (
+              {waiting.map(invitation => (
                 <li key={invitation.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
                   <p className="min-w-0 truncate text-sm">
                     {invitation.email}
                     <span className="text-muted-foreground">
                       {' '}
-                      · {roleNames[invitation.role]} · until {day.format(new Date(invitation.expiresAt))}
+                      · {roleNames[invitation.role as Role]} · until {day.format(new Date(invitation.expiresAt))}
                     </span>
                   </p>
                   <div className="flex items-center gap-1">
@@ -292,8 +308,8 @@ function Invitations({ organizationId, role }: { organizationId: string; role: R
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={cancel.isPending && cancel.variables === invitation.id}
-                      onClick={() => cancel.mutate(invitation.id)}
+                      disabled={cancel.isPending && cancel.variables?.invitationId === invitation.id}
+                      onClick={() => cancel.mutate({ invitationId: invitation.id })}
                     >
                       Cancel
                     </Button>
@@ -364,23 +380,13 @@ function JoinDomains({ domains }: { domains: string[] }) {
 // Keys for the organization's developers' servers, which read every member's latest capture over REST. The secret is
 // shown once, right after creating it.
 function ApiKeys({ organizationId }: { organizationId: string }) {
-  const queryClient = useQueryClient();
-  const query = apiKeysQuery(organizationId);
-  const { data: keys } = useQuery(query);
+  const { data } = useListApiKeys(authClient, { query: { organizationId } });
+  const keys = data?.apiKeys;
   const fieldId = useId();
   const [name, setName] = useState('');
-  const [revoking, setRevoking] = useState<ApiKey | null>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: query.queryKey });
-  const create = useMutation({
-    mutationFn: () => authResult(authClient.apiKey.create({ name: name.trim(), organizationId })),
-    onSuccess: () => setName(''),
-    onSettled: refresh,
-  });
-  const revoke = useMutation({
-    mutationFn: (keyId: string) => authResult(authClient.apiKey.delete({ keyId })),
-    onSuccess: () => setRevoking(null),
-    onSettled: refresh,
-  });
+  const [deleting, setDeleting] = useState<NonNullable<typeof keys>[number] | null>(null);
+  const create = useCreateApiKey(authClient, { onSuccess: () => setName('') });
+  const remove = useDeleteApiKey(authClient, { onSuccess: () => setDeleting(null) });
   const made = create.data;
   return (
     <Card>
@@ -390,7 +396,7 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
         </CardTitle>
         <CardDescription>
           A key lets your servers read any member's latest synced sign-ins over the REST API, to use in your own
-          browsers. Members agreed to this when they joined. Keep keys secret, and revoke one you no longer use.
+          browsers. Members agreed to this when they joined. Keep keys secret, and delete one you no longer use.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -398,7 +404,7 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
           className="grid gap-3"
           onSubmit={event => {
             event.preventDefault();
-            create.mutate();
+            create.mutate({ name: name.trim(), organizationId });
           }}
         >
           <Label htmlFor={fieldId}>Name</Label>
@@ -420,7 +426,7 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
         {made && (
           <div className="grid gap-2">
             <p className="text-sm text-soft">
-              Copy the key for {made.name} now. It is shown only once; if you lose it, revoke it and create another.
+              Copy the key for {made.name} now. It is shown only once; if you lose it, delete it and create another.
             </p>
             <div className="flex flex-wrap gap-3">
               <Input readOnly aria-label="New API key" value={made.key} className="min-w-60 flex-1 font-mono" />
@@ -444,34 +450,34 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    revoke.reset();
-                    setRevoking(key);
+                    remove.reset();
+                    setDeleting(key);
                   }}
                 >
-                  Revoke
+                  Delete
                 </Button>
               </li>
             ))}
           </ul>
         )}
       </CardContent>
-      <AlertDialog open={!!revoking} onOpenChange={open => !open && !revoke.isPending && setRevoking(null)}>
+      <AlertDialog open={!!deleting} onOpenChange={open => !open && !remove.isPending && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke {revoking?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               Servers using this key are refused from their next request. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <Failure error={revoke.error} />
+          <Failure error={remove.error} />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={revoke.isPending}>Keep it</AlertDialogCancel>
+            <AlertDialogCancel disabled={remove.isPending}>Keep it</AlertDialogCancel>
             <Button
               variant="destructive"
-              disabled={revoke.isPending}
-              onClick={() => revoking && revoke.mutate(revoking.id)}
+              disabled={remove.isPending}
+              onClick={() => deleting && remove.mutate({ keyId: deleting.id })}
             >
-              {revoke.isPending ? 'Revoking…' : 'Revoke'}
+              {remove.isPending ? 'Deleting…' : 'Delete'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -505,9 +511,7 @@ function NewOrganization() {
   const fieldId = useId();
   const field = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
-  const create = useMutation({
-    // The plugin wants a slug; the server replaces it with its own (organization-auth.ts).
-    mutationFn: () => authResult(authClient.organization.create({ name: name.trim(), slug: crypto.randomUUID() })),
+  const create = useCreateOrganization(authClient, {
     onSuccess: async () => {
       setName('');
       await queryClient.invalidateQueries();
@@ -538,7 +542,8 @@ function NewOrganization() {
           className="grid gap-3"
           onSubmit={event => {
             event.preventDefault();
-            create.mutate();
+            // The server sets the slug itself (organization-auth.ts); sending one skips the check for a free one.
+            create.mutate({ name: name.trim(), slug: crypto.randomUUID() });
           }}
         >
           <Label htmlFor={fieldId}>Name</Label>
@@ -563,6 +568,7 @@ function NewOrganization() {
   );
 }
 
+// Leaving deletes the member's computer and grants too, which Better Auth's leave doesn't, so it is ours (members.ts).
 function Leave({ name, onlyOwner }: { name: string; onlyOwner: boolean }) {
   const router = useRouter();
   const queryClient = useQueryClient();
