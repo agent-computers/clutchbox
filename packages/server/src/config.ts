@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { builtInAgentClientUrls } from './agents';
 
 const optional = z.string().optional();
 const envSchema = z.object({
@@ -26,6 +27,8 @@ const envSchema = z.object({
   // The organization's E2B account for computers (providerFromConfig).
   E2B_API_KEY: optional,
   E2B_COMPUTER_TEMPLATE: optional,
+  // Other agents' client_id URLs, comma separated, besides Claude's and ChatGPT's (agentClientUrls).
+  AGENT_CLIENT_URLS: optional,
 });
 export type ServerConfig = z.infer<typeof envSchema>;
 
@@ -70,10 +73,25 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     !(loopback && ['development', 'test'].includes(config.APP_ENV) && origin.protocol === 'http:')
   )
     throw new Error('HTTPS is required outside local development.');
+  agentClientUrls(config);
   if (env.VERCEL_ENV && env.VERCEL_ENV !== config.APP_ENV) throw new Error('Deployment environment mismatch.');
   if (config.APP_ENV === 'test' && (env.VERCEL || env.NODE_ENV !== 'test'))
     throw new Error('Test configuration cannot run in a deployment.');
   return { ...config, BETTER_AUTH_URL: origin.origin };
+}
+// The client_id URLs agents may connect with (isAllowedAgentClient): the built-in ones and AGENT_CLIENT_URLS. Each
+// added one is an HTTPS URL, matched exactly, or as a prefix when it ends with a slash.
+export function agentClientUrls(config: Pick<ServerConfig, 'AGENT_CLIENT_URLS'>): string[] {
+  const added = (config.AGENT_CLIENT_URLS ?? '')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean);
+  for (const entry of added) {
+    const url = URL.canParse(entry) ? new URL(entry) : null;
+    if (url?.protocol !== 'https:' || url.href !== entry || url.username || url.password || url.search || url.hash)
+      throw new Error('AGENT_CLIENT_URLS must list HTTPS client_id URLs, or prefixes ending with a slash.');
+  }
+  return [...builtInAgentClientUrls, ...added];
 }
 export const dataClassFor = (environment: ServerConfig['APP_ENV']) =>
   environment === 'production' ? 'production' : 'nonproduction';

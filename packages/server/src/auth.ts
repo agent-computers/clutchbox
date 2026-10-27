@@ -10,6 +10,7 @@ import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { genericOAuth, jwt, magicLink } from 'better-auth/plugins';
 import { sql } from 'drizzle-orm';
+import { clientHost, isAllowedAgentClient } from './agents';
 import { authInvitation, authMember, authOrganization } from './auth-schema';
 import {
   ACCESS_TOKEN_SECONDS,
@@ -21,7 +22,7 @@ import {
   refreshTokenClient,
   SYNC_SCOPE,
 } from './browsers';
-import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
+import { agentClientUrls, OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
 import { type AuthPlugins, type Limits, noAuthPlugins, noLimits, noOperatorAdmin, type OperatorAdmin } from './hooks';
@@ -221,6 +222,7 @@ export function createAuth(
   // Every provider asks which account every time: each account has its own computer, so a silently reused session at
   // the provider can connect an agent to the wrong one.
   const prompt = 'select_account' as const;
+  const agentClients = agentClientUrls(config);
   return betterAuth({
     appName: 'Clutchbox',
     baseURL: config.BETTER_AUTH_URL,
@@ -410,7 +412,17 @@ export function createAuth(
         },
         customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),
       }),
-      cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
+      cimd({
+        fetchClientMetadataResource: fetchClientMetadata,
+        metadataProfile: 'mcp-2026-07-28',
+        // Only the agents' own client_id URLs (agents.ts), so another site's document can't pass as one. Logged by
+        // host, so a vendor's new URL shows up before its users report a failed connection.
+        isMetadataDocumentUrlAllowed: clientId => {
+          if (isAllowedAgentClient(clientId, agentClients)) return true;
+          console.warn(`Agent client refused: ${clientHost(clientId) ?? 'not a URL'}`);
+          return false;
+        },
+      }),
       ...organizationPlugins(db, { baseURL: config.BETTER_AUTH_URL, tenancy, limits, sendEmail: emailLinks }),
       ...operatorAdmin.plugins,
       ...deployment.plugins,

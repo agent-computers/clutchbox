@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readConfig, signInMethods } from './config';
+import { builtInAgentClientUrls } from './agents';
+import { agentClientUrls, readConfig, signInMethods } from './config';
 
 const base = {
   APP_ENV: 'test',
@@ -69,5 +70,29 @@ describe('readConfig sign-in methods', () => {
     expect(
       signInMethods(readConfig({ ...base, ...google, ...github, ...oidc, ...email, OIDC_NAME: 'Acme SSO' })),
     ).toEqual({ providers: ['google', 'github', { id: 'oidc', label: 'Acme SSO' }], emailLink: true });
+  });
+});
+
+describe('agentClientUrls', () => {
+  it("adds the deployment's agents to the built-in ones and refuses a URL that isn't a plain HTTPS one", () => {
+    expect(agentClientUrls(readConfig({ ...base, ...google }))).toEqual([...builtInAgentClientUrls]);
+    expect(
+      agentClientUrls(
+        readConfig({
+          ...base,
+          ...google,
+          AGENT_CLIENT_URLS: ' https://agents.example.test/clients/ ,https://one.example.test/c.json',
+        }),
+      ),
+    ).toEqual([...builtInAgentClientUrls, 'https://agents.example.test/clients/', 'https://one.example.test/c.json']);
+    for (const entry of [
+      'http://agents.example.test/clients/',
+      'agents.example.test/clients/',
+      'https://agents.example.test/c.json?x=1',
+      'https://AGENTS.example.test/clients/',
+    ])
+      expect(failure({ ...base, ...google, AGENT_CLIENT_URLS: entry }), entry).toBe(
+        'AGENT_CLIENT_URLS must list HTTPS client_id URLs, or prefixes ending with a slash.',
+      );
   });
 });

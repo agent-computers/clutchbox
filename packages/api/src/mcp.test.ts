@@ -50,6 +50,8 @@ const config: ServerConfig = {
   BETTER_AUTH_SECRET: randomBytes(32).toString('base64url'),
   GOOGLE_CLIENT_ID: 'synthetic.apps.googleusercontent.com',
   GOOGLE_CLIENT_SECRET: 'synthetic-only',
+  // The fixture agents' client_id URLs, beside Claude's and ChatGPT's.
+  AGENT_CLIENT_URLS: 'https://client.example.test/',
 };
 let pg: PGlite;
 let db: Database;
@@ -368,6 +370,38 @@ describe('remote MCP OAuth boundary', () => {
     const client = await register();
     await authorize(a.cookie, client, undefined, false);
     expect((await db.select().from(schema.oauthConsent)).length).toBe(0);
+  });
+  it("refuses a client_id URL that isn't an agent's, at registration and when a connected one refreshes", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = await identity('a');
+    // Any site can publish a document that calls itself Claude.
+    const impostor = await register('https://impostor.example.test/oauth/mcp-oauth-client-metadata');
+    clientDocuments.set(impostor, { ...clientDocuments.get(impostor), client_name: 'Claude' });
+    const query = new URLSearchParams({
+      client_id: impostor,
+      redirect_uri: 'https://client.example.test/callback',
+      response_type: 'code',
+      scope: 'openid offline_access mcp:tools',
+      resource,
+      code_challenge: createHash('sha256').update(randomBytes(48)).digest('base64url'),
+      code_challenge_method: 'S256',
+      state: randomUUID(),
+    });
+    const refused = await authRequest(`/oauth2/authorize?${query}`, { cookie: a.cookie });
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toBe('invalid_client');
+    expect(await db.select().from(schema.oauthClient)).toHaveLength(0);
+    expect(console.warn).toHaveBeenCalledWith('Agent client refused: impostor.example.test');
+    // A connected agent whose URL the deployment stops allowing loses its connection once its document is checked again.
+    const client = await register();
+    const token = (await authorize(a.cookie, client))!;
+    auth = createAuth(db, { ...config, AGENT_CLIENT_URLS: undefined }, { fetchClientMetadata });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61 * 60_000);
+    const refresh = await authRequest('/oauth2/token', {
+      body: { grant_type: 'refresh_token', client_id: client, refresh_token: token.refresh_token, resource },
+    });
+    expect(refresh.status).toBeGreaterThanOrEqual(400);
   });
   it('rejects expiry, refreshes, revokes immediately, and never revives old tokens after reconnect', async () => {
     const a = await identity('a');

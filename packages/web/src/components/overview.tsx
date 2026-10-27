@@ -145,9 +145,7 @@ function Checklist({ setup, first, mcpUrl }: { setup: SetupView; first: string |
           summary={`Connected: ${connectedAgents(grants).join(', ')}`}
           href="/app/agents"
         >
-          <p className="text-foreground">
-            Add this MCP server to Claude, ChatGPT, Claude Code, Codex, or any MCP agent.
-          </p>
+          <p className="text-foreground">Add this MCP server to Claude, ChatGPT, Claude Code, or Codex.</p>
           <div className="flex flex-wrap gap-3">
             <Input readOnly aria-label="MCP server URL" value={mcpUrl} className="min-w-60 flex-1" />
             <CopyButton text={mcpUrl} label="Copy the MCP server URL" />

@@ -54,7 +54,7 @@ export function AgentConnections({ mcpUrl }: { mcpUrl: string }) {
           <h2>Connect an agent</h2>
         </CardTitle>
         <CardDescription>
-          Steps for common agents. Any agent that supports MCP works with the URL above.
+          Steps for each agent. Another MCP agent connects only once this server allows it.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -82,7 +82,7 @@ export function AgentConnections({ mcpUrl }: { mcpUrl: string }) {
     </Card>
   );
   return (
-    <AppPage title="Agents" description="Connect Claude, ChatGPT, Codex, or any agent that supports MCP.">
+    <AppPage title="Agents" description="Connect Claude, ChatGPT, Claude Code, or Codex.">
       <Card>
         <CardHeader>
           <CardTitle>
