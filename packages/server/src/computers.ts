@@ -74,7 +74,7 @@ export type ComputerFailure = {
     | 'user_in_control'
     | 'session_not_found'
     | 'session_ended'
-    | 'allowance_exhausted'
+    | 'credit_exhausted'
     | 'access_revoked'
     | 'needs_reset'
     | 'computer_not_found'
@@ -130,15 +130,16 @@ type ComputerRow = Omit<typeof schema.computers.$inferSelect, 'appliedCapture'>;
 type SessionRow = typeof schema.computerSessions.$inferSelect;
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
-// The metering refusal (hooks.ts) as the computer service's failure: allowance_exhausted, with when it lifts.
-async function allowanceFailure(metering: Metering, db: Database, member: Member): Promise<ComputerFailure | null> {
+// The metering refusal (hooks.ts) as the computer service's failure: credit_exhausted, with when it lifts.
+async function creditFailure(metering: Metering, db: Database, member: Member): Promise<ComputerFailure | null> {
   const refusal = await metering.refusal(db, member, new Date());
-  return refusal && { error: 'allowance_exhausted', ...refusal };
+  return refusal && { error: 'credit_exhausted', ...refusal };
 }
 // Metering after the fact: books the computer's running time since the last meter, up to when the provider was due
-// to pause it, to the metering hook, then records `runsUntil`, when the provider will now pause it. Nothing is
-// charged ahead or refunded, so the allowance can be overshot by the calls and live-view holds already running when
-// it runs out, and time since the last meter (at most the idle minute after the last call) is booked at the next one.
+// to pause it, to the metering hook, then records `runsUntil`, when the provider will now pause it. A `runsUntil`
+// already past means the provider paused the computer then, so that pause is booked too. Nothing is charged ahead or
+// refunded, so the credit can be overshot by the calls and live-view holds already running when it runs out, and time
+// since the last meter (at most the idle minute after the last call), with its pause, is booked at the next one.
 async function meter(tx: Transaction, metering: Metering, computerId: number, member: Member, runsUntil: Date) {
   const [row] = await tx
     .select({
@@ -153,11 +154,12 @@ async function meter(tx: Transaction, metering: Metering, computerId: number, me
   const now = new Date();
   const ran = row.runsUntil && row.runsUntil < now ? row.runsUntil : now;
   const seconds = row.billedUntil && row.runsUntil ? Math.ceil((ran.getTime() - row.billedUntil.getTime()) / 1000) : 0;
+  const pauses = row.billedUntil && row.runsUntil && row.runsUntil <= now ? 1 : 0;
   await tx
     .update(schema.computers)
     .set({ billedUntil: row.billedUntil && row.billedUntil > now ? row.billedUntil : now, runsUntil })
     .where(eq(schema.computers.id, computerId));
-  if (seconds > 0) await metering.charge(tx, member, seconds, now, row.size);
+  if (seconds > 0 || pauses > 0) await metering.charge(tx, member, seconds, now, row.size, pauses);
 }
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
@@ -577,7 +579,7 @@ export async function openComputerSession(
   } = {},
 ): Promise<OpenedSession | ComputerFailure> {
   const deadline = Date.now() + SYNC_DEADLINE_MS;
-  const exhausted = await allowanceFailure(computers.metering, db, caller);
+  const exhausted = await creditFailure(computers.metering, db, caller);
   if (exhausted) return exhausted;
   const profiles = await listProfiles(db, caller);
   const choice = { named: profiles.find(each => each.id === profile), profiles };
@@ -696,7 +698,7 @@ export async function useComputerSession(
     (await guardFailure(tx, caller)) ?? (await lockSession(tx, caller, sessionId, new Date()));
   const checked = await db.transaction(control);
   if ('error' in checked) return checked;
-  const exhausted = await allowanceFailure(computers.metering, db, caller);
+  const exhausted = await creditFailure(computers.metering, db, caller);
   if (exhausted) return exhausted;
   const started = await db.transaction(
     async (
@@ -1661,7 +1663,7 @@ async function applyTimeZone(db: Database, computerId: number, session: Computer
 // A lease is one load of the /computer page (a client-generated UUID). While visible, the page's heartbeat keeps a
 // watch on the computer for its lease, and a takeover belongs to the lease that took it. Holds keep the computer
 // running to their lapse deadline like calls in flight (pauseAt), and are metered as they are; they are extended only
-// once less than HOLD_LAPSE_MS is left, and not at all once the allowance is used up, so they lapse.
+// once less than HOLD_LAPSE_MS is left, and not at all once the credit is used up, so they lapse.
 
 export const LEASE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type LiveViewStatus = {
@@ -1674,7 +1676,7 @@ export type LiveViewStatus = {
   // like the account page names grants (agents.ts), and since its first such call.
   agentWaiting: { agent: AgentKind | null; host: string; since: string } | null;
   // The metering refusal (hooks.ts), in its words.
-  allowanceExhausted?: { resetsAt: string; message: string } | undefined;
+  creditExhausted?: { resetsAt: string; message: string } | undefined;
 };
 type LiveViewComputer = Pick<
   ComputerRow,
@@ -1761,7 +1763,7 @@ export async function liveViewStatus(
     metering.refusal(db, member, now),
   ]);
   const exhausted = refusal
-    ? { allowanceExhausted: { resetsAt: refusal.resetsAt.toISOString(), message: refusal.message } }
+    ? { creditExhausted: { resetsAt: refusal.resetsAt.toISOString(), message: refusal.message } }
     : {};
   if (computer?.status !== 'ready' || !computer.sandboxId)
     return { computer: 'none', watching: false, takeover: null, agentWaiting: null, ...exhausted };
@@ -1896,14 +1898,14 @@ async function extendHolds(
   let created = false;
   if (!current?.sandboxId) {
     if (target.computerId) return;
-    if (await allowanceFailure(metering, db, member)) return;
+    if (await creditFailure(metering, db, member)) return;
     const row = await ensureComputer(db, computers, member);
     if ('error' in row) return;
     [current] = await ready();
     if (!current?.sandboxId) return;
     created = true;
   }
-  const extend = !!extendedHolds(current, lease, now) && !(await allowanceFailure(metering, db, member));
+  const extend = !!extendedHolds(current, lease, now) && !(await creditFailure(metering, db, member));
   if (!extend && !lapsed(current, now)) return;
   const woken = await db.transaction(async tx => {
     // Also ends a lapsed takeover.
@@ -1958,7 +1960,7 @@ export async function takeOverComputer(
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
   const { provider, metering } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
-  const exhausted = await allowanceFailure(metering, db, member);
+  const exhausted = await creditFailure(metering, db, member);
   if (exhausted) return exhausted;
   // A fork is never created here: only the main computer, on first use.
   const row = target.computerId
@@ -2178,12 +2180,13 @@ export async function computerView(db: Database, metering: Metering, member: Mem
     capture,
     // The size the member chose, which the main computer runs at once it is created.
     size: membership?.computerSize ?? '1x',
-    // Without an allowance (hooks.ts), null.
+    // Without a credit (hooks.ts), null.
     usage: usage && {
-      usedMinutes: Math.floor(usage.usedSeconds / 60),
-      allowanceMinutes: usage.allowanceSeconds / 60,
+      cost: usage.cost,
+      credit: usage.credit,
+      creditLeft: usage.creditLeft,
+      usedShare: usage.usedShare,
       resetsAt: usage.resetsAt.toISOString(),
-      name: usage.name,
       hardStop: usage.hardStop,
       ...(usage.estimate !== undefined && { estimate: usage.estimate }),
     },

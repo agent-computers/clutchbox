@@ -148,15 +148,14 @@ function syncNote(sync: SyncSummary, email: string) {
         : 'Browser sync failed this time; sites keep their previous sign-ins on the computer. The next computer_open retries.';
   }
 }
-// The allowance in the deployment's words (hooks.ts, Usage): what its minutes are called, how many are left, when they
-// reset, and whether time past them is refused or charged. Without an allowance, nothing.
-const allowance = async (metering: Metering, db: Database, member: Member) => {
+// The credit in the deployment's words (hooks.ts, Usage): how much is left, when it resets, and whether time past it
+// is refused or charged. Without a credit, nothing.
+const credit = async (metering: Metering, db: Database, member: Member) => {
   const usage = await metering.usage(db, member, new Date());
   return usage
     ? {
-        allowance: {
-          name: usage.name,
-          minutes_remaining: Math.floor(usage.remainingSeconds / 60),
+        credit: {
+          left: usage.creditLeft,
           resets_at: usage.resetsAt.toISOString(),
           when_used_up: usage.hardStop ? 'refused' : 'charged',
         },
@@ -181,7 +180,7 @@ Flow: computer_open returns a session_id. Pass it on every other computer tool c
 - user_in_control: the user took control of the computer in live view, often to sign in or pass a bot check for you, and your session waits for them. Keep your session_id and retry in a minute or two; do not call computer_open. When they hand it back, a result carries user_had_control: take a screenshot before acting, since the screen may have changed.
 - computer_not_found: no such computer for this account, or it was deleted. Call computer_list, or computer_open without computer_id.
 - profile_not_found: that browser no longer syncs to this account. Pick another from profiles, or omit profile.
-- access_revoked: the user disconnected this agent. allowance_exhausted: the account's computer time is used up; its message says until when.
+- access_revoked: the user disconnected this agent. credit_exhausted: the account's computer credit is used up; its message says until when.
 - Never type passwords or other credentials. If a site needs sign-in, follow sign_in_help from computer_open.`;
 
 // The computer tools. Each call verifies the live grant (protectedHandler); computer_list and computer_delete act on
@@ -297,7 +296,7 @@ function registerComputerTools(
         await noteSetupStep(db, member, 'setUp');
         markToolStep('screenshot');
         const png = await opened.session.screenshot();
-        // End the call first, so the allowance counts its running time.
+        // End the call first, so the credit counts its running time.
         await opened.done();
         return image(png, {
           session_id: opened.sessionId,
@@ -312,7 +311,7 @@ function registerComputerTools(
           account_email: principal.email,
           browser_sync: syncNote(opened.sync, principal.email),
           sign_in_help: signInHelp,
-          ...(await allowance(computers.metering, db, member)),
+          ...(await credit(computers.metering, db, member)),
         });
       } catch (error) {
         toolCallFailed('mcp computer_open', error);
@@ -336,7 +335,7 @@ function registerComputerTools(
       try {
         const closed = await closeComputerSession(db, computers, caller, session_id);
         if ('error' in closed) return failure(closed);
-        return result({ closed: true, ...(await allowance(computers.metering, db, member)) });
+        return result({ closed: true, ...(await credit(computers.metering, db, member)) });
       } catch (error) {
         toolCallFailed('mcp computer_close', error);
         return unavailable();

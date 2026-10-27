@@ -5,9 +5,8 @@ import type { ComputerView } from './api';
 export const resetsOn = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
-// How much of the allowance is used, as a percentage for its bar: full when there is none.
-export const usedShare = ({ usedMinutes, allowanceMinutes }: NonNullable<ComputerView['usage']>) =>
-  allowanceMinutes > 0 ? Math.min(100, (usedMinutes / allowanceMinutes) * 100) : 100;
+// How much of the credit is used, as a percentage for its bar.
+export const usedShare = ({ usedShare }: NonNullable<ComputerView['usage']>) => Math.min(100, usedShare * 100);
 
 // What the computer is doing, for the sidebar, the overview, and the Computer page.
 export function computerStatus({ computer }: ComputerView) {

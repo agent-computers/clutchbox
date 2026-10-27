@@ -121,7 +121,7 @@ export const MAX_CAPTURE_BYTES = 4_000_000;
 // Builds before 0.5.0 send no version and count as 0.0.0.
 export const MIN_EXTENSION_VERSION = '0.0.0';
 
-// A computer service's refusal (cdp.ts, failureStatus): the free allowance used up is the user's to wait out (403, with
+// A computer service's refusal (cdp.ts, failureStatus): the credit used up is the user's to wait out (403, with
 // when it resets); a fork that is gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
 function computerFailure(c: Context<Env>, failure: ComputerFailure) {
   return c.json(failureBody(failure), failureStatus(failure));

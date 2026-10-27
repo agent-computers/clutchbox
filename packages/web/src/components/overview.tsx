@@ -383,15 +383,14 @@ function ComputerSummary({ view }: { view: ComputerView }) {
           <h2>{status.note}</h2>
         </CardTitle>
       </CardHeader>
-      {/* Only with an allowance (the metering hook). */}
+      {/* Only with a credit (the metering hook). */}
       {usage && (
         <CardContent className="grid gap-2">
           <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
             <div className="h-full rounded-full bg-foreground" style={{ width: `${usedShare(usage)}%` }} />
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">
-            {usage.usedMinutes} of {usage.allowanceMinutes} {usage.name} used this month · resets{' '}
-            {resetsOn(usage.resetsAt)}
+            {usage.cost} of {usage.credit} computer credit used this month · resets {resetsOn(usage.resetsAt)}
             {usage.estimate && ` · estimated bill ${usage.estimate}`}
           </p>
         </CardContent>

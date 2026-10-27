@@ -1,5 +1,5 @@
 'use client';
-import { COMPUTER_SIZE_NAMES, COMPUTER_SIZES, type ComputerSize } from '@agent-computers/computer';
+import { COMPUTER_SIZE_NAMES, type ComputerSize, sizeName } from '@agent-computers/computer';
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
 import { Button } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
@@ -29,9 +29,9 @@ export function YourComputer() {
             forks={view.forks}
             metered={!!view.usage}
             exhausted={
-              view.usage?.hardStop && view.usage.usedMinutes >= view.usage.allowanceMinutes
+              view.usage?.hardStop && view.usage.usedShare >= 1
                 ? {
-                    message: `This month's ${view.usage.name} are used up. They reset on ${resetsOn(view.usage.resetsAt)}.`,
+                    message: `This month's computer credit is used up. It resets on ${resetsOn(view.usage.resetsAt)}.`,
                   }
                 : null
             }
@@ -54,12 +54,12 @@ function ComputerStats({ view }: { view: ComputerView }) {
   const { usage } = view;
   const stats = [
     { label: 'Status', value: status.short, note: status.note, dot: status.dot },
-    // Only with an allowance (the metering hook).
+    // Only with a credit (the metering hook).
     ...(usage
       ? [
           {
-            label: usage.name.charAt(0).toUpperCase() + usage.name.slice(1),
-            value: `${usage.usedMinutes} of ${usage.allowanceMinutes}`,
+            label: 'Computer credit',
+            value: `${usage.cost} of ${usage.credit}`,
             note: `This month · resets ${resetsOn(usage.resetsAt)}${usage.estimate ? ` · estimated bill ${usage.estimate}` : ''}`,
             bar: usedShare(usage),
           },
@@ -100,8 +100,6 @@ function ComputerStats({ view }: { view: ComputerView }) {
   );
 }
 
-const sizeLabel = (size: ComputerSize) =>
-  `${COMPUTER_SIZES[size].cpuCount} vCPUs · ${COMPUTER_SIZES[size].memoryMB / 1024} GB`;
 // Chooses the main computer's size. A computer keeps its size, so changing it resets an existing computer onto the new
 // one, after a confirmation; with no computer yet it only sets the size the first one is created at.
 function ComputerSizeCard({ view }: { view: ComputerView }) {
@@ -125,7 +123,7 @@ function ComputerSizeCard({ view }: { view: ComputerView }) {
         <CardDescription>
           More CPUs and memory for heavy sites and many tabs.
           {view.usage &&
-            ` A larger computer uses your ${view.usage.name} at its multiple: a 2x computer uses them twice as fast.`}
+            ' A larger computer uses your credit faster, at its cost: twice the CPUs and memory, twice the rate.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -147,7 +145,7 @@ function ComputerSizeCard({ view }: { view: ComputerView }) {
           {COMPUTER_SIZE_NAMES.map(size => (
             <ToggleGroupItem key={size} value={size} className="h-auto flex-col items-start gap-0 px-4 py-2">
               <span className="font-medium">{size}</span>
-              <span className="text-xs text-muted-foreground">{sizeLabel(size)}</span>
+              <span className="text-xs text-muted-foreground">{sizeName(size)}</span>
             </ToggleGroupItem>
           ))}
         </ToggleGroup>

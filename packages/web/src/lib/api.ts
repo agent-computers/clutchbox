@@ -9,13 +9,14 @@ import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient }
 import { useEffect, useRef } from 'react';
 
 export type ComputerView = {
-  // Null without an allowance (the metering hook), whose words it carries: what its minutes are called, whether time
-  // past them is refused, and the month's estimated charge for those who may see it.
+  // Null without a credit (the metering hook), whose words it carries: the month's cost, the credit and what is left,
+  // whether time past it is refused, and the month's estimated charge for those who may see it.
   usage: {
-    usedMinutes: number;
-    allowanceMinutes: number;
+    cost: string;
+    credit: string;
+    creditLeft: string;
+    usedShare: number;
     resetsAt: string;
-    name: string;
     hardStop: boolean;
     estimate?: string;
   } | null;

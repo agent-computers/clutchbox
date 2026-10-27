@@ -606,7 +606,7 @@ export const syncSettings = pgTable('sync_settings', {
   sealed: text('sealed').notNull(),
   ...timestamps(),
 });
-// Computer seconds charged per member per UTC calendar month, against the free allowance.
+// Computer seconds charged per member per UTC calendar month, as the metering hook (hooks.ts) books them.
 export const computerUsage = pgTable(
   'computer_usage',
   {

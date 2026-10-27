@@ -8,21 +8,22 @@ import { type Member, singleOrganization, type Tenancy } from './organizations';
 // A deployment's own layers, such as the hosted service's, plug in here. The product calls metering, limits, operator
 // admin, a deployment's own Better Auth plugins, a per-organization provider account, and tenancy only through these hooks, and never imports their implementations:
 // the deployment passes them in when it builds its services. The defaults are no-ops, so a deployment without them has
-// no allowance, no limits of its own, and no operator admin, its computers come from its own E2B config (providerFromConfig), and it serves
+// no credit, no limits of its own, and no operator admin, its computers come from its own E2B config (providerFromConfig), and it serves
 // one organization that everyone joins.
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
-// A member's computer time against an allowance. The hook decides what the allowance covers: the member, or their
-// whole organization, and how it is worded where it is shown.
+// A member's computer time this month against a credit. The hook decides what the credit covers: the member, or their
+// whole organization, and words its amounts where they are shown.
 export type Usage = {
-  usedSeconds: number;
-  allowanceSeconds: number;
-  remainingSeconds: number;
+  // What the month's computer time cost, the credit, and what is left of it, such as "$0.42".
+  cost: string;
+  credit: string;
+  creditLeft: string;
+  // The share of the credit used, from 0 to 1, for its bar.
+  usedShare: number;
   resetsAt: Date;
-  // What the allowance's minutes are called, such as "free minutes".
-  name: string;
-  // Whether running past the allowance is refused (true) or charged (false).
+  // Whether running past the credit is refused (true) or charged (false).
   hardStop: boolean;
   // The month's estimated charge so far, worded by the deployment, for those who may see it; absent otherwise.
   estimate?: string;
@@ -30,13 +31,21 @@ export type Usage = {
 // Why metering refuses to start or extend a computer's run: shown to agents and the page, with when it lifts.
 export type MeteringRefusal = { message: string; resetsAt: Date };
 export type Metering = {
-  // The usage the account page and agents show; null without an allowance.
+  // The usage the account page and agents show; null without a credit.
   usage(db: Database, member: Member, now: Date): Promise<Usage | null>;
   // Checked before a computer is created, woken, or used, and before live view extends its holds.
   refusal(db: Database, member: Member, now: Date): Promise<MeteringRefusal | null>;
   // Running time the computer service booked after the fact to the member's computer, at the size the computer runs
-  // at (COMPUTER_SIZES), inside the transaction that recorded it.
-  charge(tx: Transaction, member: Member, seconds: number, now: Date, size: ComputerSize): Promise<void>;
+  // at (COMPUTER_SIZES), inside the transaction that recorded it, and how many times the computer paused in it, since a
+  // provider may bill the snapshot it takes on each pause.
+  charge(
+    tx: Transaction,
+    member: Member,
+    seconds: number,
+    now: Date,
+    size: ComputerSize,
+    pauses: number,
+  ): Promise<void>;
 };
 export const noMetering: Metering = {
   usage: async () => null,

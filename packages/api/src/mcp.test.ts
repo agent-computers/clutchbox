@@ -605,8 +605,8 @@ describe('main computer tools', () => {
     expect(opened.result.structuredContent.browser_sync).toContain(
       'No browser has synced to the Clutchbox account a@example.test',
     );
-    // The default hooks have no allowance.
-    expect(opened.result.structuredContent).not.toHaveProperty('allowance');
+    // The default hooks have no credit.
+    expect(opened.result.structuredContent).not.toHaveProperty('credit');
     const acted = await tool(claude.access_token, 'computer_act', {
       session_id: id,
       actions: [
@@ -703,13 +703,13 @@ describe('main computer tools', () => {
     expect((await tool(renewed.access_token, 'computer_open', {})).result.isError).toBe(false);
     expect(fake.calls.create).toBe(1);
   });
-  it("reports the metering hook's allowance, in its words, on open and close", async () => {
+  it("reports the metering hook's credit, in its words, on open and close", async () => {
     const usage = {
-      usedSeconds: 90,
-      allowanceSeconds: 36_000,
-      remainingSeconds: 35_910,
+      cost: '$0.42',
+      credit: '$1.00',
+      creditLeft: '$0.58',
+      usedShare: 0.42,
       resetsAt: new Date('2026-11-01T00:00:00Z'),
-      name: 'free minutes',
       hardStop: true,
     };
     const metering = { ...noMetering, usage: async () => usage };
@@ -721,19 +721,18 @@ describe('main computer tools', () => {
       hooks: { metering, operatorAdmin: noOperatorAdmin },
     });
     const token = (await authorize((await identity('a')).cookie, await register()))!.access_token;
-    const minutes = {
-      allowance: {
-        name: 'free minutes',
-        minutes_remaining: 598,
+    const credit = {
+      credit: {
+        left: '$0.58',
         resets_at: '2026-11-01T00:00:00.000Z',
         when_used_up: 'refused',
       },
     };
     const opened = (await tool(token, 'computer_open', {})).result.structuredContent;
-    expect(opened).toMatchObject(minutes);
+    expect(opened).toMatchObject(credit);
     expect(
       (await tool(token, 'computer_close', { session_id: opened.session_id })).result.structuredContent,
-    ).toMatchObject(minutes);
+    ).toMatchObject(credit);
   });
   it('gives every account its own computer and keeps other users off it', async () => {
     const fake = fakeComputerProvider();

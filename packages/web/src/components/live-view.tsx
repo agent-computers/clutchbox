@@ -72,7 +72,7 @@ const agentOf = ({ agent, host }: NonNullable<Fork['agent']>) => (agent ? agentN
 // uses its time. A session's lease keeps a watch while the page is visible (useHeartbeat), and holds the takeover once
 // the user takes control; the relay passes input only while it does, so noVNC's viewOnly only spares the user dead
 // input. Stopping, switching computers, or leaving the page releases the lease, which ends the watch and hands back.
-// metered: there is an allowance (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
+// metered: there is a credit (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
 // resets. forks: the agents' forks that are not paused. A link with ?computer=<fork ID>, the live-view link the REST API
 // gives developers, starts watching that fork.
 export function LiveViewPanel({
@@ -249,7 +249,7 @@ function LiveSession({ intent, target, onStop }: { intent: Intent; target: Targe
   const connectable = !!status && (status.watching || inControl);
   const viewer = useViewer(lease, computer, connectable, inControl, updatedAt, clipboard.mutateAsync);
   const lapsed = useLapsed(status, handBack.isPending);
-  const exhausted = status?.allowanceExhausted;
+  const exhausted = status?.creditExhausted;
   // Take control as soon as the first beat answers, when that is what the user chose.
   const asked = useRef(false);
   useEffect(() => {
@@ -450,7 +450,7 @@ function describe({
   // A fork is never created here: one that is gone was deleted, or expired.
   if (status.computer === 'none' && fork) return "This agent's computer was deleted.";
   if (status.computer === 'none')
-    return status.allowanceExhausted && !takingOver
+    return status.creditExhausted && !takingOver
       ? "You have no computer yet, and this month's free minutes are used up."
       : 'Starting your computer…';
   if (viewer === 'refused') return 'Live view closed the connection. Reload the page to try again.';
@@ -460,7 +460,7 @@ function describe({
     return isError
       ? 'Live view lost touch with the server. Reload the page to try again.'
       : 'Live view is paused. It resumes while this page is visible.';
-  if (status.allowanceExhausted && !status.watching) return 'The computer is asleep.';
+  if (status.creditExhausted && !status.watching) return 'The computer is asleep.';
   if (viewer === 'connecting') return status.computer === 'paused' ? 'Waking the computer…' : 'Connecting…';
   if (viewer === 'reconnecting') return 'Reconnecting…';
   if (status.takeover?.mine)
@@ -740,7 +740,7 @@ function useLapsed(status: LiveViewStatus | undefined, handingBack: boolean) {
       setLapsed(false);
     } else if (held.current && status) {
       held.current = false;
-      setLapsed(!status.takeover && !handingBack && !status.allowanceExhausted && status.computer !== 'none');
+      setLapsed(!status.takeover && !handingBack && !status.creditExhausted && status.computer !== 'none');
     }
   }, [status, handingBack]);
   return lapsed;

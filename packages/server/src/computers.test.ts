@@ -49,13 +49,13 @@ let pg: PGlite;
 let db: Database;
 let fake: ReturnType<typeof fakeComputerProvider>;
 // The metering hook as the computer service sees it: what it charged, by UTC month, and a refusal tests turn on.
-let charges: { membershipId: number; month: string; seconds: number; size: ComputerSize }[];
+let charges: { membershipId: number; month: string; seconds: number; size: ComputerSize; pauses: number }[];
 let refusal: MeteringRefusal | null;
 const metering: Metering = {
   usage: async () => null,
   refusal: async () => refusal,
-  charge: async (_tx, { membershipId }, seconds, now, size) => {
-    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds, size });
+  charge: async (_tx, { membershipId }, seconds, now, size, pauses) => {
+    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds, size, pauses });
   },
 };
 let computers: Computers;
@@ -126,10 +126,12 @@ const profilesOf = (owner: { computerId: number } | { snapshotId: number }) =>
 const applied = async () => (await profilesOf({ computerId: (await computerRow()).id }))[0]!;
 const used = async (member: Member) => {
   const months = new Map<string, number>();
-  for (const charge of charges.filter(entry => entry.membershipId === member.membershipId))
+  for (const charge of charges.filter(entry => entry.membershipId === member.membershipId && entry.seconds > 0))
     months.set(charge.month, (months.get(charge.month) ?? 0) + charge.seconds);
   return [...months];
 };
+const pausesBooked = (member: Member) =>
+  charges.filter(entry => entry.membershipId === member.membershipId).reduce((sum, entry) => sum + entry.pauses, 0);
 const at = (iso: string) => vi.setSystemTime(new Date(iso));
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 let template: PGlite;
@@ -910,10 +912,16 @@ describe('per-call hold and metering', () => {
     at('2026-10-20T12:00:30Z');
     await use(a, opened.sessionId);
     expect(await used(a)).toEqual([['2026-10-01', 30]]);
-    // After the computer paused, the next call books the idle minute it ran (to 12:01:30), not the pause.
+    expect(pausesBooked(a)).toBe(0);
+    // After the computer paused, the next call books the idle minute it ran (to 12:01:30), not the time paused, and
+    // the pause itself once, since the provider may bill its snapshot.
     at('2026-10-20T12:05:00Z');
     expect(await use(a, opened.sessionId)).not.toHaveProperty('error');
     expect(await used(a)).toEqual([['2026-10-01', 90]]);
+    expect(pausesBooked(a)).toBe(1);
+    at('2026-10-20T12:05:30Z');
+    await use(a, opened.sessionId);
+    expect(pausesBooked(a)).toBe(1);
   });
   it('lets only the last of overlapping calls shorten the timeout to the idle minute', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1527,16 +1535,16 @@ describe('metering', () => {
     const booked = await used(a);
     refusal = usedUp;
     expect(await useComputerSession(db, computers, caller(a), opened.sessionId)).toEqual({
-      error: 'allowance_exhausted',
+      error: 'credit_exhausted',
       ...usedUp,
     });
     expect(await openComputerSession(db, computers, caller(a, 'chatgpt'))).toMatchObject({
-      error: 'allowance_exhausted',
+      error: 'credit_exhausted',
     });
     expect(
       await openComputerSession(db, computers, caller(a, 'chatgpt'), { computerId: opened.computer.id }),
-    ).toMatchObject({ error: 'allowance_exhausted' });
-    expect(await openComputerSession(db, computers, caller(b))).toMatchObject({ error: 'allowance_exhausted' });
+    ).toMatchObject({ error: 'credit_exhausted' });
+    expect(await openComputerSession(db, computers, caller(b))).toMatchObject({ error: 'credit_exhausted' });
     expect({ create: fake.calls.create, fork: fake.calls.fork }).toEqual({ create: 1, fork: 1 });
     expect(await used(a)).toEqual(booked);
     refusal = null;
@@ -1550,7 +1558,7 @@ describe('metering', () => {
     await opened.done();
     expect(await closeComputerSession(db, defaults, caller(a), opened.sessionId)).toEqual({ closed: true });
     expect((await computerView(db, noMetering, a)).usage).toBeNull();
-    expect(await liveViewStatus(db, noMetering, a, randomUUID())).not.toHaveProperty('allowanceExhausted');
+    expect(await liveViewStatus(db, noMetering, a, randomUUID())).not.toHaveProperty('creditExhausted');
   });
 });
 
@@ -1826,13 +1834,13 @@ describe('live view', () => {
     await takeOver(a, page);
     refusal = { message: 'Used up.', resetsAt: new Date('2026-11-01T00:00:00Z') };
     expect(await takeOverComputer(db, computers, a, lease())).toMatchObject({
-      error: 'allowance_exhausted',
+      error: 'credit_exhausted',
       resetsAt: new Date('2026-11-01T00:00:00Z'),
     });
     at('2026-10-20T12:00:30Z');
     expect(await beat(a, page, 'visible')).toMatchObject({
       takeover: { mine: true },
-      allowanceExhausted: { resetsAt: '2026-11-01T00:00:00.000Z' },
+      creditExhausted: { resetsAt: '2026-11-01T00:00:00.000Z' },
     });
     expect(await computerRow()).toMatchObject({ takeoverUntil: new Date('2026-10-20T12:01:15Z') });
     at('2026-10-20T12:01:15Z');

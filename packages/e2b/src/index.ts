@@ -44,7 +44,8 @@ export const HELPER_DIR = '/opt/agent-computers';
 // (template.ts) gets that one; any other team gets the public one Clutchbox builds from this repository's main
 // branch, weekly for current Chrome. Refresh brings either's helpers to this checkout's REVISION on open.
 export const TEMPLATE = 'agent-computers-desktop';
-// Each size's template: the 1x computer keeps the bare name, and a larger size adds its own (template.ts builds them all).
+// Each size's template: the smallest ('1x', 2 vCPU · 4 GB) keeps the bare name, and a larger size adds its key
+// (template.ts builds them all).
 export const templateFor = (template: string, size: ComputerSize) => (size === '1x' ? template : `${template}-${size}`);
 const OUTPUT_LIMIT = 32_000;
 const clip = (text: string) => (text.length > OUTPUT_LIMIT ? text.slice(0, OUTPUT_LIMIT) : text);

@@ -693,7 +693,7 @@ describe('API routes', () => {
     refusal = { message: 'Used up.', resetsAt: new Date('2026-11-01T00:00:00Z') };
     expect(await call(a, '/computer/takeover', { lease: page })).toEqual({
       status: 403,
-      json: { error: 'allowance_exhausted', message: 'Used up.', resetsAt: '2026-11-01T00:00:00.000Z' },
+      json: { error: 'credit_exhausted', message: 'Used up.', resetsAt: '2026-11-01T00:00:00.000Z' },
     });
   });
 
