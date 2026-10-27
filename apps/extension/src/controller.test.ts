@@ -5,6 +5,7 @@ import {
   refreshRetryMs,
   type StatusResponse,
   type SyncSettings,
+  serverProofPath,
 } from '@agent-computers/capture';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -195,11 +196,14 @@ function setup(installed: { [key: string]: unknown } = {}) {
   const received: { organization: string; capture: { scope: unknown; cookies: { domain: string }[] } }[] = [];
   // The build's server's verified list, asked for without a token.
   const verified = vi.fn(async () => answer(200, { servers: [] as { origin: string; name: string }[] }));
+  // Each server's proof file, naming the address it signs people in at: an alias's names the server it stands for.
+  const aliases: { [alias: string]: string } = {};
   const route = async (url: string, init: RequestInit = {}) => {
     requests.push({ url, init });
     if (init.credentials !== 'omit') credentialed.push(url);
     const server = new URL(url).origin;
     if (url === `${origin}/api/v1/verified-servers`) return verified();
+    if (url === `${server}${serverProofPath}`) return answer(200, { origin: aliases[server] ?? server });
     if (url === `${server}/api/auth/oauth2/token`) return token(new URLSearchParams(String(init.body)), server);
     const caller = bearer(init, server);
     if (!caller) return failure(401, 'unauthenticated');
@@ -400,6 +404,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
     },
     failNextToken: (...kinds: TokenFailure[]) => failures.push(...kinds),
     verified,
+    aliases,
     policy: (next: { [key: string]: unknown }) => {
       managed = next;
     },
@@ -2248,6 +2253,23 @@ describe('another server', () => {
     expect(test.accounts['user-a@org-x']!.settings).toMatchObject({ sites: ['capture.test'] });
     // Connected once, it needs no warning again.
     expect(await trust(test, elsewhere)).toMatchObject({ trust: 'connected' });
+  });
+
+  it('signs in at the address a server names, so an alias of it does not fail the issuer check', async () => {
+    const test = setup();
+    const alias = 'https://alias.elsewhere.test';
+    test.aliases[alias] = elsewhere;
+    expect(await trust(test, `${alias}/some/page`)).toMatchObject({ ok: true, origin: elsewhere });
+    // Asked without cookies.
+    const asked = test.requests.find(({ url }) => url === `${alias}${serverProofPath}`);
+    expect(asked!.init).toMatchObject({ credentials: 'omit' });
+    await test.controller.handle({ type: 'connect', mode: 'sites', another: true, origin: alias, warned: true });
+    test.memberships['user-a'] = ['org-x'];
+    expect(await test.authorize('user-a', elsewhere)).toMatchObject({ ok: true, organization: 'Elsewhere' });
+    expect(test.entries()).toMatchObject([{ origin: elsewhere }]);
+    // A server whose proof file is missing or malformed keeps the address as typed.
+    test.aliases[alias] = 'not a server';
+    expect(await trust(test, alias)).toMatchObject({ ok: true, origin: alias });
   });
 
   it('connects a verified or approved server without the warning', async () => {

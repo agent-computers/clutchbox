@@ -43,6 +43,8 @@ import {
   type SyncSettings,
   type SyncTokens,
   serverOriginOfInput,
+  serverProofPath,
+  serverProofSchema,
   siteOfHost,
   siteOrigins,
   sitesOfOrigins,
@@ -1430,7 +1432,7 @@ export class CaptureController {
     if (request.type === 'server') {
       await this.ready;
       const origin = serverOriginOfInput(request.origin);
-      return origin ? await this.trust(origin) : { ok: false, error: 'invalid_request' };
+      return origin ? await this.trust(await this.canonical(origin)) : { ok: false, error: 'invalid_request' };
     }
     const named = 'connection' in request ? request.connection : undefined;
     const another = 'another' in request && request.another === true;
@@ -1548,11 +1550,29 @@ export class CaptureController {
     warned?: true | undefined;
   }): Promise<{ origin?: string } | { ok: false; error: 'invalid_request' | 'unverified_server' }> {
     if (choice.origin === undefined) return {};
-    const origin = serverOriginOfInput(choice.origin);
-    if (!origin) return { ok: false, error: 'invalid_request' };
+    const typed = serverOriginOfInput(choice.origin);
+    if (!typed) return { ok: false, error: 'invalid_request' };
+    const origin = await this.canonical(typed);
     if (!choice.warned && (await this.trust(origin)).trust === 'unverified')
       return { ok: false, error: 'unverified_server' };
     return { origin };
+  }
+  // The address a server signs people in at, as its proof file names it after any redirect, so an alias of it (such as
+  // the bare domain of a www site) signs in where the server's issuer is rather than failing the `iss` check. Without
+  // an answer, the address as given.
+  private async canonical(origin: string): Promise<string> {
+    if (origin === this.serverOrigin || this.entries.some(entry => entry.origin === origin)) return origin;
+    try {
+      const response = await this.api.fetch(`${origin}${serverProofPath}`, {
+        credentials: 'omit',
+        signal: AbortSignal.timeout(checkTimeoutMs),
+      });
+      const proof = serverProofSchema.safeParse(await response.json());
+      const named = response.ok && proof.success ? serverOriginOfInput(proof.data.origin) : undefined;
+      return named ?? origin;
+    } catch {
+      return origin;
+    }
   }
   // Whether connecting to a server needs the warning. The administrator's approval needs no request; the verified list
   // is asked of the build's server, without anything about the person, and falls back to the built-in copy.
