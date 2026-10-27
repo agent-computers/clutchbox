@@ -32,7 +32,10 @@ const timed = async <T>(name: string, work: () => Promise<T>) => {
 const checks: Record<string, unknown> = {};
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const computerId = randomUUID();
+const forkComputerId = randomUUID();
 let sandboxId: string | undefined;
+let forkId: string | undefined;
+let snapshotId: string | undefined;
 try {
   sandboxId = await timed('create', () => provider.create(computerId, CALL_HOLD_MS));
   checks.findByMetadata = (await provider.find(computerId)) === sandboxId;
@@ -130,8 +133,6 @@ try {
   checks.exec = { exitCode: exec.exitCode, stdout: exec.stdout.trim().split('\n') };
   checks.execFailure = (await session.exec({ command: 'exit 3', timeoutSeconds: 10 })).exitCode;
   checks.execTimeout = (await session.exec({ command: 'sleep 5', timeoutSeconds: 1 })).timedOut;
-  const url = await timed('downloadUrl', () => session.downloadUrl('/home/user/Downloads/smoke.csv'));
-  checks.download = (await (await fetch(url)).text()) === 'a,b\n1,2\n';
   await timed('setTimeout', () => session.setTimeout(CALL_HOLD_MS));
   await timed('pause', () => provider.pause(sandboxId!));
   session = await timed('resume', () => provider.connect(sandboxId!, CALL_HOLD_MS));
@@ -143,6 +144,22 @@ try {
     }),
   );
   checks.statePreservedAfterResume = afterResume.result?.result?.value;
+  // A fork: a snapshot of this computer, and a new computer from it with the same page and files.
+  snapshotId = await timed('snapshot', () => provider.snapshot(sandboxId!, CALL_HOLD_MS));
+  forkId = await timed('createFromSnapshot', () =>
+    provider.createFromSnapshot(snapshotId!, forkComputerId, CALL_HOLD_MS),
+  );
+  checks.forkFoundByMetadata = (await provider.find(forkComputerId)) === forkId;
+  const fork = await provider.connect(forkId, CALL_HOLD_MS);
+  const forkPage = JSON.parse(
+    await fork.cdp({
+      method: 'Runtime.evaluate',
+      params: { expression: 'location.href', returnByValue: true },
+      targetId: page?.targetId,
+    }),
+  );
+  checks.forkKeepsPage = forkPage.result?.result?.value;
+  checks.forkKeepsFile = (await fork.exec({ command: 'cat ~/Downloads/smoke.csv', timeoutSeconds: 10 })).stdout;
   checks.fileAfterResume = (await session.exec({ command: 'cat ~/Downloads/smoke.csv', timeoutSeconds: 10 })).stdout;
   // computer_close leaves one blank tab for the next task.
   await session.cdp({ method: 'Target.createTarget', params: { url: 'https://example.org' } });
@@ -299,8 +316,15 @@ try {
   ).stdout.trim();
   viewer.terminate();
 } finally {
+  if (forkId) await provider.kill(forkId);
   if (sandboxId) await provider.kill(sandboxId);
   checks.killed = !!sandboxId && !(await provider.find(computerId));
+  // Only once the fork made from it is gone: the provider refuses earlier.
+  if (snapshotId)
+    checks.snapshotDeleted = await provider.deleteSnapshot(snapshotId).then(
+      () => true,
+      () => false,
+    );
   console.log(JSON.stringify({ checks, timingsMs: timings }, null, 2));
 }
 // Fails the run (CI builds the template, then runs this) when a check is missing or differs.
@@ -311,8 +335,11 @@ const expected: Record<string, unknown> = {
   exec: { exitCode: 0, stdout: ['user', '/home/user'] },
   execFailure: 3,
   execTimeout: true,
-  download: true,
   statePreservedAfterResume: 'https://example.com/',
+  forkFoundByMetadata: true,
+  forkKeepsPage: 'https://example.com/',
+  forkKeepsFile: 'a,b\n1,2\n',
+  snapshotDeleted: true,
   fileAfterResume: 'a,b\n1,2\n',
   tabsAfterClose: ['about:blank'],
   killed: true,

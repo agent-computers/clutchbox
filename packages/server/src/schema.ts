@@ -148,11 +148,15 @@ export const organizations = pgTable(
     joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
     // Computer minutes a month the deployment allows this organization, for its metering hook; null for its default.
     computerMinutes: integer('computer_minutes'),
+    // Forks that may run at once across the organization's members (computers.ts, openComputerSession); null for
+    // DEFAULT_MAX_RUNNING_FORKS.
+    maxRunningForks: integer('max_running_forks'),
     ...timestamps(),
   },
   table => [
     check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
     check('organizations_computer_minutes', sql`${table.computerMinutes} >= 0`),
+    check('organizations_max_running_forks', sql`${table.maxRunningForks} >= 0`),
   ],
 );
 // A person's place in one organization. Every app table below belongs to one, as membership_id, except user_settings,
@@ -234,14 +238,27 @@ export const connections = pgTable(
 const membershipId = () => key('membership_id').references(() => memberships.id, { onDelete: 'cascade' });
 
 export const COMPUTER_STATUSES = ['creating', 'ready'] as const;
-// Validation prototype: one persistent main computer per member.
+// A member's computers: one persistent main computer, changed only by the member's takeover, and the forks agents
+// work in, each a copy of main from one of its snapshots (computers.ts, Forks). Agents never control main.
 export const computers = pgTable(
   'computers',
   {
     id: id(),
-    // Also the provider's idempotency key and the applied capture's associated data, so it never changes.
+    // Also the provider's idempotency key and the applied capture's associated data, so it never changes. A fork's is
+    // the opaque ID agents reopen it by.
     publicId: text('public_id').notNull().unique(),
-    membershipId: membershipId().notNull().unique(),
+    membershipId: membershipId().notNull(),
+    // A fork's main computer; null on main.
+    forkOf: key('fork_of').references((): AnyPgColumn => computers.id, { onDelete: 'cascade' }),
+    // Main: its latest snapshot, which new forks start from. A fork: the snapshot it was made from, which the provider
+    // keeps until the fork is deleted.
+    snapshotId: key('snapshot_id').references((): AnyPgColumn => computerSnapshots.id, { onDelete: 'set null' }),
+    // Main: when a takeover ended after its latest snapshot, so the next fork needs a new one first.
+    snapshotDueAt: time('snapshot_due_at'),
+    // A fork's name from the agent that made it, for computer_list.
+    label: text('label'),
+    // A fork's latest open or call; one unused for FORK_UNUSED_MS is deleted.
+    lastUsedAt: time('last_used_at'),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
     sandboxId: text('sandbox_id'),
     // The last applied capture, the sites it wrote (cleared when absent later), and its cookies sealed
@@ -286,13 +303,44 @@ export const computers = pgTable(
     ...timestamps(),
   },
   table => [
+    uniqueIndex('computers_main_unique').on(table.membershipId).where(sql`${table.forkOf} IS NULL`),
+    index('computers_membership_idx').on(table.membershipId),
+    index('computers_fork_of_idx').on(table.forkOf),
+    index('computers_snapshot_idx').on(table.snapshotId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
+    check('computers_label', sql`char_length(${table.label}) BETWEEN 1 AND 100`),
+    check(
+      'computers_fork',
+      sql`${table.forkOf} IS NULL OR (${table.snapshotDueAt} IS NULL AND ${table.lastUsedAt} IS NOT NULL)`,
+    ),
     check('computers_time_zone', timeZoneName(table.timeZone)),
     check(
       'computers_takeover',
       sql`(${table.takeoverLease} IS NULL) = (${table.takenOverAt} IS NULL) AND (${table.takenOverAt} IS NULL) = (${table.takeoverUntil} IS NULL)`,
     ),
   ],
+);
+// Snapshots of a main computer (computers.ts, Forks), each with what main had applied when it was taken, which a fork
+// made from it starts with: the apply baseline (sealed for main, as computers.applied_capture), helper revision, and
+// time zone. Kept while main's latest or while a fork made from it remains, since the provider refuses to delete a
+// snapshot before that; then deleted at the provider and here.
+export const computerSnapshots = pgTable(
+  'computer_snapshots',
+  {
+    id: id(),
+    computerId: key('computer_id')
+      .notNull()
+      .references((): AnyPgColumn => computers.id, { onDelete: 'cascade' }),
+    providerSnapshotId: text('provider_snapshot_id').notNull().unique(),
+    appliedCaptureDigest: text('applied_capture_digest'),
+    appliedCaptureAt: time('applied_capture_at'),
+    syncedSites: text('synced_sites').array().notNull().default(sql`'{}'::text[]`),
+    appliedCapture: text('applied_capture'),
+    timeZone: text('time_zone'),
+    revision: text('revision'),
+    createdAt: createdAt(),
+  },
+  table => [index('computer_snapshots_computer_idx').on(table.computerId)],
 );
 // superseded: another agent's computer_open replaced this session after its idle minute.
 export const SESSION_END_REASONS = ['closed', 'idle', 'superseded', 'replaced', 'revoked'] as const;
@@ -329,7 +377,18 @@ export const computerSessions = pgTable(
     check('computer_sessions_ended', sql`(${table.endedAt} IS NULL) = (${table.endReason} IS NULL)`),
   ],
 );
-export const TOOL_CALL_STEPS = ['create', 'connect', 'sync', 'screenshot', 'act', 'cdp', 'exec', 'download'] as const;
+// download: only on calls recorded before computer_download was removed.
+export const TOOL_CALL_STEPS = [
+  'snapshot',
+  'create',
+  'connect',
+  'sync',
+  'screenshot',
+  'act',
+  'cdp',
+  'exec',
+  'download',
+] as const;
 // One row per MCP tool call (tool-calls.ts): operational facts only, never the call's arguments or results.
 // `error` is null for a successful call, otherwise the code the agent got. For a call with an error,
 // `failedStep` is the last step it reached; `errorClass` is the class of what it threw, if anything.

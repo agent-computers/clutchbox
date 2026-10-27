@@ -14,10 +14,10 @@ import {
   CLIPBOARD_CLEANUP_MS,
   CLIPBOARD_HOLD_MS,
   CLIPBOARD_OWN_MS,
-  DOWNLOAD_LINK_SECONDS,
   ENSURE_CHROME_MS,
   PROVIDER_REQUEST_MS,
   REFRESH_STEP_MS,
+  SNAPSHOT_REQUEST_MS,
   STREAM_MARGIN_MS,
   STREAM_START_MS,
   SYNC_CDP_CONNECT_MS,
@@ -433,7 +433,6 @@ function session(sandbox: Sandbox): ComputerSession {
           .map(tab => cdp({ method: 'Target.closeTarget', params: { targetId: tab.targetId } })),
       );
     },
-    downloadUrl: path => sandbox.downloadUrl(path, { user: 'user', useSignatureExpiration: DOWNLOAD_LINK_SECONDS }),
     // Unlike connect, which only ever extends it, this also shortens the timeout. Bounded: the caller
     // may hold a lock across it.
     setTimeout: timeoutMs => sandbox.setTimeout(timeoutMs, { requestTimeoutMs: PROVIDER_REQUEST_MS }),
@@ -571,6 +570,15 @@ function session(sandbox: Sandbox): ComputerSession {
   };
 }
 
+// Private: every port needs the traffic token, which stays on the caller's server.
+const createOptions = (computerId: string, timeoutMs: number) => ({
+  envs: { DISPLAY: ':0' },
+  network: { allowPublicTraffic: false },
+  timeoutMs,
+  lifecycle: { onTimeout: 'pause', autoResume: false } as const,
+  metadata: { computerId, app: 'agent-computers' },
+});
+
 export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE || TEMPLATE): ComputerProvider {
   return {
     revision: REVISION,
@@ -581,14 +589,7 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
     // E2B pauses (memory included) when timeoutMs lapses without another connect.
     async create(computerId, timeoutMs) {
       // The template's snapshot already runs the desktop and Chrome (START_DESKTOP).
-      // Private: every port needs the traffic token, which stays on the caller's server.
-      const sandbox = await BaseSandbox.create(template, {
-        envs: { DISPLAY: ':0' },
-        network: { allowPublicTraffic: false },
-        timeoutMs,
-        lifecycle: { onTimeout: 'pause', autoResume: false },
-        metadata: { computerId, app: 'agent-computers' },
-      });
+      const sandbox = await BaseSandbox.create(template, createOptions(computerId, timeoutMs));
       try {
         await sandbox.commands.run(`${HELPER_DIR}/ensure-chrome.sh`, { timeoutMs: ENSURE_CHROME_MS });
       } catch (error) {
@@ -596,6 +597,20 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
         throw error;
       }
       return sandbox.sandboxId;
+    },
+    // A snapshot is a template to E2B. Its memory holds the running desktop and Chrome, so there is nothing to start.
+    // The options replace the source's metadata, so a lookup by the source's computerId never finds a fork.
+    async createFromSnapshot(snapshotId, computerId, timeoutMs) {
+      return (await BaseSandbox.create(snapshotId, createOptions(computerId, timeoutMs))).sandboxId;
+    },
+    // E2B snapshots only a running sandbox (a paused one answers 404), so connect first, which resumes a paused one.
+    async snapshot(sandboxId, timeoutMs) {
+      await BaseSandbox.connect(sandboxId, { timeoutMs, requestTimeoutMs: SNAPSHOT_REQUEST_MS });
+      return (await BaseSandbox.createSnapshot(sandboxId, { requestTimeoutMs: SNAPSHOT_REQUEST_MS })).snapshotId;
+    },
+    async deleteSnapshot(snapshotId) {
+      // False: already gone. E2B refuses (400) while a computer made from the snapshot remains.
+      await BaseSandbox.deleteSnapshot(snapshotId, { requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
     async connect(sandboxId, timeoutMs) {
       // Connecting resumes a paused computer; on a running one it only extends the timeout.
@@ -609,7 +624,7 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
       await BaseSandbox.setTimeout(sandboxId, timeoutMs, { requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
     async kill(sandboxId) {
-      await Sandbox.kill(sandboxId);
+      await Sandbox.kill(sandboxId, { requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
   };
 }

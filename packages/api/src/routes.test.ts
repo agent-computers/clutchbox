@@ -286,7 +286,11 @@ describe('API routes', () => {
       capture: null,
       computer: null,
     });
-    expect(fake.calls.kill).toBe(1);
+    // The main computer and its fork, then the fork's snapshot.
+    expect({ kill: fake.calls.kill, deleteSnapshot: fake.calls.deleteSnapshot }).toEqual({
+      kill: 2,
+      deleteSnapshot: 1,
+    });
     expect((await (await request('GET', '/computer', { cookie: b })).json()).capture).toMatchObject({ cookieCount: 1 });
     // A browser connected since uploads only with `connect`, the first upload after Connect.
     const reconnected = await browser(a);
@@ -494,8 +498,9 @@ describe('API routes', () => {
     const reset = await request('POST', '/computer/reset', { cookie: a });
     expect(reset.status).toBe(200);
     expect(await reset.json()).toEqual({ reset: true });
-    expect(fake.calls.kill).toBe(1);
-    // The agent's session ends with the computer; the next open creates a fresh one.
+    // The main computer and the agent's fork.
+    expect(fake.calls.kill).toBe(2);
+    // The agent's session ends with its fork; the next open creates a fresh main computer.
     expect(await db.select().from(schema.computerSessions)).toHaveLength(1);
     expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
       capture: { cookieCount: 1 },
@@ -526,7 +531,7 @@ describe('API routes', () => {
     expect((await (await request('GET', '/computer', { cookie: b })).json()).computer).not.toBeNull();
   });
 
-  it('report the computer, busy only while an agent holds it', async () => {
+  it('report the computer, busy only while an agent holds one of its forks', async () => {
     const a = await identity('a');
     const request = client();
     expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({ computer: null });

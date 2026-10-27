@@ -6,7 +6,6 @@
 // The E2B adapter's command timings live with it (@agent-computers/e2b/timing), clamped to
 // the budgets set here. These are the ones this service uses too.
 export {
-  DOWNLOAD_LINK_SECONDS,
   STREAM_MARGIN_MS,
   STREAM_START_MS,
   TYPE_KEY_DELAY_MS,
@@ -24,9 +23,21 @@ export const IDLE_PAUSE_MS = 60_000;
 // from an old conversation stops working.
 export const SESSION_IDLE_END_MS = 10 * 60_000;
 
-// A computer still `creating` after this long is presumed abandoned (its request died), and the next
-// computer_open takes the create over. Creating takes well under it: E2B create plus the adapter's ENSURE_CHROME_MS.
+// A computer still `creating` after this long is presumed abandoned (its request died): the next computer_open takes
+// a main computer's create over, and the next sweep deletes a fork's. Creating takes well under it: E2B create plus the
+// adapter's ENSURE_CHROME_MS, or a fork's create from a snapshot, measured at up to 32 s from a heavily used main.
 export const CREATE_STALE_MS = 3 * 60_000;
+
+// --- Forks (computers.ts, Forks) ---
+
+// A fork unused this long (no open or call) is deleted. Long enough for an agent, or another conversation of the
+// member's, to come back to its work after a weekend; short enough that forks nobody returns to stop costing storage.
+export const FORK_UNUSED_MS = 7 * 24 * 3600_000;
+
+// How long the main computer runs for a snapshot: a paused one is resumed for it. The snapshot takes about a second, and
+// main is paused right after unless live view holds it, so this only bounds a snapshot whose pause was lost. The idle
+// minute, as for a call.
+export const SNAPSHOT_HOLD_MS = IDLE_PAUSE_MS;
 
 // --- Live view holds (computers.ts) ---
 
@@ -121,11 +132,6 @@ export const ACT_MAX_WAIT_MS = 30_000;
 // E2B takes well under a second.
 export const ACT_ACTION_ESTIMATE_MS = 1_000;
 
-// computer_close's best-effort tab cleanup gives up after this long, after the apply's SYNC_DEADLINE_MS, still
-// inside CALL_BUDGET_MS. It is a few CDP commands that normally take well under a second each; a Chrome that
-// slow is left as it is for the next close.
-export const CLOSE_TABS_MS = 10_000;
-
 // --- Refresh on open (computers.ts, refreshComputer) ---
 
 // Bringing a computer made from an older template to the current helpers and restarting Chrome on them, on
@@ -135,8 +141,8 @@ export const REFRESH_BUDGET_MS = 30_000;
 
 // --- Apply-on-open (computers.ts, applyLatestCapture) ---
 
-// An apply on computer_open or computer_close must finish, or give up, this long after the call starts.
-// Leaves 25 s of CALL_BUDGET_MS for the screenshot, or for CLOSE_TABS_MS.
+// An apply on computer_open must finish, or give up, this long after the call starts, after creating a fork if it
+// does (about 7-14 s, up to 32 s from a heavily used main). Leaves 25 s of CALL_BUDGET_MS for the screenshot.
 export const SYNC_DEADLINE_MS = 75_000;
 
 // The most time the provider may spend applying cookies. It must fit the steps in the E2B adapter's SYNC_STEP_MS that can

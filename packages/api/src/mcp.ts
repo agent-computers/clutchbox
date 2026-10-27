@@ -4,8 +4,8 @@ import {
   ACT_ACTION_ESTIMATE_MS,
   ACT_MAX_WAIT_MS,
   CALL_BUDGET_MS,
-  DOWNLOAD_LINK_SECONDS,
   EXEC_MAX_SECONDS,
+  FORK_UNUSED_MS,
   IDLE_PAUSE_MS,
   TYPE_KEY_DELAY_MS,
 } from '@agent-computers/server/computer-timing';
@@ -18,6 +18,8 @@ import {
   type Computers,
   closeComputerSession,
   DISPLAY,
+  deleteFork,
+  listForks,
   openComputerSession,
   type SessionHandle,
   type SyncSummary,
@@ -41,13 +43,12 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 // The remote MCP endpoint (/api/mcp): OAuth-protected transport and the computer tools,
-// presented over the grant and main computer modules in packages/server.
+// presented over the grant and computer modules in packages/server.
 const result = (data: Record<string, unknown>, isError = false) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(data) }],
   structuredContent: data,
   isError,
 });
-const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 const image = (png: Uint8Array, data: Record<string, unknown>) => ({
   content: [
     { type: 'image' as const, data: Buffer.from(png).toString('base64'), mimeType: 'image/png' },
@@ -67,7 +68,7 @@ const errorCode = (output: ToolResult) => {
 // never its arguments or results. The session is the one the result names, or else the one the call passed.
 const recordCalls =
   (db: Database, principal: McpPrincipal, member: Member) =>
-  <Args extends { session_id?: string | undefined }, Rest extends unknown[], R extends ToolResult>(
+  <Args extends object, Rest extends unknown[], R extends ToolResult>(
     tool: string,
     handler: (args: Args, ...rest: Rest) => Promise<R>,
   ) =>
@@ -82,7 +83,7 @@ const recordCalls =
       trace.errorClass ??= errorLabel(error);
       throw error;
     } finally {
-      const named = output?.structuredContent?.session_id ?? args.session_id;
+      const named = output?.structuredContent?.session_id ?? ('session_id' in args ? args.session_id : null);
       await recordToolCall(db, {
         member,
         clientId: principal.clientId,
@@ -106,8 +107,10 @@ const failure = (value: ComputerFailure) =>
     true,
   );
 // Any shape is accepted here: the services answer an unknown or malformed ID with session_not_found, which
-// tells the agent to call computer_open, where a schema error would not.
+// tells the agent to call computer_open, where a schema error would not. computer_id likewise gets computer_not_found.
 const sessionId = z.string().max(100).describe('The session_id returned by computer_open.');
+const computerId = z.string().max(100).describe('The computer_id returned by computer_open or computer_list.');
+const UNUSED_DAYS = FORK_UNUSED_MS / (24 * 3600_000);
 const remote = "Runs on the user's remote Clutchbox desktop, never on your own machine.";
 const ACT_MAX_TYPED = 2000;
 // Expected run time, so a batch stops before it overruns the call budget (computer-timing.ts).
@@ -129,8 +132,6 @@ function syncNote(sync: SyncSummary, email: string) {
       return `Synced the user's browser from ${sync.captureCompletedAt}: ${plural(sync.sitesUpdated, 'site')} updated.`;
     case 'failed':
       return 'Browser sync failed this time; sites keep their previous sign-ins on the computer. The next computer_open retries.';
-    case 'pending':
-      return `The computer was already paused, so the user's browser from ${sync.captureCompletedAt} was not applied; the next computer_open applies it.`;
   }
 }
 // Without an allowance (hooks.ts), nothing.
@@ -143,24 +144,26 @@ const freeMinutes = async (metering: Metering, db: Database, member: Member) => 
       }
     : {};
 };
-// Server instructions (MCP initialize): when to use the computer, the computer session flow, and the account.
+// Server instructions (MCP initialize): when to use a computer, computers and the computer session flow, and the account.
 const instructions = (
   email: string,
-) => `Clutchbox gives you the user's own remote computer: a Linux desktop with Chrome, signed in to the sites the user syncs from their browser. Use it instead of your host environment when a task needs the user's signed-in websites, a real desktop browser, or isolation from your host. Nothing runs on your machine.
+) => `Clutchbox gives you a remote computer of the user's: a Linux desktop with Chrome, signed in to the sites the user syncs from their browser. Use it instead of your host environment when a task needs the user's signed-in websites, a real desktop browser, or isolation from your host. Nothing runs on your machine.
 
-You are connected as the Clutchbox account ${email}. Each account has its own computer, signed in to the sites synced from the browser extension under that same account. When the user asks which account you use, or expected sites are signed out, name it.
+You are connected as the Clutchbox account ${email}. Each account's computers are signed in to the sites synced from the browser extension under that same account. When the user asks which account you use, or expected sites are signed out, name it.
 
-Flow: computer_open returns a session_id. Pass it on every other computer tool call for the task. Each computer_open returns a new session_id that replaces the one you passed it; use the newest from then on. When the task is done, always call computer_close with it: that applies newer browser sign-ins, closes the browser tabs, pauses the computer, and refunds unused time.
+Computers: computer_open without computer_id creates a computer for you, a copy of the user's own with their newest sign-ins, and returns its computer_id. Keep it: computer_open with that computer_id reopens it later, from this or another conversation, with its tabs and files as you left them and the user's newest sign-ins applied. computer_list lists the account's computers; computer_delete deletes one nobody needs. Computers unused for ${UNUSED_DAYS} days are deleted. Nothing you do on one reaches the user's own computer or browser.
 
-- session_ended: the session was closed, replaced by your own later computer_open (use the session_id that returned), idle for 10 minutes, or superseded by another agent's computer_open after it sat idle for a minute. Call computer_open for a new session_id and take a screenshot before continuing.
-- busy: another agent is using the computer. Its control lapses after 1 idle minute (busy_until); try again then. Yours lapses the same way. Without busy_until, the user is controlling the computer in live view; try again in a few minutes.
+Flow: computer_open returns a session_id. Pass it on every other computer tool call for the task. Each computer_open returns a new session_id that replaces the one you passed it; use the newest from then on. When the task is done, always call computer_close with it: that pauses the computer and refunds unused time.
+
+- session_ended: the session was closed, replaced by your own later computer_open (use the session_id that returned), idle for 10 minutes, or superseded by another agent's computer_open after it sat idle for a minute. Call computer_open with your computer_id for a new session_id and take a screenshot before continuing.
+- busy: another agent is using that computer. Its control lapses after 1 idle minute (busy_until); try again then, or call computer_open without computer_id for a computer of your own. Yours lapses the same way. busy can also mean every computer the user's organization may run at once is running, until busy_until. Without busy_until, the user is controlling the computer in live view; try again in a few minutes.
 - user_in_control: the user took control of the computer in live view, often to sign in or pass a bot check for you, and your session waits for them. Keep your session_id and retry in a minute or two; do not call computer_open. When they hand it back, a result carries user_had_control: take a screenshot before acting, since the screen may have changed.
-- pending_sync in a result: the user signed in or out of the named sites in their browser. Call computer_open with your session_id to apply it; you keep control under the new session_id it returns.
+- computer_not_found: no such computer for this account, or it was deleted. Call computer_list, or computer_open without computer_id.
 - access_revoked: the user disconnected this agent. allowance_exhausted: the account's computer time is used up; its message says until when.
 - Never type passwords or other credentials. If a site needs sign-in, follow sign_in_help from computer_open.`;
 
-// Real computer tools for the validation prototype. Each call verifies the live grant (protectedHandler),
-// and every tool after computer_open runs within the caller's computer session.
+// The computer tools. Each call verifies the live grant (protectedHandler); computer_list and computer_delete act on
+// the member's computers, and every other tool after computer_open runs within the caller's computer session.
 function registerComputerTools(
   server: McpServer,
   {
@@ -181,7 +184,7 @@ function registerComputerTools(
     recorded: ReturnType<typeof recordCalls>;
   },
 ) {
-  const signInHelp = `If a site needs sign-in, never type credentials. Ask the user to sign in to it in their own Chrome, add the site in the Clutchbox extension if it is not added, choose Sync now, and tell you when they are done. A waiting sign-in then shows as pending_sync in tool results; call computer_open with your session_id to apply it, and use the new session_id it returns. Setup is at ${origin}/app.`;
+  const signInHelp = `If a site needs sign-in, never type credentials. Ask the user to sign in to it in their own Chrome, add the site in the Clutchbox extension if it is not added, choose Sync now, and tell you when they are done. Then call computer_open with your session_id to apply it, and use the new session_id it returns. Setup is at ${origin}/app.`;
   const caller: Caller = {
     ...member,
     clientId: principal.clientId,
@@ -197,8 +200,8 @@ function registerComputerTools(
       },
       true,
     );
-  // Every result within a computer session names it and carries the pending and hand-back notices, if any.
-  // After a hand-back, said once: in the next call's result, or a reopen's.
+  // Every result within a computer session names it and carries the hand-back notice, if any: said once, in the next
+  // call's result, or a reopen's.
   const handBack = (handle: Pick<SessionHandle, 'userHadControl'>) =>
     handle.userHadControl
       ? {
@@ -208,18 +211,7 @@ function registerComputerTools(
           },
         }
       : {};
-  const state = (handle: SessionHandle) => ({
-    session_id: handle.sessionId,
-    ...handBack(handle),
-    ...(handle.pending
-      ? {
-          pending_sync: {
-            sites: handle.pending.sites,
-            message: `Newer sign-ins or sign-outs from the user's browser are waiting for ${handle.pending.sites.join(', ')}. To apply them, call computer_open with this session_id; you keep control under the new session_id it returns.`,
-          },
-        }
-      : {}),
-  });
+  const state = (handle: SessionHandle) => ({ session_id: handle.sessionId, ...handBack(handle) });
   const run = async (
     id: string,
     work: (handle: SessionHandle, deadline: number) => Promise<ReturnType<typeof result> | ReturnType<typeof image>>,
@@ -243,23 +235,35 @@ function registerComputerTools(
   server.registerTool(
     'computer_open',
     {
-      title: "Open the user's computer",
-      description: `Open the user's persistent remote desktop computer (created on first use, resumed if paused), apply the user's newest browser sign-ins, and start a computer session for this agent. Returns session_id, which every other computer tool requires, plus a screenshot. Pass your current session_id to replace it with a fresh session without losing control, for example to apply pending_sync, and use the new session_id from then on; without it, another active session (even your own) makes this return busy until its idle minute ends. To open a page, use computer_act: key ["ctrl", "l"], type the URL, key "enter". Call computer_close when the task is done. ${remote} ${signInHelp}`,
+      title: 'Open a computer',
+      description: `Start a computer session on a remote desktop computer with the user's newest browser sign-ins applied. Without computer_id, creates a new computer for you, a copy of the user's own; with the computer_id of one of the account's computers (from an earlier computer_open or computer_list), reopens it as it was left, resuming it if paused. Returns session_id, which every other computer tool requires, computer_id, and a screenshot. Pass your current session_id to replace it with a fresh session on the same computer without losing control, for example to apply a sign-in the user just synced, and use the new session_id from then on; without it, another active session on that computer (even your own) makes this return busy until its idle minute ends. To open a page, use computer_act: key ["ctrl", "l"], type the URL, key "enter". Call computer_close when the task is done. ${remote} ${signInHelp}`,
       inputSchema: z
         .object({
           session_id: sessionId.optional().describe('Your current session_id, if you have one.'),
+          computer_id: computerId.optional().describe('The computer to reopen; omit it for a new computer.'),
+          label: z
+            .string()
+            .trim()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('For a new computer: a short name for its task, shown in computer_list.'),
         })
         .strict(),
       annotations: full,
       _meta: security,
     },
-    recorded('computer_open', async ({ session_id }) => {
+    recorded('computer_open', async ({ session_id, computer_id, label }) => {
       let handle: SessionHandle | undefined;
       try {
-        const opened = await openComputerSession(db, computers, caller, { sessionId: session_id });
+        const opened = await openComputerSession(db, computers, caller, {
+          sessionId: session_id,
+          computerId: computer_id,
+          label,
+        });
         if ('error' in opened) return failure(opened);
         handle = opened;
-        // An agent opened the computer: the user is set up. Best-effort; never fails the open.
+        // An agent opened a computer: the user is set up. Best-effort; never fails the open.
         await noteSetupStep(db, member, 'setUp');
         markToolStep('screenshot');
         const png = await opened.session.screenshot();
@@ -267,6 +271,9 @@ function registerComputerTools(
         await opened.done();
         return image(png, {
           session_id: opened.sessionId,
+          computer_id: opened.computer.id,
+          ...(opened.computer.label ? { label: opened.computer.label } : {}),
+          new_computer: opened.computer.created,
           ...handBack(opened),
           display: DISPLAY,
           idle_pause_seconds: IDLE_PAUSE_MS / 1000,
@@ -288,7 +295,7 @@ function registerComputerTools(
     'computer_close',
     {
       title: 'Close the computer session',
-      description: `End your computer session when the task is done: applies the user's newest browser sign-ins, closes the browser tabs (leaving one blank tab), pauses the computer, and refunds the unused time. Always call it when you finish with the computer. The session_id stops working; call computer_open to use the computer again. ${remote}`,
+      description: `End your computer session when the task is done: pauses the computer and refunds the unused time. The computer keeps its tabs and files; computer_open with its computer_id reopens it. Always call it when you finish with the computer. The session_id stops working. ${remote}`,
       inputSchema: z.object({ session_id: sessionId }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       _meta: security,
@@ -297,13 +304,50 @@ function registerComputerTools(
       try {
         const closed = await closeComputerSession(db, computers, caller, session_id);
         if ('error' in closed) return failure(closed);
-        return result({
-          closed: true,
-          browser_sync: syncNote(closed.sync, principal.email),
-          ...(await freeMinutes(computers.metering, db, member)),
-        });
+        return result({ closed: true, ...(await freeMinutes(computers.metering, db, member)) });
       } catch (error) {
         toolCallFailed('mcp computer_close', error);
+        return unavailable();
+      }
+    }),
+  );
+  server.registerTool(
+    'computer_list',
+    {
+      title: "List the account's computers",
+      description: `List this account's computers, most recently used first: computer_id, label, when each was created and last used, and status (starting, in_use by a computer session or the user, running, or paused). Reopen one with computer_open and its computer_id. Computers unused for ${UNUSED_DAYS} days are deleted. ${remote}`,
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: security,
+    },
+    recorded('computer_list', async () =>
+      result({
+        computers: (await listForks(db, member)).map(fork => ({
+          computer_id: fork.computerId,
+          label: fork.label,
+          created_at: fork.createdAt,
+          last_used_at: fork.lastUsedAt,
+          status: fork.status,
+        })),
+      }),
+    ),
+  );
+  server.registerTool(
+    'computer_delete',
+    {
+      title: 'Delete a computer',
+      description: `Delete one of this account's computers, with everything on it. Use it for a computer nobody will reopen; the user's own computer and browser are not affected. Ends your own computer session on it; another agent's active session makes this return busy. ${remote}`,
+      inputSchema: z.object({ computer_id: computerId }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      _meta: security,
+    },
+    recorded('computer_delete', async ({ computer_id }) => {
+      try {
+        const deleted = await deleteFork(db, computers, caller, computer_id);
+        if ('error' in deleted) return failure(deleted);
+        return result({ deleted: true });
+      } catch (error) {
+        toolCallFailed('mcp computer_delete', error);
         return unavailable();
       }
     }),
@@ -472,33 +516,6 @@ function registerComputerTools(
       }),
     ),
   );
-  server.registerTool(
-    'computer_download',
-    {
-      title: 'Get a download link for a file',
-      description: `Create a 15-minute download link for one file on the remote computer so the user can save it, for example a CSV the browser downloaded. Share the link with the user. ${remote}`,
-      inputSchema: z.object({ session_id: sessionId, path: z.string().regex(/^\//).max(500) }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: security,
-    },
-    recorded('computer_download', ({ session_id, path }) =>
-      run(session_id, async handle => {
-        markToolStep('download');
-        const size = await handle.session.exec({ command: `stat -c %s -- ${quote(path)}`, timeoutSeconds: 10 });
-        if (size.exitCode !== 0)
-          return result(
-            { ...state(handle), error: 'file_not_found', message: 'No readable file exists at that path.' },
-            true,
-          );
-        return result({
-          ...state(handle),
-          url: await handle.session.downloadUrl(path),
-          expires_in_seconds: DOWNLOAD_LINK_SECONDS,
-          size_bytes: Number(size.stdout.trim()),
-        });
-      }),
-    ),
-  );
 }
 
 export function createMcpEndpoint({
@@ -519,7 +536,7 @@ export function createMcpEndpoint({
     createMcpHandler(
       () => {
         const server = new McpServer(
-          { name: 'clutchbox', version: '0.5.0' },
+          { name: 'clutchbox', version: '0.6.0' },
           { instructions: instructions(principal.email) },
         );
         const security = { securitySchemes: [{ type: 'oauth2', scopes: [MCP_SCOPE] }] };

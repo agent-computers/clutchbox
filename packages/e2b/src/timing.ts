@@ -20,17 +20,19 @@ export const CLIPBOARD_OWN_MS = 2_000;
 // it; the cap only ends a process nobody needs. A judgment call; baked into the helper.
 export const CLIPBOARD_HOLD_MS = 24 * 3600_000;
 
-// Bounds the provider requests that shorten the timeout or pause, which callers may run while holding a lock, so a
-// slow provider API cannot stall them for long. A judgment call: E2B answers these in well under a second.
+// Bounds the provider requests that shorten the timeout, pause, kill, or delete a snapshot, which callers may run while
+// holding a lock or in a sweep, so a slow provider API cannot stall them for long. A judgment call: E2B answers these
+// in well under a second.
 export const PROVIDER_REQUEST_MS = 15_000;
 
 // Delay between typed keystrokes (`xdotool type --delay`). Callers can estimate a `type` action's run time from it.
 // A third of the E2B SDK's 75 ms default: 2000 characters type in 50 s.
 export const TYPE_KEY_DELAY_MS = 25;
 
-// How long a download link stays valid. Long enough for the user to click it after an agent shares it; short
-// because anyone with the link can download the file.
-export const DOWNLOAD_LINK_SECONDS = 15 * 60;
+// Snapshotting a computer: E2B took 0.4-1.4 s, a little longer for a computer with more memory in use, and resuming a
+// paused one first 0.1-0.3 s more (measured on our template, October 2026). This leaves headroom for a slow day, while
+// failing well inside an open's budget, which then keeps the previous snapshot.
+export const SNAPSHOT_REQUEST_MS = 30_000;
 
 // Starting Chrome, when it is not already running. Its cold first launch took 10-28 s on E2B's lazily loaded disk;
 // this leaves headroom over that.

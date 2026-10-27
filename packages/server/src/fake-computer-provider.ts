@@ -28,13 +28,23 @@ type FakeSandbox = {
   clipboard?: string;
   // The helper revision it runs: the provider's when it was created, like a current template.
   revision: string;
+  // The snapshot it was made from, for a fork.
+  snapshotId?: string;
 };
+// What a snapshot keeps of its computer: the browser's state and the system's.
+type FakeSnapshot = Pick<FakeSandbox, 'tabs' | 'cookies' | 'revision' | 'timeZone' | 'public'>;
 // In-memory provider for tests. It records calls and keeps a Chrome-like cookie jar per computer;
 // it is NOT evidence about E2B or Chrome.
 export function fakeComputerProvider() {
   const sandboxes = new Map<string, FakeSandbox>();
+  const snapshots = new Map<string, FakeSnapshot>();
+  // Every computer made, for its ID; calls.create counts those from the template, calls.fork those from a snapshot.
+  let made = 0;
   const calls = {
     create: 0,
+    fork: 0,
+    snapshot: 0,
+    deleteSnapshot: 0,
     kill: 0,
     sync: 0,
     pause: 0,
@@ -58,6 +68,8 @@ export function fakeComputerProvider() {
   let timeZoneFails = false;
   let refreshFails = false;
   let clipboardFails = false;
+  let snapshotFails = false;
+  let createFromSnapshotFails = false;
   // Where stream() points: a test's own WebSocket server for relay tests.
   let streamUrl = 'wss://stream.example.test/';
   // Like Storage.setCookies: a cookie replaces the one with its identity, and an expired one deletes it.
@@ -79,9 +91,53 @@ export function fakeComputerProvider() {
       calls.create++;
       calls.timeouts.push(timeoutMs);
       await new Promise(resolve => setTimeout(resolve, createDelayMs));
-      const id = `sandbox-${calls.create}`;
+      const id = `sandbox-${++made}`;
       sandboxes.set(id, { computerId, actions: [], tabs: ['about:blank'], cookies: [], paused: false, revision });
       return id;
+    },
+    async createFromSnapshot(snapshotId, computerId, timeoutMs) {
+      calls.fork++;
+      calls.timeouts.push(timeoutMs);
+      if (createFromSnapshotFails) throw new Error('createFromSnapshot failed in fake');
+      const snapshot = snapshots.get(snapshotId);
+      if (!snapshot) throw new Error('snapshot not found');
+      const id = `sandbox-${++made}`;
+      sandboxes.set(id, {
+        ...structuredClone(snapshot),
+        computerId,
+        snapshotId,
+        actions: [],
+        paused: false,
+      });
+      return id;
+    },
+    async snapshot(sandboxId, timeoutMs) {
+      calls.snapshot++;
+      calls.timeouts.push(timeoutMs);
+      const sandbox = sandboxes.get(sandboxId);
+      if (!sandbox) throw new Error('sandbox not found');
+      if (snapshotFails) throw new Error('snapshot failed in fake');
+      // Like E2B: a paused computer is resumed to take it.
+      sandbox.paused = false;
+      const id = `snapshot-${calls.snapshot}`;
+      const { tabs, cookies, revision: helpers, timeZone, public: open } = sandbox;
+      snapshots.set(
+        id,
+        structuredClone({
+          tabs,
+          cookies,
+          revision: helpers,
+          ...(timeZone ? { timeZone } : {}),
+          ...(open ? { public: open } : {}),
+        }),
+      );
+      return id;
+    },
+    async deleteSnapshot(snapshotId) {
+      calls.deleteSnapshot++;
+      if ([...sandboxes.values()].some(sandbox => sandbox.snapshotId === snapshotId))
+        throw new Error('snapshot in use in fake');
+      snapshots.delete(snapshotId);
     },
     async connect(sandboxId, timeoutMs) {
       calls.timeouts.push(timeoutMs);
@@ -108,7 +164,6 @@ export function fakeComputerProvider() {
           if (closeTabsFails) throw new Error('closeTabs failed in fake');
           sandbox.tabs = ['about:blank'];
         },
-        downloadUrl: async path => `https://files.example.test/${sandboxId}${path}`,
         async setTimeout(ms) {
           if (setTimeoutFails) throw new Error('setTimeout failed in fake');
           calls.setTimeouts.push(ms);
@@ -177,6 +232,7 @@ export function fakeComputerProvider() {
   return {
     provider,
     sandboxes,
+    snapshots,
     calls,
     slowCreate: (ms: number) => {
       createDelayMs = ms;
@@ -205,6 +261,12 @@ export function fakeComputerProvider() {
     },
     failClipboard: (fails = true) => {
       clipboardFails = fails;
+    },
+    failSnapshot: (fails = true) => {
+      snapshotFails = fails;
+    },
+    failCreateFromSnapshot: (fails = true) => {
+      createFromSnapshotFails = fails;
     },
     setStreamUrl: (url: string) => {
       streamUrl = url;

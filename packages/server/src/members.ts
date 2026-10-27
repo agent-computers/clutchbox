@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import { removeAllBrowsers } from './browsers';
-import type { ComputerProvider } from './computers';
+import { type ComputerProvider, destroyProviderComputers } from './computers';
 import type { Database } from './database';
 import { newPublicId, publicIdPattern } from './ids';
 import { revokeMcpGrants } from './mcp';
@@ -178,11 +178,11 @@ type Check = (tx: Transaction) => Promise<MembersFailure | null>;
 // Ends a membership and everything it had in the organization: its browsers are removed and its agents' tokens
 // revoked first, so nothing can sync to it or act as it (the browsers stay signed in to the person's other
 // organizations), then the membership, whose rows (captures, settings, setup, browsers, computer, sessions,
-// tool calls, usage) go with it, then its computer at the provider. `check` runs under the organization's lock before
+// tool calls, usage) go with it, then its computers and their snapshots at the provider. `check` runs under the organization's lock before
 // anything changes, and again in the transaction that deletes the membership, so two owners leaving at once cannot
 // leave it without one; a refusal only that second time (a race) leaves the member in, with tokens to reconnect. The
-// computer row is locked while the membership goes, so a create in flight finds no row to record its computer in and
-// kills it (computers.ts, ensureComputer).
+// computer rows are locked while the membership goes, so a create in flight finds no row to record its computer in and
+// kills it (computers.ts, ensureComputer and provisionFork).
 async function endMembership(db: Database, provider: ComputerProvider, member: Member, check: Check) {
   const refused = await db.transaction(async tx => {
     await lockOrganization(tx, member.organizationId);
@@ -195,18 +195,27 @@ async function endMembership(db: Database, provider: ComputerProvider, member: M
     await lockOrganization(tx, member.organizationId);
     const again = await check(tx);
     if (again) return again;
-    const rows = await tx
-      .select({ publicId: schema.computers.publicId, sandboxId: schema.computers.sandboxId })
+    const computers = await tx
+      .select({ id: schema.computers.id, publicId: schema.computers.publicId, sandboxId: schema.computers.sandboxId })
       .from(schema.computers)
       .where(eq(schema.computers.membershipId, member.membershipId))
       .for('update');
+    const snapshots = computers.length
+      ? await tx
+          .select({ id: schema.computerSnapshots.providerSnapshotId })
+          .from(schema.computerSnapshots)
+          .where(
+            inArray(
+              schema.computerSnapshots.computerId,
+              computers.map(computer => computer.id),
+            ),
+          )
+      : [];
     await tx.delete(schema.memberships).where(eq(schema.memberships.id, member.membershipId));
-    return rows;
+    return { computers, snapshots: snapshots.map(snapshot => snapshot.id) };
   });
-  if (!Array.isArray(ended)) return ended;
-  for (const computer of ended)
-    for (const sandboxId of new Set([computer.sandboxId, await provider.find(computer.publicId)]))
-      if (sandboxId) await provider.kill(sandboxId);
+  if ('error' in ended) return ended;
+  await destroyProviderComputers(provider, ended.computers, ended.snapshots);
   return null;
 }
 

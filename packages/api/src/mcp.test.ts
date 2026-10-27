@@ -14,6 +14,7 @@ import { EXTENSION_CLIENT_ID, ensureExtensionClient } from '../../server/src/bro
 import { bundle, cookie } from '../../server/src/capture-fixtures';
 import { saveCapture } from '../../server/src/captures';
 import {
+  COMPUTER_ID_PATTERN,
   deleteMainComputer,
   handBackComputer,
   liveViewStatus,
@@ -304,11 +305,12 @@ describe('remote MCP OAuth boundary', () => {
       'account_identity',
       'computer_open',
       'computer_close',
+      'computer_list',
+      'computer_delete',
       'computer_screenshot',
       'computer_act',
       'browser_cdp',
       'computer_exec',
-      'computer_download',
     ]);
     const discovered = await rpc(await call(token.access_token, 'server/discover', {}, '2026-07-28'));
     expect(discovered.error).toBeUndefined();
@@ -528,7 +530,7 @@ describe('main computer tools', () => {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
       }),
     ).then(rpc);
-  it('opens one shared computer, runs every tool in a computer session, and hands control between agents', async () => {
+  it('opens a computer per agent, runs every tool in its session, and reopens, lists, and deletes computers', async () => {
     const fake = fakeComputerProvider();
     vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
     endpoint = createMcpEndpoint({ db, auth, origin, computers: fake.provider });
@@ -542,31 +544,28 @@ describe('main computer tools', () => {
       }),
     );
     expect(initialized.result.instructions).toContain('computer_close');
+    expect(initialized.result.instructions).toContain('computer_id');
+    expect(initialized.result.instructions).not.toContain('pending_sync');
     // The agent can name the account it is connected as, so a user can spot the wrong one of their accounts.
     expect(initialized.result.instructions).toContain('a@example.test');
     expect((await rpc(await call(claude.access_token))).result.structuredContent).toMatchObject({
       access_model: 'computer_session',
       account_email: 'a@example.test',
     });
-    const listed = await rpc(await call(claude.access_token, 'tools/list', {}));
-    expect(listed.result.tools.map((entry: { name: string }) => entry.name)).toEqual([
-      'account_identity',
-      'computer_open',
-      'computer_close',
-      'computer_screenshot',
-      'computer_act',
-      'browser_cdp',
-      'computer_exec',
-      'computer_download',
-    ]);
     const chatgpt = (await authorize(a.cookie, await register()))!;
-    const opened = await tool(claude.access_token, 'computer_open', {});
+    const opened = await tool(claude.access_token, 'computer_open', { label: '  Invoices  ' });
     expect(opened.result.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' });
     const id = opened.result.structuredContent.session_id;
+    const computerId = opened.result.structuredContent.computer_id;
     expect(id).toMatch(SESSION_ID_PATTERN);
-    expect(opened.result.structuredContent).toMatchObject({ idle_pause_seconds: 60 });
-    expect(opened.result.structuredContent.computer_id).toBeUndefined();
+    expect(computerId).toMatch(COMPUTER_ID_PATTERN);
+    expect(opened.result.structuredContent).toMatchObject({
+      idle_pause_seconds: 60,
+      label: 'Invoices',
+      new_computer: true,
+    });
     expect(opened.result.structuredContent.sign_in_help).toContain(`${origin}/app`);
+    expect(opened.result.structuredContent.sign_in_help).not.toContain('pending_sync');
     expect(opened.result.structuredContent.account_email).toBe('a@example.test');
     expect(opened.result.structuredContent.browser_sync).toContain(
       'No browser has synced to the Clutchbox account a@example.test',
@@ -589,21 +588,16 @@ describe('main computer tools', () => {
       (await tool(claude.access_token, 'browser_cdp', { session_id: id, method: 'Target.getTargets' })).result
         .structuredContent.result,
     ).toEqual({ targetInfos: [] });
-    expect(
-      (await tool(claude.access_token, 'computer_download', { session_id: id, path: "/home/user/Downloads/it's.csv" }))
-        .result.structuredContent,
-    ).toMatchObject({ size_bytes: 8, expires_in_seconds: 900 });
     // Every call ends by letting the computer pause after the idle minute.
     expect(fake.calls.setTimeouts.every(ms => ms === 60_000)).toBe(true);
-    // A sign-in on the host waits, named in results, until the agent reopens with its session.
+    // A sign-in on the host never reaches a computer session; the agent reopens with its session to apply it.
     await saveCapture(db, await member(a.id), bundle([cookie()]));
-    const noticed = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result
-      .structuredContent;
-    expect(noticed.pending_sync).toEqual({ sites: ['example.com'], message: expect.stringContaining('computer_open') });
+    const shot = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result.structuredContent;
+    expect(shot).toEqual({ session_id: id, display: { width: 1280, height: 800 } });
     expect(fake.calls.sync).toBe(0);
-    // Another agent, or the same one without its session_id, finds the computer busy; others' IDs are not theirs.
+    // Another agent, or the same one without its session_id, finds this computer busy; others' IDs are not theirs.
     for (const token of [chatgpt.access_token, claude.access_token]) {
-      const busy = await tool(token, 'computer_open', {});
+      const busy = await tool(token, 'computer_open', { computer_id: computerId });
       expect(busy.result).toMatchObject({ isError: true, structuredContent: { error: 'busy' } });
       expect(new Date(busy.result.structuredContent.busy_until).getTime()).toBeGreaterThan(Date.now());
     }
@@ -611,23 +605,53 @@ describe('main computer tools', () => {
       (await tool(chatgpt.access_token, 'computer_screenshot', { session_id: id })).result.structuredContent.error,
     ).toBe('session_not_found');
     const reopened = await tool(claude.access_token, 'computer_open', { session_id: id });
+    expect(reopened.result.structuredContent).toMatchObject({ computer_id: computerId, new_computer: false });
     expect(reopened.result.structuredContent.browser_sync).toContain('1 site updated');
     const next = reopened.result.structuredContent.session_id;
     expect(next).not.toBe(id);
     expect(
       (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result.structuredContent,
     ).toMatchObject({ error: 'session_ended', message: expect.stringContaining('computer_open') });
-    const shot = (await tool(claude.access_token, 'computer_screenshot', { session_id: next })).result;
-    expect(shot.structuredContent.pending_sync).toBeUndefined();
-    // Closing pauses the computer and frees it for other agents.
+    // Another agent gets a computer of its own meanwhile.
+    const own = (await tool(chatgpt.access_token, 'computer_open', {})).result.structuredContent;
+    expect(own).toMatchObject({ new_computer: true });
+    expect(own.computer_id).not.toBe(computerId);
+    // Closing pauses the computer and frees it for other agents, which reopen it by its ID.
     const closed = await tool(claude.access_token, 'computer_close', { session_id: next });
-    expect(closed.result.structuredContent).toMatchObject({ closed: true, browser_sync: expect.any(String) });
-    expect(fake.calls.pause).toBe(1);
+    expect(closed.result.structuredContent).toEqual({ closed: true });
     expect(
       (await tool(claude.access_token, 'computer_close', { session_id: next })).result.structuredContent.error,
     ).toBe('session_ended');
-    expect((await tool(chatgpt.access_token, 'computer_open', {})).result.isError).toBe(false);
-    // Revoking agents ends their sessions; reconnecting reaches the same computer.
+    const list = (await tool(chatgpt.access_token, 'computer_list', {})).result.structuredContent;
+    expect(list.computers).toEqual([
+      {
+        computer_id: own.computer_id,
+        label: null,
+        created_at: expect.any(String),
+        last_used_at: expect.any(String),
+        status: 'in_use',
+      },
+      expect.objectContaining({ computer_id: computerId, label: 'Invoices', status: 'paused' }),
+    ]);
+    const taken = (await tool(chatgpt.access_token, 'computer_open', { computer_id: computerId })).result;
+    expect(taken.structuredContent).toMatchObject({ computer_id: computerId, new_computer: false });
+    // Deleting: another agent's active session means busy; then it is gone.
+    expect(
+      (await tool(claude.access_token, 'computer_delete', { computer_id: computerId })).result.structuredContent,
+    ).toMatchObject({ error: 'busy' });
+    expect(
+      (await tool(chatgpt.access_token, 'computer_delete', { computer_id: computerId })).result.structuredContent,
+    ).toEqual({ deleted: true });
+    for (const name of ['computer_delete', 'computer_open'])
+      expect(
+        (await tool(chatgpt.access_token, name, { computer_id: computerId })).result.structuredContent.error,
+        name,
+      ).toBe('computer_not_found');
+    expect(
+      (await tool(chatgpt.access_token, 'computer_screenshot', { session_id: taken.structuredContent.session_id }))
+        .result.structuredContent.error,
+    ).toBe('session_not_found');
+    // Revoking agents ends their sessions; reconnecting reaches the same main computer.
     await revokeMcpGrants(db, await member(a.id));
     expect(
       (await call(claude.access_token, 'tools/call', { name: 'computer_screenshot', arguments: { session_id: next } }))
@@ -701,10 +725,13 @@ describe('main computer tools', () => {
     );
     expect(initialized.result.instructions).toContain('user_in_control');
     expect(initialized.result.instructions).not.toContain('took over');
-    const id = (await tool(claude.access_token, 'computer_open', {})).result.structuredContent.session_id;
+    const opened = (await tool(claude.access_token, 'computer_open', {})).result.structuredContent;
+    const id = opened.session_id;
+    // The user takes over the agent's computer, say to pass a bot check for it.
+    const fork = { computerId: opened.computer_id };
     const page = randomUUID();
     expect(
-      await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page),
+      await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page, fork),
     ).toMatchObject({
       takeover: { mine: true },
     });
@@ -712,14 +739,16 @@ describe('main computer tools', () => {
     expect(waiting).toMatchObject({ isError: true, structuredContent: { error: 'user_in_control' } });
     expect(waiting.structuredContent.message).toContain('session_id');
     expect(waiting.structuredContent.busy_until).toBeUndefined();
-    const busy = (await tool(chatgpt.access_token, 'computer_open', {})).result;
+    const busy = (await tool(chatgpt.access_token, 'computer_open', { computer_id: fork.computerId })).result;
     expect(busy).toMatchObject({ isError: true, structuredContent: { error: 'busy' } });
     expect(busy.structuredContent.busy_until).toBeUndefined();
     // The recorded user_in_control call is what the live view shows as a waiting agent.
-    expect((await liveViewStatus(db, noMetering, await member(a.id), page)).agentWaiting).toMatchObject({
+    expect(
+      (await liveViewStatus(db, noMetering, await member(a.id), page, undefined, fork)).agentWaiting,
+    ).toMatchObject({
       since: expect.any(String),
     });
-    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
+    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page, fork);
     const back = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result;
     expect(back.isError).toBe(false);
     expect(back.structuredContent).toMatchObject({
@@ -729,8 +758,8 @@ describe('main computer tools', () => {
     const after = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result;
     expect(after.structuredContent.user_had_control).toBeUndefined();
     // A reopen with the session_id right after a hand-back says so too.
-    await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
-    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page);
+    await takeOverComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page, fork);
+    await handBackComputer(db, { provider: fake.provider, metering: noMetering }, await member(a.id), page, fork);
     const reopened = (await tool(claude.access_token, 'computer_open', { session_id: id })).result;
     expect(reopened.structuredContent).toMatchObject({
       user_had_control: { message: expect.stringContaining('screenshot') },
@@ -843,14 +872,17 @@ describe('main computer tools', () => {
     const token = (await authorize(a.cookie, await register()))!.access_token;
     const other = (await authorize(a.cookie, await register()))!.access_token;
     expect((await rpc(await call(token))).result.isError).toBe(false);
-    const id = (await tool(token, 'computer_open', {})).result.structuredContent.session_id;
+    const opened = (await tool(token, 'computer_open', {})).result.structuredContent;
+    const id = opened.session_id;
     await tool(token, 'computer_act', { session_id: id, actions: [{ type: 'type', text: 'hunter2' }] });
     expect((await tool(token, 'computer_exec', { session_id: id, command: 'echo hunter2' })).result.isError).toBe(
       false,
     );
     await tool(token, 'browser_cdp', { session_id: id, method: 'Runtime.evaluate', params: { expression: 'hunter2' } });
-    // Another agent passing this session's ID is refused, and its record does not link the session.
-    expect((await tool(other, 'computer_open', { session_id: id })).result.structuredContent.error).toBe('busy');
+    // Another agent reopening this computer is refused, and its record does not link the session.
+    expect(
+      (await tool(other, 'computer_open', { computer_id: opened.computer_id })).result.structuredContent.error,
+    ).toBe('busy');
     fails.screenshot = true;
     await tool(token, 'computer_screenshot', { session_id: id });
     fails.screenshot = false;
@@ -1242,12 +1274,13 @@ describe('agent connections and setup', () => {
     expect(await db.select().from(schema.oauthConsent)).toEqual([]);
   });
   it('never lets a call that was in flight during a disconnect take the computer', async () => {
+    // One provider, so its snapshot IDs stay unique in the database.
+    const fake = fakeComputerProvider();
     for (const [user, revoke] of [
       ['a', async (userId: string, client: string) => revokeMcpGrant(db, await member(userId), client)],
       ['b', async (userId: string) => revokeMcpGrants(db, await member(userId))],
     ] as const) {
       // The open has passed its grant check and is creating the computer when the user disconnects it.
-      const fake = fakeComputerProvider();
       let creating!: () => void;
       const started = new Promise<void>(resolve => {
         creating = resolve;
@@ -1292,7 +1325,7 @@ describe('agent connections and setup', () => {
     const [consent] = await db.select().from(schema.oauthConsent);
     expect((await call(token)).status).toBe(200);
     expect((await setup(a.id))?.agentConnectedAt).toEqual(consent!.createdAt);
-    // Another agent holds the computer: this open fails, so the user is not set up.
+    // Another agent holds a computer: this open of it fails, so the user is not set up.
     await db.insert(schema.oauthClient).values({ id: 'other-agent', clientId: 'other-agent', redirectUris: [] });
     const other = await openComputerSession(
       db,
@@ -1301,11 +1334,12 @@ describe('agent connections and setup', () => {
     );
     if ('error' in other) throw new Error(other.error);
     await other.done();
-    expect((await tool(token, 'computer_open')).result.structuredContent.error).toBe('busy');
+    const computer_id = other.computer.id;
+    expect((await tool(token, 'computer_open', { computer_id })).result.structuredContent.error).toBe('busy');
     expect((await setup(a.id))?.setUpAt).toBeNull();
     // The other agent's idle minute passes: one of these concurrent opens takes over, the rest find it busy.
     await db.update(schema.computerSessions).set({ lastCallAt: new Date(Date.now() - 61_000) });
-    const opened = await Promise.all([1, 2, 3].map(() => tool(token, 'computer_open')));
+    const opened = await Promise.all([1, 2, 3].map(() => tool(token, 'computer_open', { computer_id })));
     const started = opened.filter(response => response.result.isError === false);
     expect(started).toHaveLength(1);
     expect(opened.filter(response => response.result.structuredContent.error === 'busy')).toHaveLength(2);

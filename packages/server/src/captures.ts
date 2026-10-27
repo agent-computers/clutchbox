@@ -8,7 +8,7 @@ import {
   type SyncSettings,
   syncSettingsSchema,
 } from '@agent-computers/capture';
-import { and, eq, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Database } from './database';
 import { logError } from './log';
@@ -320,6 +320,16 @@ export async function deleteCapturesIn(
     .update(schema.computers)
     .set({ appliedCaptureDigest: null, appliedCapture: null })
     .where(ownRow(schema.computers, member));
+  // And what main had applied when each snapshot was taken, which new forks start from.
+  await tx
+    .update(schema.computerSnapshots)
+    .set({ appliedCaptureDigest: null, appliedCapture: null })
+    .where(
+      inArray(
+        schema.computerSnapshots.computerId,
+        tx.select({ id: schema.computers.id }).from(schema.computers).where(ownRow(schema.computers, member)),
+      ),
+    );
 }
 
 export async function captureView(db: Database, member: Owner) {

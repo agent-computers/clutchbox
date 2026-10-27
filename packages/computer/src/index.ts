@@ -69,7 +69,6 @@ export interface ComputerSession {
   exec(input: { command: string; cwd?: string | undefined; timeoutSeconds: number }): Promise<ExecResult>;
   // Closes every browser tab but one blank one. Never starts the browser.
   closeTabs(): Promise<void>;
-  downloadUrl(path: string): Promise<string>;
   // The provider pauses the computer timeoutMs from now unless called again; may shorten the timeout.
   setTimeout(timeoutMs: number): Promise<void>;
   // Brings a computer made from an older template to the provider's revision, restarting the browser (its
@@ -102,6 +101,14 @@ export interface ComputerProvider {
   find(computerId: string): Promise<string | null>;
   // timeoutMs: the provider pauses the computer this long after the call unless called again.
   create(computerId: string, timeoutMs: number): Promise<string>;
+  // A fork: a new computer from a snapshot, with its memory, so the browser runs as it did when the snapshot was
+  // taken. Paused after timeoutMs like create, and found by its own computerId.
+  createFromSnapshot(snapshotId: string, computerId: string, timeoutMs: number): Promise<string>;
+  // Snapshots a computer's memory and disk and returns the snapshot's ID. A paused computer is resumed first and then
+  // runs until timeoutMs from now; a running one pauses briefly, and every connection to it drops.
+  snapshot(sandboxId: string, timeoutMs: number): Promise<string>;
+  // Deletes a snapshot. Fails while any computer made from it remains, running or paused.
+  deleteSnapshot(snapshotId: string): Promise<void>;
   // Resumes a paused computer; on a running one it only ever extends the timeout.
   connect(sandboxId: string, timeoutMs: number): Promise<ComputerSession>;
   pause(sandboxId: string): Promise<void>;

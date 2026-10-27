@@ -190,7 +190,7 @@ export async function revokeMcpGrants(db: Database, member: Member) {
     await tx.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.id, member.userId)).for('update');
     for (const table of [schema.oauthAccessToken, schema.oauthRefreshToken, schema.oauthConsent])
       await tx.delete(table).where(and(boundTo(table, member), ne(table.clientId, EXTENSION_CLIENT_ID)));
-    // Revoked agents must not keep other agents out of the main computer.
+    // Revoked agents must not keep other agents out of their forks.
     await tx
       .update(schema.computerSessions)
       .set({ endedAt: new Date(), endReason: 'revoked' })
