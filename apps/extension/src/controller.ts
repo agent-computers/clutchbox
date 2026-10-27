@@ -23,6 +23,7 @@ import {
   meSchema,
   newState,
   type Organization,
+  organizationHeader,
   organizationSchema,
   parseExtensionConfig,
   parseSettings,
@@ -57,10 +58,12 @@ import {
   within,
 } from '@agent-computers/capture';
 
-// The extension holds a list of connections, each one organization on one server origin (local storage). Each
-// connection keeps its own copy of the keys below, named `<key>:<connection ID>` (keyOf), and its own periodic capture.
+// The extension signs in to one account on each server, and holds a list of connections, one for each organization
+// of that account (local storage). Each connection keeps its own copy of the keys below, named
+// `<key>:<connection ID>` (keyOf), and its own periodic capture. `legacy`: the server lists no organizations (it
+// predates accounts), so its one connection's requests name none.
 export const connectionsKey = 'connections';
-export type ConnectionEntry = { id: string; origin: string; organization?: Organization };
+export type ConnectionEntry = { id: string; origin: string; organization?: Organization; legacy?: true };
 export const keyOf = (key: string, connection: string) => `${key}:${connection}`;
 export const recordKey = 'captureRecord';
 export const settingsKey = 'captureSettings';
@@ -70,12 +73,18 @@ export const syncKey = 'syncState';
 export const configKey = 'extensionConfig';
 export const pulledKey = 'settingsPulledAt';
 export const revokedKey = 'revokedSites';
-// The connection's OAuth tokens and the account they belong to (local storage). The account is kept across
-// Disconnect and Reconnect, so connecting as a different account can start fresh.
+// Each server's OAuth tokens and the account they belong to, named `<key>:<server origin>` (local storage). The account
+// is kept while its tokens wait for Reconnect, so reconnecting as a different account can start fresh.
 export const tokensKey = 'syncTokens';
 export const accountKey = 'syncAccount';
-// Builds before connections kept one connection under these keys unnamed; startup moves them to the first connection.
-const connectionKeys = [settingsKey, syncKey, configKey, pulledKey, revokedKey, tokensKey, accountKey];
+const connectionKeys = [settingsKey, syncKey, configKey, pulledKey, revokedKey];
+// The connection the popup shows, kept between openings; and a Sign out whose deletion the server did not confirm.
+export const selectedKey = 'selectedConnection';
+export const signOutFailedKey = 'signOutFailed';
+// Installs from before accounts kept tokens per connection (or, before connections, under the bare keys); startup
+// starts them fresh, keeping Chrome's grants, and marks the storage with this layout.
+export const layoutKey = 'storageLayout';
+const layout = 2;
 // For the whole extension: the build the servers offer, and the build a server last refused as outdated, which the
 // periodic capture waits on until this build changes.
 export const latestVersionKey = 'latestVersion';
@@ -93,13 +102,12 @@ type Pending = {
   tab?: number;
   connection?: string;
   another?: true;
-  // Connecting another organization on this server, and whether the person agreed to its warning.
+  // Signing in to a server (the build's, or `origin`), and whether the person agreed to its warning.
   origin?: string;
   warned?: true;
 };
-// `sites` are added once connected; `reconnect` resumes a connection whose tokens ended. `connection` is the one the
-// click came from, if any: the exchange finds the connection by the organization the server names, so a flow may end
-// in another one.
+// `sites` are added once connected; `reconnect` resumes a server whose tokens ended. `connection` is the one the
+// click came from, if any, where the exchange lands when the account still has it.
 type Flow = {
   state: string;
   verifier: string;
@@ -128,7 +136,9 @@ export type CookieChange = { cookie: ChangedCookie; removed: boolean; cause: str
 const cookieKey = (cookie: ChangedCookie) =>
   JSON.stringify([cookie.name, cookie.domain, cookie.path, cookie.partitionKey?.topLevelSite ?? null]);
 type Account = { id: string; email: string };
-type Me = { account: Account; organization?: Organization };
+// `organizations` is every one the account belongs to, and `first` the one to show first; a server from before
+// accounts lists none (`legacy`), and its one connection is the organization the token acts in, if it names one.
+type Me = { account: Account; organizations: Organization[]; first?: string; legacy: boolean };
 type Access = string | 'reconnect' | 'unavailable';
 type StorageArea = Pick<typeof chrome.storage.session, 'get' | 'set' | 'remove' | 'setAccessLevel'>;
 // Chrome Enterprise policy for this extension (managed-schema.json): `approvedServers` connect without the warning.
@@ -164,7 +174,20 @@ const isEntry = (value: unknown): value is ConnectionEntry =>
   typeof (value as ConnectionEntry).origin === 'string' &&
   ((value as ConnectionEntry).organization === undefined ||
     organizationSchema.safeParse((value as ConnectionEntry).organization).success);
-// The account and organization behind a fresh access token. Retried once after a network error or 5xx.
+function readMe(body: unknown): Me | undefined {
+  const me = meSchema.safeParse(body);
+  if (!me.success) return undefined;
+  const { user, organization, organizations, defaultOrganization } = me.data;
+  const listed = organizations ?? (organization ? [organization] : []);
+  const first = defaultOrganization ?? listed[0]?.id;
+  return {
+    account: { id: user.id, email: user.email },
+    organizations: listed,
+    legacy: organizations === undefined,
+    ...(first ? { first } : {}),
+  };
+}
+// The account behind an access token, and its organizations. Retried once after a network error or 5xx.
 async function meAt(fetcher: typeof fetch, origin: string, access: string): Promise<Me | undefined> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt) await sleep(1_000);
@@ -174,12 +197,8 @@ async function meAt(fetcher: typeof fetch, origin: string, access: string): Prom
         headers: { authorization: `Bearer ${access}` },
         signal: AbortSignal.timeout(checkTimeoutMs),
       });
-      const me = meSchema.safeParse(await response.json().catch(() => undefined));
-      if (response.ok && me.success)
-        return {
-          account: { id: me.data.user.id, email: me.data.user.email },
-          ...(me.data.organization ? { organization: me.data.organization } : {}),
-        };
+      const me = response.ok ? readMe(await response.json().catch(() => undefined)) : undefined;
+      if (me) return me;
       if (response.status < 500) return undefined;
     } catch {
       // Retried below.
@@ -203,15 +222,145 @@ interface Host {
   serverSites(): string[];
   badge(): Promise<void>;
   startFlow(flow: Pick<Flow, 'mode' | 'sites' | 'reconnect' | 'origin' | 'connection'>, from?: number): Promise<void>;
-  rename(connection: string, organization: Organization): Promise<void>;
+  server(origin: string): Server;
+  // A server's tokens ended: every connection on it waits for Reconnect.
+  endTokens(origin: string): Promise<void>;
+  // A request named an organization the account has left: the list is fetched again.
+  organizationsChanged(origin: string): void;
+  signOut(origin: string): Promise<void>;
 }
 
-// One organization on one server: its tokens, account, settings, capture, sync record and periodic capture. The
-// controller queues its work, so nothing here runs concurrently with other work.
+// One server's account: its tokens, which every connection on that server shares and refreshes one at a time, and
+// every request to it.
+class Server {
+  private refreshing: Promise<Access> | undefined;
+  constructor(
+    private readonly host: Host,
+    readonly origin: string,
+  ) {}
+  private get api() {
+    return this.host.api;
+  }
+  async tokens(): Promise<SyncTokens | undefined> {
+    const stored = (await this.api.storage.local.get(keyOf(tokensKey, this.origin)))[keyOf(tokensKey, this.origin)];
+    return isTokens(stored) ? stored : undefined;
+  }
+  async account(): Promise<Account | undefined> {
+    return (await this.api.storage.local.get(keyOf(accountKey, this.origin)))[keyOf(accountKey, this.origin)] as
+      | Account
+      | undefined;
+  }
+  // An access token for a server request: the stored one, refreshed when it is about to expire.
+  private async accessToken(): Promise<Access> {
+    const tokens = await this.tokens();
+    if (!tokens) return 'reconnect';
+    if (tokens.expiresAt - Date.now() > refreshAheadMs) return tokens.access;
+    return this.refresh();
+  }
+  // One refresh at a time: concurrent callers share it, since a second one would present a rotated token.
+  refresh(): Promise<Access> {
+    this.refreshing ??= this.doRefresh().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+  // Retries an attempt whose outcome is unknown while the server still answers the old token with the same tokens.
+  // `invalid_grant` ends the tokens, unless an earlier attempt may have rotated the token: the server refuses a
+  // retry that arrives before it has saved the answer to replay. Anything else keeps the tokens.
+  private async doRefresh(): Promise<Access> {
+    const tokens = await this.tokens();
+    if (!tokens) return 'reconnect';
+    const start = Date.now();
+    let uncertain = false;
+    let last: TokenResult = 'retry';
+    for (let attempt = 0; ; attempt++) {
+      const timeout = timeoutSignal(Math.min(refreshAttemptMs, start + refreshDeadlineMs - Date.now()));
+      try {
+        last = await requestTokens(this.api.fetch, this.origin, { refreshToken: tokens.refresh }, timeout.signal);
+      } finally {
+        timeout.clear();
+      }
+      if (typeof last === 'object') {
+        // Saved before anything else, so the rotated token is never lost. Tokens that ended or changed meanwhile
+        // (Sign out, a new sign-in) are kept.
+        const current = await this.tokens();
+        if (current?.refresh !== tokens.refresh) return current?.access ?? 'reconnect';
+        await this.api.storage.local.set({ [keyOf(tokensKey, this.origin)]: last.tokens });
+        return last.tokens.access;
+      }
+      if (last === 'unavailable') return 'unavailable';
+      if (last === 'invalid_grant' && !uncertain) break;
+      if (last === 'retry') uncertain = true;
+      const delay = refreshDelaysMs[attempt];
+      if (delay === undefined || Date.now() - start + delay >= refreshRetryMs) break;
+      await sleep(delay);
+    }
+    if (last !== 'invalid_grant') return 'unavailable';
+    if ((await this.tokens())?.refresh === tokens.refresh) await this.host.endTokens(this.origin);
+    return 'reconnect';
+  }
+  // Every request to the server: the bearer token, never cookies (no grant on its site, so credentialed CORS would
+  // fail), naming the organization it acts in. A 401 on a bearer request means the token was refused, as when signing
+  // out on the server's website revokes the current access token: refresh once and retry. Throws when the server can't
+  // be reached for a token.
+  async call(
+    path: string,
+    init: RequestInit,
+    organization?: string | undefined,
+  ): Promise<globalThis.Response | 'reconnect'> {
+    const token = await this.accessToken();
+    if (token === 'reconnect') return 'reconnect';
+    if (token === 'unavailable') throw new Error('unavailable');
+    const send = (access: string) =>
+      this.api.fetch(`${this.origin}${path}`, {
+        ...init,
+        credentials: 'omit',
+        headers: {
+          ...(init.headers as { [name: string]: string } | undefined),
+          ...(organization === undefined ? {} : { [organizationHeader]: organization }),
+          authorization: `Bearer ${access}`,
+        },
+      });
+    let response = await send(token);
+    if (response.status === 401) {
+      const stored = await this.tokens();
+      if (!stored) return 'reconnect';
+      // A concurrent call may have refreshed already.
+      const next = stored.access === token ? await this.refresh() : stored.access;
+      if (next === 'reconnect') return 'reconnect';
+      if (next === 'unavailable') throw new Error('unavailable');
+      response = await send(next);
+      if (response.status === 401) {
+        await this.host.endTokens(this.origin);
+        return 'reconnect';
+      }
+    }
+    if (response.status === 403 && organization !== undefined) {
+      const body = (await response
+        .clone()
+        .json()
+        .catch(() => undefined)) as { error?: unknown } | undefined;
+      if (body?.error === 'not_a_member') this.host.organizationsChanged(this.origin);
+    }
+    return response;
+  }
+  // The account and its organizations, as the server names them now.
+  async me(): Promise<Me | 'reconnect' | undefined> {
+    try {
+      const response = await this.call('/api/v1/me', { signal: AbortSignal.timeout(checkTimeoutMs) });
+      if (response === 'reconnect') return 'reconnect';
+      return response.ok ? readMe(await response.json().catch(() => undefined)) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+// One organization on one server: its settings, capture, sync record and periodic capture, synced as the account
+// signed in to that server. The controller queues its work, so nothing here runs concurrently with other work.
 class Connection {
   epoch = 0;
   private upload: AbortController | undefined;
-  private refreshing: Promise<Access> | undefined;
   // The last capture's cookie keys, read from session storage when first needed after it changes.
   private captured: Set<string> | undefined;
   private quickTimer: ReturnType<typeof setTimeout> | undefined;
@@ -222,11 +371,16 @@ class Connection {
     private readonly host: Host,
     readonly id: string,
     readonly origin: string,
+    // The organization's ID, which every request names; none on a server from before accounts.
+    readonly organization: string | undefined,
   ) {
     this.alarm = alarmOf(id);
   }
   private get api() {
     return this.host.api;
+  }
+  private get server() {
+    return this.host.server(this.origin);
   }
   private key(name: string) {
     return keyOf(name, this.id);
@@ -242,8 +396,7 @@ class Connection {
     }
     const sync = await this.syncRecord();
     if (sync.state === 'uploading') await this.saveSync({ ...sync, state: 'failed' });
-    // Connected without tokens: an install updated from a build that synced with the web sign-in, or a connection
-    // whose tokens ended. It waits for Reconnect.
+    // Connected without tokens: the server's tokens ended. It waits for Reconnect.
     const reconnect = settings.connected && !(await this.tokens());
     if (!settings.connected || settings.paused || reconnect) await this.api.alarms.clear(this.alarm);
     // Recreating an existing alarm would restart its period on every worker wake. One from an older build's period
@@ -283,12 +436,8 @@ class Connection {
   private saveSync(record: SyncRecord) {
     return this.api.storage.local.set({ [this.key(syncKey)]: record });
   }
-  private async account(): Promise<Account | undefined> {
-    return (await this.api.storage.local.get(this.key(accountKey)))[this.key(accountKey)] as Account | undefined;
-  }
-  async tokens(): Promise<SyncTokens | undefined> {
-    const stored = (await this.api.storage.local.get(this.key(tokensKey)))[this.key(tokensKey)];
-    return isTokens(stored) ? stored : undefined;
+  tokens(): Promise<SyncTokens | undefined> {
+    return this.server.tokens();
   }
   private async schedule() {
     await this.api.alarms.create(this.alarm, { periodInMinutes: (await this.config()).syncPeriodMinutes });
@@ -301,27 +450,49 @@ class Connection {
     await this.api.storage.local.remove(this.key(syncKey));
   }
   // Clear and disable before attempting permission removal; failure must remain closed.
-  // Added sites and exclusions are kept for the next connection, which defaults to added sites.
-  private async disable() {
+  async disable() {
     await this.save({ status: { state: 'revoked' } });
     await this.saveSettings({ ...(await this.settings()), connected: false, paused: false, mode: 'sites' });
     await this.stopSync();
   }
-  // The connection's tokens ended (disconnected, unused for 30 days, or refused): sync stops, keeping settings,
-  // grants and the account, until Reconnect.
-  private async toReconnect() {
-    await this.api.storage.local.remove(this.key(tokensKey));
+  // The server's tokens ended (signed out on the server, unused for 30 days, or refused): sync stops, keeping
+  // settings and grants, until Reconnect.
+  async tokensEnded() {
     await this.api.alarms.clear(this.alarm);
     await this.save({ status: { state: 'empty' } });
-    await this.host.badge();
+  }
+  private toReconnect() {
+    return this.host.endTokens(this.origin);
+  }
+  // The organization removed this browser, or turned sync off there: it stops syncing here, keeping its sites and the
+  // grants other connections use, until the person syncs here again (connect), which the server takes as lifting it.
+  private async removed() {
+    const settings = await this.settings();
+    await this.save({ status: { state: 'revoked' } });
+    await this.saveSettings({ ...settings, connected: false, mode: 'sites' });
+    await this.api.alarms.clear(this.alarm);
+    await this.saveSync({ state: 'removed' });
+    if (settings.mode === 'all') await this.removeAllSites();
+    else await this.revokeSites(await this.grantedSites(settings.sites));
+  }
+  // Leaving this connection behind (Sign out, or the account left the organization): its grants no other connection
+  // uses go too.
+  async forget(keep?: { sites: string[]; all: boolean }) {
+    this.interrupt();
+    await this.disable();
+    await this.removeAccess(keep).catch(() => undefined);
+    await this.api.storage.local.remove(connectionKeys.map(key => this.key(key)));
+    await this.api.storage.session.remove(this.key(recordKey));
   }
   // Every grant: the extension needs none to reach its servers, which it calls with OAuth tokens.
   private async optionalGrants() {
     return (await this.api.permissions.getAll()).origins ?? [];
   }
-  // Every grant no other connection still uses: theirs stay.
-  private async removeAccess() {
+  // Every grant no other connection still uses: theirs stay, and so do `keep`'s.
+  private async removeAccess(keep: { sites: string[]; all: boolean } = { sites: [], all: false }) {
     const others = await this.host.others(this.id);
+    for (const site of keep.sites) others.sites.add(site);
+    if (keep.all) others.all = true;
     const unused = (origins: string[]) =>
       origins.filter(origin =>
         (browserOrigins as readonly string[]).includes(origin)
@@ -366,91 +537,9 @@ class Connection {
     this.upload?.abort();
   }
 
-  // An access token for a server request: the stored one, refreshed when it is about to expire.
-  private async accessToken(): Promise<Access> {
-    const tokens = await this.tokens();
-    if (!tokens) return 'reconnect';
-    if (tokens.expiresAt - Date.now() > refreshAheadMs) return tokens.access;
-    return this.refresh();
-  }
-  // One refresh at a time: concurrent callers share it, since a second one would present a rotated token.
-  private refresh(): Promise<Access> {
-    this.refreshing ??= this.doRefresh().finally(() => {
-      this.refreshing = undefined;
-    });
-    return this.refreshing;
-  }
-  // Retries an attempt whose outcome is unknown while the server still answers the old token with the same tokens.
-  // `invalid_grant` ends the connection, unless an earlier attempt may have rotated the token: the server refuses a
-  // retry that arrives before it has saved the answer to replay. Anything else keeps the tokens.
-  private async doRefresh(): Promise<Access> {
-    const tokens = await this.tokens();
-    if (!tokens) return 'reconnect';
-    const start = Date.now();
-    let uncertain = false;
-    let last: TokenResult = 'retry';
-    for (let attempt = 0; ; attempt++) {
-      const timeout = timeoutSignal(Math.min(refreshAttemptMs, start + refreshDeadlineMs - Date.now()));
-      try {
-        last = await requestTokens(this.api.fetch, this.origin, { refreshToken: tokens.refresh }, timeout.signal);
-      } finally {
-        timeout.clear();
-      }
-      if (typeof last === 'object') {
-        // Saved before anything else, so the rotated token is never lost. A connection that ended or changed
-        // meanwhile (Disconnect, a new connect) keeps its own.
-        const current = await this.tokens();
-        if (current?.refresh !== tokens.refresh) return current?.access ?? 'reconnect';
-        await this.api.storage.local.set({ [this.key(tokensKey)]: last.tokens });
-        return last.tokens.access;
-      }
-      if (last === 'unavailable') return 'unavailable';
-      if (last === 'invalid_grant' && !uncertain) break;
-      if (last === 'retry') uncertain = true;
-      const delay = refreshDelaysMs[attempt];
-      if (delay === undefined || Date.now() - start + delay >= refreshRetryMs) break;
-      await sleep(delay);
-    }
-    if (last !== 'invalid_grant') return 'unavailable';
-    if ((await this.tokens())?.refresh === tokens.refresh) await this.toReconnect();
-    return 'reconnect';
-  }
-  // Every request to the server: the bearer token, never cookies (no grant on its site, so credentialed CORS would
-  // fail). A 401 on a bearer request means the token was refused, as when signing out on the server's website revokes the
-  // current access token: refresh once and retry. Throws when the server can't be reached for a token.
-  private async call(path: string, init: RequestInit): Promise<globalThis.Response | 'reconnect'> {
-    const token = await this.accessToken();
-    if (token === 'reconnect') return 'reconnect';
-    if (token === 'unavailable') throw new Error('unavailable');
-    const send = (access: string) =>
-      this.api.fetch(`${this.origin}${path}`, {
-        ...init,
-        credentials: 'omit',
-        headers: { ...(init.headers as { [name: string]: string } | undefined), authorization: `Bearer ${access}` },
-      });
-    const response = await send(token);
-    if (response.status !== 401) return response;
-    const stored = await this.tokens();
-    if (!stored) return 'reconnect';
-    // A concurrent call may have refreshed already.
-    const next = stored.access === token ? await this.refresh() : stored.access;
-    if (next === 'reconnect') return 'reconnect';
-    if (next === 'unavailable') throw new Error('unavailable');
-    const retried = await send(next);
-    if (retried.status !== 401) return retried;
-    await this.toReconnect();
-    return 'reconnect';
-  }
-  // Learns the organization of a connection from before connections named one. Best effort.
-  async name() {
-    try {
-      const response = await this.call('/api/v1/me', { signal: AbortSignal.timeout(checkTimeoutMs) });
-      if (response === 'reconnect' || !response.ok) return;
-      const me = meSchema.safeParse(await response.json().catch(() => undefined));
-      if (me.success && me.data.organization) await this.host.rename(this.id, me.data.organization);
-    } catch {
-      // Named at a later check.
-    }
+  // Every request to the server, as the account, in this organization.
+  private call(path: string, init: RequestInit) {
+    return this.server.call(path, init, this.organization);
   }
 
   // Captures the user did not ask for. The controller refuses them unless connected and not paused, and uploads only
@@ -521,17 +610,15 @@ class Connection {
       id: this.id,
       origin: this.origin,
       ...(entry.organization ? { organization: entry.organization } : {}),
-      account: await this.accountState(await this.settings()),
+      account: await this.accountState(),
       settings: await this.settings(),
     };
   }
-  private async accountState(settings: CaptureSettings): Promise<AccountState> {
-    const stored = await this.account();
-    return !settings.connected
-      ? { state: 'none' }
-      : (await this.tokens())
-        ? { state: 'syncing', email: stored?.email ?? '' }
-        : { state: 'reconnect', ...(stored ? { email: stored.email } : {}) };
+  private async accountState(): Promise<AccountState> {
+    const stored = await this.server.account();
+    return (await this.tokens())
+      ? { state: 'syncing', email: stored?.email ?? '' }
+      : { state: 'reconnect', ...(stored ? { email: stored.email } : {}) };
   }
   // The connection's status; the controller adds the list of connections.
   async status(): Promise<StatusResponse> {
@@ -565,7 +652,7 @@ class Connection {
       capture: record.status,
       sync,
       settings,
-      account: await this.accountState(settings),
+      account: await this.accountState(),
       permissionGranted,
       ungrantedSites,
       config: await this.config(),
@@ -574,8 +661,8 @@ class Connection {
   }
   // Uploads only when the capture differs from the last one the server accepted, and never retries on its own.
   // 'interrupted': pause, disconnect, clear, or exclusions interrupted the upload; success is then not recorded.
-  // 'reconnect': the connection's tokens ended, or the account page turned sync off.
-  private async sync(bundle: Capture, epoch: number): Promise<'done' | 'interrupted' | 'reconnect'> {
+  // 'reconnect': the server's tokens ended. 'removed': the organization removed this browser or turned sync off.
+  private async sync(bundle: Capture, epoch: number): Promise<'done' | 'interrupted' | 'reconnect' | 'removed'> {
     const previous = await this.syncRecord();
     // The scope counts too, so adding a site with no cookies still tells the server which sites are added.
     const digest = await captureDigest(bundle.cookies, bundle.scope);
@@ -594,7 +681,7 @@ class Connection {
     const abort = new AbortController();
     this.upload = abort;
     let next: SyncRecord;
-    let ended = false;
+    let ended: 'reconnect' | 'removed' | undefined;
     let received: SyncSettings | undefined;
     try {
       const response = await this.call('/api/v1/captures', {
@@ -604,7 +691,7 @@ class Connection {
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(uploadTimeoutMs)]),
       });
       if (response === 'reconnect') {
-        ended = true;
+        ended = 'reconnect';
         next = previous;
       } else {
         const result: unknown = await response.json().catch(() => undefined);
@@ -625,7 +712,7 @@ class Connection {
           };
         } else {
           const error = (result as { error?: unknown } | undefined)?.error;
-          ended = response.status === 409 && error === 'sync_disconnected';
+          if (response.status === 409 && error === 'sync_disconnected') ended = 'removed';
           if (response.status === 426) await this.api.storage.local.set({ [refusedVersionKey]: this.host.version });
           // Paused on the account page: the settings below pause this browser too.
           next = {
@@ -655,7 +742,7 @@ class Connection {
     }
     if (ended) {
       await this.saveSync(previous);
-      return 'reconnect';
+      return ended;
     }
     await this.saveSync(next);
     if (received) await this.reconcile(await this.settings(), received);
@@ -684,10 +771,11 @@ class Connection {
     const { syncPeriodMinutes } = await this.config();
     if (!settings.paused && (await this.api.alarms.get(this.alarm))?.periodInMinutes !== syncPeriodMinutes)
       await this.schedule();
-    // The account page turned sync off. A connection waiting for its first upload since Connect lifts that.
-    if (body.disconnected && !(await this.syncRecord()).connect) {
-      await this.toReconnect();
-      return settings;
+    // The organization removed this browser or turned sync off. A connection waiting for its first upload since the
+    // person synced here again lifts that.
+    if ((body.disconnected || body.removed) && !(await this.syncRecord()).connect) {
+      await this.removed();
+      return await this.settings();
     }
     const server = body.settings ?? (await this.adopt(settings));
     return server ? await this.reconcile(settings, server) : settings;
@@ -784,7 +872,6 @@ class Connection {
         await this.save({ status: { state: 'empty' } });
         return await this.status();
       }
-      if (request.type === 'disconnect') return await this.disconnect();
       if (request.type === 'pause') {
         await this.save({ status: { state: 'empty' } });
         await this.saveSettings({ ...settings, paused: true });
@@ -859,7 +946,7 @@ class Connection {
     if (!(await this.allowed({ mode }))) return { ok: false, error: 'permission_required' };
     if (await this.tokens()) {
       // The tokens may have ended without this browser knowing; a refresh tells.
-      const access = await this.refresh();
+      const access = await this.server.refresh();
       if (access === 'unavailable') return { ok: false, error: 'unavailable' };
       if (access !== 'reconnect') {
         const next = await this.applyConnect(settings, mode);
@@ -901,52 +988,41 @@ class Connection {
     if (!current.paused && this.hasScope(current)) return await this.capture(current, epoch);
     return await this.status();
   }
-  // The rest of the redirect page's exchange, once /me named the account and its organization as this connection's.
-  // A different account starts fresh, without the previous account's sites, exclusions or capture. A Reconnect
-  // that turns out to be a different account lands in added-sites mode, so nothing is synced it didn't agree to. A
-  // flow from another connection, or for another organization, that lands in this connected one connects it again
-  // as Reconnect does, keeping its mode and pause.
-  async connected(flow: Flow, tokens: SyncTokens, me: Me): Promise<ExchangeResponse> {
-    const previous = await this.account();
+  // The rest of the redirect page's exchange, in the connection it lands in: the one Reconnect came from, else the
+  // account's first organization. Reconnect skips the disclosure, so it keeps this connection's mode and pause; a
+  // different account's connections are new, so they start in added-sites mode with nothing synced.
+  async connected(flow: Flow) {
     const before = await this.settings();
-    const fresh = !previous || previous.id !== me.account.id;
-    const again = flow.connection !== this.id && before.connected;
-    const reconnect = flow.reconnect || again;
-    const start: CaptureSettings = fresh ? { ...before, sites: [], excludedDomains: [] } : before;
-    const next = await this.applyConnect(start, fresh && reconnect ? 'sites' : again ? before.mode : flow.mode);
-    // Reconnect skips the disclosure, so it never resumes a sync the user paused.
-    if (reconnect && !fresh) next.paused = before.paused;
-    if (fresh) {
-      await this.save({ status: { state: 'empty' } });
-      await this.api.storage.local.remove([this.key(revokedKey), this.key(pulledKey)]);
-    }
+    const next = await this.applyConnect(before, flow.reconnect ? before.mode : flow.mode);
+    if (flow.reconnect) next.paused = before.paused;
     const sync: SyncRecord = { state: 'never', connect: true };
-    await this.api.storage.local.set({
-      [this.key(tokensKey)]: tokens,
-      [this.key(accountKey)]: me.account,
-      [this.key(settingsKey)]: next,
-      [this.key(syncKey)]: sync,
-    });
+    await this.api.storage.local.set({ [this.key(settingsKey)]: next, [this.key(syncKey)]: sync });
     if (!next.paused) await this.schedule();
-    await this.host.badge();
-    // Only after saving, so the permission events find nothing to revoke.
-    if (fresh) {
-      await this.revokeSites(await this.grantedSites(before.sites.filter(site => !flow.sites.includes(site))));
-      if (reconnect) await this.removeAllSites();
+    this.afterward(flow.sites, !flow.reconnect);
+  }
+  // Another organization of the account: a new one starts connected with added sites, and takes the
+  // organization's settings at its first fetch; one already here resumes as it was.
+  async joined() {
+    const before = await this.settings();
+    if (!before.connected) {
+      const sync: SyncRecord = { state: 'never', connect: true };
+      await this.api.storage.local.set({
+        [this.key(settingsKey)]: { ...before, connected: true, mode: 'sites', paused: false },
+        [this.key(syncKey)]: sync,
+      });
     }
+    const settings = await this.settings();
+    if (settings.connected && !settings.paused) await this.schedule();
+    this.afterward([], false);
+  }
+  private afterward(sites: string[], resume: boolean) {
     void this.host.enqueue(async () => {
       try {
-        await this.afterConnect(await this.settings(), flow.sites, this.epoch, !reconnect);
+        await this.afterConnect(await this.settings(), sites, this.epoch, resume);
       } catch {
         await this.save({ status: { state: 'failed' } }).catch(() => undefined);
       }
     });
-    return {
-      ok: true,
-      email: me.account.email,
-      ...(me.organization ? { organization: me.organization.name } : {}),
-      ...(flow.opener === undefined ? {} : { opener: flow.opener }),
-    };
   }
   // Use added sites only: records added-sites mode, then removes the all-sites grant, which takes the added sites'
   // grants too. The popup requests those again in the same click; Chrome restores them without a prompt, since it
@@ -956,29 +1032,6 @@ class Connection {
     await this.save({ status: { state: 'empty' } });
     await this.saveSettings({ ...settings, mode: 'sites' });
     await this.removeAllSites();
-    return await this.status();
-  }
-  // Deletes the uploaded copy with the bearer token, which also disconnects this browser on the server; never
-  // /oauth2/revoke, which the server refuses for the extension. Local state goes whatever the server says.
-  private async disconnect(): Promise<Response> {
-    await this.disable();
-    let deleted = false;
-    try {
-      if (await this.tokens()) {
-        const response = await this.call('/api/v1/captures', {
-          method: 'DELETE',
-          signal: AbortSignal.timeout(deleteTimeoutMs),
-        });
-        deleted = response !== 'reconnect' && response.ok;
-      }
-    } catch {
-      // Not confirmed, so reported below.
-    } finally {
-      await this.api.storage.local.remove(this.key(tokensKey));
-      await this.host.badge();
-      if (!deleted) await this.saveSync({ state: 'delete_failed' });
-      await this.removeAccess();
-    }
     return await this.status();
   }
   // Opening the popup or the setup tab fetches the account's settings.
@@ -1070,6 +1123,7 @@ class Connection {
       return { ok: false, error: 'permission_required' };
     }
     if (synced === 'reconnect') await this.toReconnect();
+    if (synced === 'removed') await this.removed();
     return await this.status();
   }
 }
@@ -1080,6 +1134,8 @@ export class CaptureController {
   // The stored list, read at startup and kept in step with storage; and each connection's live state.
   private entries: ConnectionEntry[] = [];
   private readonly live = new Map<string, Connection>();
+  private readonly servers = new Map<string, Server>();
+  private selectedId: string | undefined;
   private readonly host: Host;
   constructor(
     private readonly api: CaptureBrowser,
@@ -1106,7 +1162,12 @@ export class CaptureController {
       ],
       badge: () => this.badge(),
       startFlow: (flow, from) => this.startFlow(flow, from),
-      rename: (connection, organization) => this.rename(connection, organization),
+      server: origin => this.server(origin),
+      endTokens: origin => this.endTokens(origin),
+      organizationsChanged: origin => {
+        void this.enqueue(() => this.refreshOrganizations(origin)).catch(() => undefined);
+      },
+      signOut: origin => this.signOut(origin),
     };
     this.ready = this.initialize();
   }
@@ -1120,54 +1181,63 @@ export class CaptureController {
     for (const connection of this.connections()) await connection.initialize();
     await this.badge();
   }
-  // An install from before connections keeps its one connection as the first, without reconnecting: its keys move
-  // to the connection's names, and its periodic capture to the connection's alarm.
+  // An install from before accounts starts fresh: its connections and their keys go, keeping Chrome's grants, so the
+  // person signs in once and each organization's sites come back from the server.
   private async migrate() {
-    const local = await this.api.storage.local.get([connectionsKey, ...connectionKeys]);
-    const legacy = connectionKeys.filter(key => local[key] !== undefined);
+    const local = await this.api.storage.local.get(null);
     const stored = local[connectionsKey];
-    if (Array.isArray(stored)) {
-      this.entries = stored.filter(isEntry);
-      // Left behind by a migration that stopped before removing them.
-      if (legacy.length) await this.api.storage.local.remove(legacy);
+    if (local[layoutKey] === layout) {
+      this.entries = Array.isArray(stored) ? stored.filter(isEntry) : [];
+      const selected = local[selectedKey];
+      if (typeof selected === 'string') this.selectedId = selected;
       return;
     }
-    if (!legacy.length) return;
-    const entry: ConnectionEntry = { id: crypto.randomUUID(), origin: this.serverOrigin };
-    const record = (await this.api.storage.session.get(recordKey))[recordKey];
-    if (record !== undefined) await this.api.storage.session.set({ [keyOf(recordKey, entry.id)]: record });
-    // One write, so the list never exists without the connection's keys.
-    await this.api.storage.local.set({
-      ...Object.fromEntries(legacy.map(key => [keyOf(key, entry.id), local[key]])),
-      [connectionsKey]: [entry],
-    });
-    this.entries = [entry];
-    await this.api.storage.local.remove(legacy);
-    await this.api.storage.session.remove(recordKey);
+    const entries = Array.isArray(stored) ? stored.filter(isEntry) : [];
+    const kept = new Set([latestVersionKey, refusedVersionKey]);
+    await this.api.storage.local.remove(Object.keys(local).filter(key => !kept.has(key)));
+    await this.api.storage.session.remove([recordKey, ...entries.map(entry => keyOf(recordKey, entry.id))]);
+    for (const entry of entries) await this.api.alarms.clear(alarmOf(entry.id));
     await this.api.alarms.clear(syncAlarm);
+    await this.api.storage.local.set({ [layoutKey]: layout });
   }
   private connection(entry: ConnectionEntry): Connection {
     let connection = this.live.get(entry.id);
     if (!connection) {
-      connection = new Connection(this.host, entry.id, entry.origin);
+      connection = new Connection(this.host, entry.id, entry.origin, entry.legacy ? undefined : entry.organization?.id);
       this.live.set(entry.id, connection);
     }
     return connection;
   }
-  private connections() {
-    return this.entries.map(entry => this.connection(entry));
+  private connections(origin?: string) {
+    return this.entries.filter(entry => origin === undefined || entry.origin === origin).map(e => this.connection(e));
   }
+  private server(origin: string): Server {
+    let server = this.servers.get(origin);
+    if (!server) {
+      server = new Server(this.host, origin);
+      this.servers.set(origin, server);
+    }
+    return server;
+  }
+  // The connection a request names, which the popup shows from then on; without one, the one it showed last, else the
+  // first.
   private find(id: string | undefined) {
-    const entry = id === undefined ? this.entries[0] : this.entries.find(each => each.id === id);
+    if (id !== undefined) {
+      const entry = this.entries.find(each => each.id === id);
+      if (entry) this.select(entry.id);
+      return entry && this.connection(entry);
+    }
+    const entry = this.entries.find(each => each.id === this.selectedId) ?? this.entries[0];
     return entry && this.connection(entry);
+  }
+  private select(id: string) {
+    if (this.selectedId === id) return;
+    this.selectedId = id;
+    void this.api.storage.local.set({ [selectedKey]: id }).catch(() => undefined);
   }
   private async saveEntries(entries: ConnectionEntry[]) {
     await this.api.storage.local.set({ [connectionsKey]: entries });
     this.entries = entries;
-  }
-  private async rename(id: string, organization: Organization) {
-    const entries = this.entries.map(entry => (entry.id === id ? { ...entry, organization } : entry));
-    if (JSON.stringify(entries) !== JSON.stringify(this.entries)) await this.saveEntries(entries);
   }
   private async others(id: string) {
     const sites = new Set<string>();
@@ -1181,12 +1251,83 @@ export class CaptureController {
     }
     return { sites, all };
   }
-  // A connection waiting for Reconnect marks the toolbar icon.
+  // A server waiting for Reconnect marks the toolbar icon.
   private async badge() {
     let reconnect = false;
-    for (const connection of this.connections())
-      if ((await connection.settings()).connected && !(await connection.tokens())) reconnect = true;
+    for (const origin of new Set(this.entries.map(entry => entry.origin)))
+      if (!(await this.server(origin).tokens())) reconnect = true;
     await this.api.action.setBadgeText({ text: reconnect ? '!' : '' }).catch(() => undefined);
+  }
+  private async endTokens(origin: string) {
+    await this.api.storage.local.remove(keyOf(tokensKey, origin));
+    for (const connection of this.connections(origin)) await connection.tokensEnded();
+    await this.badge();
+  }
+  // Brings a server's connections in line with the account's organizations: one for each, named as the server names
+  // it now, and none for an organization the account has left. `keep` is what a sign-in in progress was granted for.
+  private async syncOrganizations(
+    origin: string,
+    me: Pick<Me, 'organizations' | 'legacy'>,
+    keep?: { sites: string[]; all: boolean },
+  ) {
+    const added: Connection[] = [];
+    const entries = this.entries.filter(entry => entry.origin !== origin);
+    const ours = this.entries.filter(entry => entry.origin === origin);
+    for (const organization of me.legacy && !me.organizations.length ? [undefined] : me.organizations) {
+      const found = ours.find(entry => entry.organization?.id === organization?.id && !!entry.legacy === me.legacy);
+      const entry: ConnectionEntry = {
+        id: found?.id ?? crypto.randomUUID(),
+        origin,
+        ...(organization ? { organization } : {}),
+        ...(me.legacy ? { legacy: true as const } : {}),
+      };
+      entries.push(entry);
+      if (!found) added.push(this.connection(entry));
+    }
+    const gone = ours.filter(entry => !entries.some(each => each.id === entry.id)).map(e => this.connection(e));
+    // Unlisted first, so their grants count as unused.
+    await this.saveEntries(entries);
+    for (const connection of gone) {
+      await connection.forget(keep);
+      this.live.delete(connection.id);
+    }
+    return added;
+  }
+  // Fetches a server's organizations again, after a request named one the account has left.
+  private async refreshOrganizations(origin: string) {
+    const me = await this.server(origin).me();
+    if (me && me !== 'reconnect') for (const added of await this.syncOrganizations(origin, me)) await added.joined();
+  }
+  // Sign out: deletes what this browser uploaded to every organization on the server, with the bearer token, which
+  // also signs the browser out there; never /oauth2/revoke, which the server refuses for the extension. Every
+  // connection on the server goes, with the grants no other server's connections use, whatever the server says.
+  private async signOut(origin: string) {
+    const server = this.server(origin);
+    for (const connection of this.connections(origin)) connection.interrupt();
+    let deleted = false;
+    try {
+      if (await server.tokens()) {
+        const response = await server.call('/api/v1/captures', {
+          method: 'DELETE',
+          signal: AbortSignal.timeout(deleteTimeoutMs),
+        });
+        deleted = response !== 'reconnect' && response.ok;
+      } else deleted = true;
+    } catch {
+      // Not confirmed, so reported below.
+    } finally {
+      await this.api.storage.local.remove([keyOf(tokensKey, origin), keyOf(accountKey, origin)]);
+      const gone = this.connections(origin);
+      // Unlisted first, so their grants count as unused.
+      await this.saveEntries(this.entries.filter(entry => entry.origin !== origin));
+      for (const connection of gone) {
+        await connection.forget();
+        this.live.delete(connection.id);
+      }
+      if (!deleted) await this.api.storage.local.set({ [signOutFailedKey]: origin });
+      else await this.api.storage.local.remove(signOutFailedKey);
+      await this.badge();
+    }
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const result = this.tail.then(() => this.ready).then(work);
@@ -1249,7 +1390,13 @@ export class CaptureController {
     const connections = await Promise.all(this.entries.map(entry => this.connection(entry).summary(entry)));
     // A connect flow is waiting for the server's tab.
     const connecting = (await this.flow()) ? { connecting: true as const } : {};
-    return { ...response, connections, ...connecting };
+    const failed = (await this.api.storage.local.get(signOutFailedKey))[signOutFailedKey];
+    return {
+      ...response,
+      connections,
+      ...connecting,
+      ...(typeof failed === 'string' ? { signOutFailed: failed } : {}),
+    };
   }
   private async blank(): Promise<StatusResponse> {
     const latest = (await this.api.storage.local.get(latestVersionKey))[latestVersionKey];
@@ -1271,7 +1418,7 @@ export class CaptureController {
   }
 
   // `context.tab` is the sender's tab, which a connect tab returns to. A request acts on the connection it names, or
-  // the first; `another` connects whichever organization the server names.
+  // the one the popup showed last; `another` signs in to a server (the build's, or the one it names).
   async handle(
     input: unknown,
     context: { tab?: number | undefined } = {},
@@ -1316,7 +1463,7 @@ export class CaptureController {
           return await this.status(another ? undefined : this.find(named));
         }
         if (request.type === 'finish') return await this.finish(context);
-        // Connecting another organization, or the first.
+        // Signing in to a server, before any connection or beside them.
         const connection = another ? undefined : this.find(named);
         if (named !== undefined && !another && !connection) return { ok: false, error: 'invalid_request' };
         if (!connection) {
@@ -1332,14 +1479,20 @@ export class CaptureController {
           }
           return { ok: false, error: 'permission_required' };
         }
-        // Opening the popup or the setup tab fetches every connection's settings, for the list, and names connections
-        // from before connections had names.
-        if (request.type === 'check')
-          for (const entry of this.entries) {
-            const each = this.connection(entry);
-            if (each !== connection) await each.check(await each.settings());
-            if (!entry.organization && (await each.tokens())) await each.name();
-          }
+        // Sign out of the connection's server, which every connection on it shares.
+        if (request.type === 'disconnect') {
+          await this.signOut(connection.origin);
+          return await this.status(this.find(undefined));
+        }
+        // Opening the popup or the setup tab fetches each server's organizations and every connection's settings.
+        if (request.type === 'check') {
+          for (const origin of new Set(this.entries.map(entry => entry.origin)))
+            if (await this.server(origin).tokens()) await this.refreshOrganizations(origin);
+          for (const each of this.connections()) if (each !== connection) await each.check(await each.settings());
+          const current = this.find(undefined);
+          if (current && current !== connection) return await this.status(current);
+          if (!current) return await this.status(undefined);
+        }
         return await this.withList(
           await connection.handle(
             request,
@@ -1371,7 +1524,7 @@ export class CaptureController {
     }
     return await this.withList(await connection.finish(pending, context, connection.epoch));
   }
-  // A flow for whichever organization the person acts in on the server's website: the build's, or `origin`.
+  // Signing in to a server: the build's, or `origin`.
   private async connectAnother(
     mode: CaptureMode,
     sites: string[],
@@ -1472,9 +1625,10 @@ export class CaptureController {
   }
   // The redirect page's code. Only the state of a flow this extension started, from that flow's server (`iss`), and
   // each verifier once: the server revokes the tokens a replayed code issued. Nothing is written until /me names the
-  // account, so an unknown account never is. The organization /me names picks the connection: the one already
-  // connected to it on that server, else the flow's own connection if it has no organization yet (an install from
-  // before connections, or a server that names none), else a new one.
+  // account, so an unknown account never is. A different account than the one signed in there before starts fresh:
+  // that account's connections go. The account's organizations become the server's connections, and the flow lands
+  // in the one its click came from (Reconnect, or syncing there again), else the account's first, which the popup
+  // shows from then on.
   private async exchange(url: string): Promise<Response | ExchangeResponse> {
     const redirect = readRedirect(url, this.redirectUri);
     if (!redirect) return { ok: false, error: 'invalid_request' };
@@ -1494,9 +1648,11 @@ export class CaptureController {
     if (typeof result !== 'object') return { ok: false, error: 'unavailable' };
     const { tokens } = result;
     const me = await meAt(this.api.fetch, origin, tokens.access);
-    if (!me) {
-      // Best effort: the server lists the browser from its code exchange, so this disconnects it. If this fails too,
-      // the account page lists it until it is disconnected there or unused for 30 days.
+    // A server from before accounts may name no organization; one that lists them lists at least one, since it
+    // refuses to connect someone in none.
+    if (!me || (!me.legacy && !me.organizations.length)) {
+      // Best effort: the server knows the browser from its code exchange, so this signs it out. If this fails too, the
+      // server forgets it once unused for 30 days.
       await this.api
         .fetch(`${origin}/api/v1/captures`, {
           method: 'DELETE',
@@ -1507,20 +1663,38 @@ export class CaptureController {
         .catch(() => undefined);
       return { ok: false, error: 'unavailable' };
     }
-    // Connections on this server not named yet are asked first, so a connected organization is found again.
-    if (me.organization)
-      for (const entry of this.entries)
-        if (entry.origin === origin && !entry.organization) await this.connection(entry).name();
-    const organization = me.organization?.id;
-    let entry =
-      this.entries.find(each => each.origin === origin && each.organization?.id === organization) ??
-      this.entries.find(each => each.id === flow.connection && each.origin === origin && !each.organization);
-    if (!entry) {
-      entry = { id: crypto.randomUUID(), origin };
-      await this.saveEntries([...this.entries, entry]);
+    const server = this.server(origin);
+    const previous = await server.account();
+    // What this flow's click was granted, which a different account's connections leave in place. Reconnect is
+    // granted nothing.
+    const keep = { sites: flow.sites, all: !flow.reconnect && flow.mode === 'all' };
+    if (previous?.id !== me.account.id) {
+      const gone = this.connections(origin);
+      await this.saveEntries(this.entries.filter(entry => entry.origin !== origin));
+      for (const connection of gone) {
+        await connection.forget(keep);
+        this.live.delete(connection.id);
+      }
     }
-    if (me.organization) await this.rename(entry.id, me.organization);
-    return await this.connection(entry).connected(flow, tokens, me);
+    await this.api.storage.local.set({ [keyOf(tokensKey, origin)]: tokens, [keyOf(accountKey, origin)]: me.account });
+    await this.api.storage.local.remove(signOutFailedKey);
+    await this.syncOrganizations(origin, me, keep);
+    const ours = this.entries.filter(entry => entry.origin === origin);
+    const landing =
+      ours.find(entry => entry.id === flow.connection) ||
+      ours.find(entry => entry.organization?.id === me.first) ||
+      ours[0]!;
+    this.select(landing.id);
+    for (const connection of this.connections(origin))
+      if (connection.id === landing.id) await connection.connected(flow);
+      else await connection.joined();
+    await this.badge();
+    return {
+      ok: true,
+      email: me.account.email,
+      ...(landing.organization ? { organization: landing.organization.name } : {}),
+      ...(flow.opener === undefined ? {} : { opener: flow.opener }),
+    };
   }
 }
 

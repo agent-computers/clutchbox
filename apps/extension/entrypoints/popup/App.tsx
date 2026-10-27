@@ -1,15 +1,15 @@
 import { type CaptureRequest, type StatusResponse, siteName, siteOfInput } from '@agent-computers/capture';
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { allSitesOffered, distribution } from '../../src/build';
 import { serverOrigin } from '../../src/server';
 import { Badge } from '../../src/ui/components/badge';
 import { Button } from '../../src/ui/components/button';
 import { Input } from '../../src/ui/components/input';
-import { Connections, connectionName } from '../../src/ui/connections';
+import { Connections, connectionName, otherHost, receives } from '../../src/ui/connections';
 import { AllSitesDisclosure, SitesDisclosure } from '../../src/ui/disclosures';
 import { SuggestedSites } from '../../src/ui/suggested-sites';
-import { hint, SyncStatus, syncMessage } from '../../src/ui/sync-status';
+import { hint, SyncStatus } from '../../src/ui/sync-status';
 import { pendingMessage, useCaptureActions } from '../../src/ui/use-capture-actions';
 
 // Opening the popup grants activeTab, which is what lets it read the current tab's address.
@@ -29,10 +29,8 @@ export function App() {
   const [view, setView] = useState<'home' | 'add' | 'settings'>('home');
   const [allSitesOpen, setAllSitesOpen] = useState(false);
   const [site, setSite] = useState('');
-  // The connection the popup acts on (the first until one is picked), or connecting another organization, from when
-  // the list held `before`.
+  // The connection the popup acts on: the one it showed last until one is picked.
   const [selected, setSelected] = useState<string>();
-  const [another, setAnother] = useState<{ before: string[] }>();
   const {
     status,
     config,
@@ -49,22 +47,16 @@ export function App() {
     connect,
     reconnect,
     addedSitesOnly,
-  } = useCaptureActions({ connection: selected, another: !!another, onGranted: () => setAllSitesOpen(false) });
+  } = useCaptureActions({ connection: selected, onGranted: () => setAllSitesOpen(false) });
   const { data: tabSite = null } = useQuery({ queryKey: ['tab'], queryFn: currentSite, staleTime: Infinity });
   const connections = status?.connections ?? [];
-  // Once connecting another organization adds a connection, the popup acts on it. Connecting one already connected
-  // adds none, and the popup stays until it is closed.
-  const added = another && connections.find(each => !another.before.includes(each.id));
-  useEffect(() => {
-    if (!added) return;
-    setSelected(added.id);
-    setAnother(undefined);
-  }, [added]);
   const origin = status?.origin ?? serverOrigin;
   const current = connections.find(each => each.id === status?.connection);
+  // Signed in to an account: the popup shows one of its organizations, and the disclosure never again.
+  const signedIn = current !== undefined;
 
   const settings = status?.settings;
-  const connected = !another && (settings?.connected ?? false);
+  const connected = signedIn && (settings?.connected ?? false);
   const paused = settings?.paused ?? false;
   const allSites = connected && settings?.mode === 'all';
   const sites = settings?.sites ?? [];
@@ -92,9 +84,12 @@ export function App() {
   };
   const select = (connection: string) => {
     setSelected(connection);
-    setAnother(undefined);
+    setView('home');
     setAllSitesOpen(false);
   };
+  // The other organizations this site syncs to.
+  const elsewhere = (site: string) =>
+    connections.filter(each => each.id !== current?.id && receives(each, site)).map(connectionName);
 
   const allSitesDisclosure = (
     <AllSitesDisclosure disabled={busy || pending || !status} onAgree={() => connect('all')} />
@@ -103,8 +98,16 @@ export function App() {
   return (
     <main className="mx-auto grid w-[400px] max-w-full gap-5 p-5 font-sans text-sm leading-relaxed">
       <header className="flex items-center justify-between gap-3">
-        <span className="font-serif text-lg font-medium italic">clutchbox</span>
-        {!connected ? (
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="font-serif text-lg font-medium italic">clutchbox</span>
+          {current && (
+            <span className="truncate font-medium" title={otherHost(current) || undefined}>
+              {connectionName(current)}
+              {otherHost(current) && <span className="text-muted-foreground"> · {otherHost(current)}</span>}
+            </span>
+          )}
+        </span>
+        {!signedIn ? (
           <Badge variant="outline" className="text-muted-foreground">
             Preview
           </Badge>
@@ -145,25 +148,36 @@ export function App() {
           )}
         </aside>
       )}
+      {status?.signOutFailed && (
+        <p className="rounded-lg bg-muted p-3 text-[13px] text-destructive" role="status">
+          Signed out, but {new URL(status.signOutFailed).host} didn't confirm it deleted what this browser synced. Use
+          Delete everything on its Browser sync page.
+        </p>
+      )}
       {view === 'home' && (
         <Connections
           connections={connections}
           selected={status?.connection}
-          another={!!another}
           site={tabSite}
           disabled={busy}
           onSelect={select}
-          onAnother={() => {
-            setAnother({ before: connections.map(each => each.id) });
-            setAllSitesOpen(false);
-          }}
         />
       )}
-      {!connected ? (
+      {signedIn && !connected && view === 'home' ? (
+        <section className="grid justify-items-start gap-2 rounded-lg bg-card p-4" aria-label="Not syncing">
+          <p className="text-foreground">
+            {status?.sync.state === 'removed'
+              ? `${connectionName(current)} removed this browser on its Browser sync page, or turned sync off there.`
+              : `This browser no longer allows all sites, so it stopped syncing to ${connectionName(current)}.`}
+          </p>
+          <Button size="sm" disabled={busy || pending} onClick={() => connect('sites')}>
+            Sync to {connectionName(current)} again
+          </Button>
+          <p className={hint}>Syncs the sites you add for {connectionName(current)}.</p>
+        </section>
+      ) : !signedIn ? (
         <Connect
           status={status}
-          another={!!another}
-          onCancel={() => setAnother(undefined)}
           tabSite={tabSite}
           busy={busy}
           pending={pending}
@@ -222,6 +236,9 @@ export function App() {
                     <span className="text-[13px] text-foreground">Synced</span>
                   )}
                 </div>
+                {!blocked(tabSite) && elsewhere(tabSite).length > 0 && (
+                  <p className={hint}>Also syncs to {elsewhere(tabSite).join(', ')}.</p>
+                )}
                 {blocked(tabSite) ? (
                   <p className={hint}>{blocked(tabSite)}</p>
                 ) : allSites ? (
@@ -325,11 +342,9 @@ export function App() {
   );
 }
 
+// Signing in to an account, shown only until the browser is signed in to one.
 function Connect(props: {
   status: StatusResponse | undefined;
-  // Connecting another organization rather than this connection.
-  another: boolean;
-  onCancel: () => void;
   tabSite: string | null;
   busy: boolean;
   // A click elsewhere is waiting for Chrome's prompt.
@@ -341,10 +356,7 @@ function Connect(props: {
   allSitesDisclosure: ReactNode;
   onRemoveAccess: () => void;
 }) {
-  const { status, tabSite, busy, pending, canAdd, another } = props;
-  const saved = another ? 0 : (status?.settings.sites.length ?? 0);
-  const syncState = another ? undefined : status?.sync.state;
-  const current = status?.connections.find(each => each.id === status.connection);
+  const { status, tabSite, busy, pending, canAdd } = props;
   return (
     <>
       <h1 className="font-heading text-[32px] leading-[1.05] font-medium tracking-[-0.015em]">
@@ -357,37 +369,20 @@ function Connect(props: {
         </Button>
         <p className={hint}>
           {status?.connecting
-            ? 'Finish connecting in the Clutchbox tab.'
-            : another
-              ? 'Opens Clutchbox in a tab. It connects the organization you are using there, so switch to the one you want first.'
-              : current
-                ? `Connects ${connectionName(current)} again. Opens Clutchbox in a tab, where you sign in if needed.`
-                : 'Opens Clutchbox in a tab, where you sign in if needed.'}
+            ? 'Finish signing in in the Clutchbox tab.'
+            : 'Opens Clutchbox in a tab, where you sign in. Then add sites for each of your organizations here.'}
         </p>
-        <div className="flex gap-4">
+        <div>
           {/* The setup tab has room for the address and the warning other servers need. */}
-          {(another || !current) && (
-            <Button
-              variant="link"
-              className="h-auto px-0"
-              disabled={busy}
-              onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('/setup.html#server') })}
-            >
-              Another server…
-            </Button>
-          )}
-          {another && (
-            <Button variant="link" className="h-auto px-0" disabled={busy} onClick={props.onCancel}>
-              Cancel
-            </Button>
-          )}
+          <Button
+            variant="link"
+            className="h-auto px-0"
+            disabled={busy}
+            onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('/setup.html#server') })}
+          >
+            Another server…
+          </Button>
         </div>
-        {saved > 0 && (
-          <p className={hint}>
-            Also restores the {saved === 1 ? 'site' : `${saved} sites`} you added before, if you connect to the same
-            account.
-          </p>
-        )}
         {allSitesOffered && (
           <div>
             <Button
@@ -402,10 +397,9 @@ function Connect(props: {
         )}
       </div>
       {props.allSitesOpen && props.allSitesDisclosure}
-      {syncState === 'delete_failed' && status && <p className={hint}>{syncMessage(status.sync)}</p>}
-      {!another && status?.permissionGranted && (
+      {status?.permissionGranted && (
         <div className="grid justify-items-start gap-2">
-          <p className={hint}>Your browser still grants access, but sync is disconnected.</p>
+          <p className={hint}>Your browser still grants access, but this browser is signed out.</p>
           <Button variant="secondary" disabled={busy} onClick={props.onRemoveAccess}>
             Remove browser access
           </Button>
@@ -429,6 +423,11 @@ function Settings(props: {
   const { sites, excludedDomains } = status.settings;
   const current = status.connections.find(each => each.id === status.connection);
   const name = current ? connectionName(current) : 'this organization';
+  const [confirm, setConfirm] = useState(false);
+  // Every organization on this server, which Sign out stops syncing to.
+  const signedOut = status.connections.filter(each => each.origin === status.origin).map(connectionName);
+  const host = new URL(status.origin).host;
+  const email = status.account.state === 'none' ? undefined : status.account.email;
   return (
     <>
       <section className="grid justify-items-start gap-3" aria-labelledby="manage-heading">
@@ -470,15 +469,45 @@ function Settings(props: {
             </div>
           )
         )}
-        <div className="grid justify-items-start gap-2">
-          <Button variant="secondary" disabled={busy} onClick={() => run({ type: 'disconnect' })}>
-            Disconnect
-          </Button>
-          <p className={hint}>
-            Disconnects {name} only: deletes its local and uploaded copies and removes the browser access no other
-            organization uses. It does not sign you out of websites or Clutchbox. Added sites and exclusions are kept.
-          </p>
-        </div>
+      </section>
+
+      <section className={section} aria-labelledby="account-heading">
+        <h2 id="account-heading" className={heading}>
+          Account
+        </h2>
+        <p className={hint}>
+          {email ? `Signed in as ${email} on ${host}. ` : `Signed in on ${host}. `}
+          Sites and exclusions are {name}'s own; switch organizations above.
+        </p>
+        {confirm ? (
+          <div className="grid justify-items-start gap-2 rounded-lg bg-muted p-3">
+            <p className="text-foreground">
+              Sign out of Clutchbox in this browser? Your agents lose the sign-ins it synced to {signedOut.join(', ')}.
+              It does not sign you out of websites.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="destructive" size="sm" disabled={busy} onClick={() => run({ type: 'disconnect' })}>
+                Sign out
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" disabled={busy} onClick={() => setConfirm(true)}>
+              Sign out
+            </Button>
+            <Button
+              variant="link"
+              className="h-auto px-0"
+              onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL('/setup.html#server') })}
+            >
+              Another server…
+            </Button>
+          </div>
+        )}
       </section>
 
       <footer className="grid gap-2 border-t pt-4 text-xs text-muted-foreground">

@@ -34,9 +34,8 @@ export const pendingMessage =
 
 // Another server to connect to, and whether the person agreed to its warning.
 export type ServerChoice = { origin: string; warned?: true };
-// The worker's status and the actions the popup and the setup tab share, for one connection: `connection`, or the first
-// without one. With `another`, connecting connects whichever organization the person acts in on the server's website,
-// the build's or `server`, adding a connection unless it is already connected.
+// The worker's status and the actions the popup and the setup tab share, for one connection: `connection`, or the one
+// the popup showed last without one. With `another`, connecting signs in to a server, the build's or `server`.
 export function useCaptureActions({
   connection,
   another = false,

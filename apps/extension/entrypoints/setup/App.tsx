@@ -1,10 +1,10 @@
 import type { ServerResponse } from '@agent-computers/capture';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { allSitesOffered } from '../../src/build';
 import { serverOrigin } from '../../src/server';
 import { AnotherServer, ServerWarning } from '../../src/ui/another-server';
 import { Button } from '../../src/ui/components/button';
-import { Connections, connectionName } from '../../src/ui/connections';
+import { Connections, connectionName, otherHost } from '../../src/ui/connections';
 import { AllSitesDisclosure, SitesDisclosure } from '../../src/ui/disclosures';
 import { SuggestedSites } from '../../src/ui/suggested-sites';
 import { hint, SyncStatus, syncMessage } from '../../src/ui/sync-status';
@@ -12,12 +12,12 @@ import { pendingMessage, type ServerChoice, useCaptureActions } from '../../src/
 
 const heading = 'font-heading text-2xl font-medium';
 
-// The tab that opens on install: agree and connect, then add sites from the suggestions. `#server` (from the popup)
-// opens Connect to another server.
+// The tab that opens on install: agree and sign in, then add sites from the suggestions. `#server` (from the popup)
+// opens signing in to another server.
 export function App() {
   const [allSitesOpen, setAllSitesOpen] = useState(false);
-  // As in the popup: the connection this tab acts on, or connecting another organization, on the build's server or
-  // `server`.
+  // As in the popup: the connection this tab acts on; or signing in to another server, from when the list held
+  // `before`.
   const [selected, setSelected] = useState<string>();
   const [another, setAnother] = useState<{ before: string[]; server?: ServerChoice; name?: string }>();
   const [serverOpen, setServerOpen] = useState(() => location.hash === '#server');
@@ -37,6 +37,13 @@ export function App() {
     setSelected(added.id);
     setAnother(undefined);
   }, [added]);
+  // Opened at signing in to another server: once the connections are known, so the ones it adds can be told apart.
+  const opening = useRef(location.hash === '#server');
+  useEffect(() => {
+    if (!opening.current || !status) return;
+    opening.current = false;
+    setAnother({ before: status.connections.map(each => each.id) });
+  }, [status]);
   const origin = another?.server?.origin ?? status?.origin ?? serverOrigin;
   const before = connections.map(each => each.id);
   const chooseServer = ({ origin: chosen, trust, name }: ServerResponse) => {
@@ -52,11 +59,10 @@ export function App() {
   const host = new URL(origin).host;
   const current = connections.find(each => each.id === status?.connection);
   const settings = status?.settings;
-  const connected = !another && (settings?.connected ?? false);
+  const signedIn = !another && current !== undefined;
+  const connected = signedIn && (settings?.connected ?? false);
   const allSites = connected && settings?.mode === 'all';
   const sites = settings?.sites ?? [];
-  const saved = connected || another ? 0 : sites.length;
-  const syncState = another ? undefined : status?.sync.state;
 
   const header = (
     <header>
@@ -85,42 +91,53 @@ export function App() {
         Keep your agents signed in.
       </h1>
 
-      <Connections
-        connections={connections}
-        selected={status?.connection}
-        another={!!another}
-        disabled={busy}
-        onSelect={connection => {
-          setSelected(connection);
-          setAnother(undefined);
-        }}
-        onAnother={() => setAnother({ before })}
-      />
-      {status && connected && <SyncStatus status={status} busy={busy} onReconnect={reconnect} />}
-      {!connected && syncState === 'delete_failed' && status && <p className={hint}>{syncMessage(status.sync)}</p>}
+      {!another && (
+        <Connections connections={connections} selected={status?.connection} disabled={busy} onSelect={setSelected} />
+      )}
+      {status && signedIn && <SyncStatus status={status} busy={busy} onReconnect={reconnect} />}
+      {signedIn && !connected && status && <p className={hint}>{syncMessage(status.sync)}</p>}
 
       <section className="grid gap-3" aria-labelledby="agree-heading">
         <h2 id="agree-heading" className={heading}>
           Browser sync
         </h2>
         <SitesDisclosure />
-        {connected ? (
-          <p className="text-foreground">Connected{current ? ` to ${connectionName(current)}` : ''}</p>
+        {signedIn ? (
+          <div className="grid justify-items-start gap-2">
+            <p className="text-foreground">
+              {connected ? 'Syncing' : 'Not syncing'} to {current ? connectionName(current) : 'Clutchbox'}
+              {current && otherHost(current) ? ` on ${otherHost(current)}` : ''}.
+            </p>
+            {!connected && (
+              <Button disabled={busy || pending} onClick={() => connect('sites')}>
+                Sync here again
+              </Button>
+            )}
+            <Button
+              variant="link"
+              className="h-auto px-0"
+              disabled={busy || pending}
+              onClick={() => {
+                setAnother({ before });
+                setServerOpen(true);
+              }}
+            >
+              Sign in to another server…
+            </Button>
+          </div>
         ) : (
           <div className="grid justify-items-start gap-2">
             <Button size="lg" disabled={busy || pending || !status} onClick={() => connect('sites')}>
               Agree and connect
             </Button>
             {status?.connecting ? (
-              <p className={hint}>Finish connecting in the server's tab.</p>
+              <p className={hint}>Finish signing in in the server's tab.</p>
             ) : (
-              another && (
-                <p className={hint}>
-                  Connects the organization you are using on{' '}
-                  {another.server ? `${host}${another.name ? ` (verified as ${another.name})` : ''}` : 'Clutchbox'}, so
-                  switch to the one you want there first.
-                </p>
-              )
+              <p className={hint}>
+                Signs in to{' '}
+                {another?.server ? `${host}${another.name ? ` (verified as ${another.name})` : ''}` : 'Clutchbox'}. Then
+                add sites for each of your organizations there.
+              </p>
             )}
             <Button
               variant="link"
@@ -128,14 +145,13 @@ export function App() {
               disabled={busy || pending}
               onClick={() => setServerOpen(open => !open)}
             >
-              {another?.server ? 'Connect to a different server…' : 'Connect to another server…'}
+              {another?.server ? 'Sign in to a different server…' : 'Sign in to another server…'}
             </Button>
             {serverOpen && <AnotherServer disabled={busy || pending} onChoose={chooseServer} />}
-            {saved > 0 && (
-              <p className={hint}>
-                Also restores the {saved === 1 ? 'site' : `${saved} sites`} you added before, if you connect to the same
-                account.
-              </p>
+            {another && current && (
+              <Button variant="link" className="h-auto px-0" disabled={busy} onClick={() => setAnother(undefined)}>
+                Cancel
+              </Button>
             )}
           </div>
         )}
@@ -152,7 +168,7 @@ export function App() {
             <p className={hint}>
               {connected
                 ? 'Add the sites your agents should use. Your browser may ask you to allow each one.'
-                : 'Agree and connect first, then add the sites your agents should use.'}
+                : 'Agree and sign in first, then add the sites your agents should use.'}
             </p>
             <SuggestedSites
               config={config}

@@ -68,14 +68,18 @@ function setup(installed: { [key: string]: unknown } = {}) {
   const fetch = vi.fn(async (_url: string, init: RequestInit) =>
     init.method === 'DELETE' ? new Response(null, { status: 204 }) : accepted(),
   );
-  // GET /api/v1/me for the token's owner and the organization it acts in: the one the person acted in on the
-  // server's website when they connected (`acting`).
+  // GET /api/v1/me for the token's owner: every organization they belong to (`memberships`), the first one first,
+  // and the one a request naming none acts in, the one they acted in on the server's website when they connected
+  // (`acting`).
   const organizations: { [id: string]: string } = { 'org-a': 'Acme', 'org-b': 'Beta', 'org-x': 'Elsewhere' };
   const acting: { [user: string]: string } = { 'user-a': 'org-a', 'user-b': 'org-a' };
+  const memberships: { [user: string]: string[] } = { 'user-a': ['org-a'], 'user-b': ['org-a'] };
   const me = vi.fn(async (user: string, organization: string) =>
     answer(200, {
       user: { id: user, email: emails[user], name: 'A' },
       organization: { id: organization, name: organizations[organization] },
+      organizations: (memberships[user] ?? []).map(id => ({ id, name: organizations[id] })),
+      defaultOrganization: memberships[user]?.[0] ?? null,
     }),
   );
   // Each membership's sync settings (/api/v1/sync): a small fake of the server's rules. A person's membership in
@@ -200,11 +204,15 @@ function setup(installed: { [key: string]: unknown } = {}) {
     const caller = bearer(init, server);
     if (!caller) return failure(401, 'unauthenticated');
     if (url === `${server}/api/v1/me`) return me(caller.user, caller.organization);
-    if (url.startsWith(`${server}/api/v1/sync`)) return syncApi(url, init, memberOf(caller.user, caller.organization));
+    // Each request acts in the organization it names, which the person must belong to.
+    const named = (init.headers as { [name: string]: string } | undefined)?.['x-organization'];
+    if (named !== undefined && !memberships[caller.user]?.includes(named)) return failure(403, 'not_a_member');
+    const organization = named ?? caller.organization;
+    if (url.startsWith(`${server}/api/v1/sync`)) return syncApi(url, init, memberOf(caller.user, organization));
     const response = await fetch(url, init);
     if (init.method === 'POST' && response.ok)
-      received.push({ organization: caller.organization, capture: JSON.parse(String(init.body)).capture });
-    // DELETE /captures disconnects the browser that sent it.
+      received.push({ organization, capture: JSON.parse(String(init.body)).capture });
+    // DELETE /captures signs out the browser that sent it.
     if (url === `${server}/api/v1/captures` && init.method === 'DELETE' && response.ok) revoked.add(caller.family);
     return response;
   };
@@ -335,16 +343,19 @@ function setup(installed: { [key: string]: unknown } = {}) {
     account.settings = applySyncChange(account.settings!, change, 'server.test');
     return controller.handle({ type: 'check' });
   };
-  // The first connection's ID, and its stored values.
+  // The first connection's ID, and its stored values; the tokens and account are its server's.
   const first = () => (local[connectionsKey] as ConnectionEntry[])[0]!.id;
+  const perServer = (key: string) => key === tokensKey || key === accountKey;
   const named = (data: { [key: string]: unknown }) =>
-    Object.fromEntries(Object.entries(data).map(([key, value]) => [keyOf(key, first()), value]));
+    Object.fromEntries(
+      Object.entries(data).map(([key, value]) => [keyOf(key, perServer(key) ? origin : first()), value]),
+    );
   return {
     controller,
     restart,
     first,
     entries: () => (local[connectionsKey] as ConnectionEntry[] | undefined) ?? [],
-    stored: (key: string) => local[keyOf(key, first())],
+    stored: (key: string) => local[keyOf(key, perServer(key) ? origin : first())],
     record: () => session[keyOf(recordKey, first())],
     alarm: () => alarmOf(first()),
     write: (data: { [key: string]: unknown }) => api.storage.local.set(named(data)),
@@ -359,6 +370,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
     account,
     accounts,
     acting,
+    memberships,
     received,
     syncApi,
     requests,
@@ -603,12 +615,15 @@ describe('added sites', () => {
     for (const grant of siteGrants('capture.test')) test.grants.delete(grant);
     await test.controller.permissionsRemoved(siteGrants('capture.test'));
     expect(test.account.settings).toMatchObject({ sites: ['other.test'] });
+    // Signing out leaves no connection to reconnect.
     expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({
-      settings: { connected: false, mode: 'sites', sites: ['other.test'] },
+      connections: [],
+      settings: { connected: false },
+      account: { state: 'none' },
     });
-    expect(await test.controller.handle({ type: 'reconnect' })).toEqual({ ok: false, error: 'invalid_request' });
+    expect(await test.controller.handle({ type: 'reconnect' })).toEqual({ ok: false, error: 'permission_required' });
     for (const grant of siteGrants('capture.test')) test.grants.add(grant);
-    // Connecting again after Disconnect opens a tab, and the account keeps its sites.
+    // Signing in again opens a tab, and the organization keeps its sites.
     await test.controller.handle({ type: 'connect', mode: 'sites' });
     await test.authorize();
     expect(await test.drain()).toMatchObject({
@@ -740,14 +755,21 @@ describe('added sites', () => {
     for (const grant of siteGrants('other.test')) test.grants.add(grant);
     expect(await test.controller.permissionsAdded()).toMatchObject({ settings: { sites: ['capture.test'] } });
   });
-  it('keeps a whole-browser connection from before site selection as all sites', async () => {
+  it('starts an install from before accounts fresh, keeping its grants', async () => {
     const test = setup({
       [settingsKey]: { consentVersion: 1, connected: true, paused: false, excludedDomains: ['other.test'] },
+      [tokensKey]: { access: 'old', refresh: 'old', expiresAt: Date.now() + 3600_000 },
+      latestVersion: '9.9.9',
     });
     test.grant();
     expect(await test.controller.handle({ type: 'status' })).toMatchObject({
-      settings: { connected: true, mode: 'all', sites: [], excludedDomains: ['other.test'] },
+      connections: [],
+      settings: { connected: false, mode: 'sites', sites: [], excludedDomains: [] },
+      account: { state: 'none' },
+      permissionGranted: true,
     });
+    expect(test.local()).toEqual({ latestVersion: '9.9.9', storageLayout: 2 });
+    expect(test.grants.size).toBeGreaterThan(0);
   });
 });
 
@@ -884,7 +906,7 @@ describe('whole-browser authorization and lifecycle', () => {
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: false });
     expect(JSON.stringify(test.session())).not.toContain(cookie.value);
   });
-  it('disconnect removes all granted origins including old fixture grants, while retaining exclusions', async () => {
+  it('Sign out removes all granted origins including old fixture grants, while the account keeps its exclusions', async () => {
     const test = setup();
     await test.connect();
     test.grants.add('https://*.capture.test/*');
@@ -892,25 +914,29 @@ describe('whole-browser authorization and lifecycle', () => {
     await test.fromAccount({ excludedDomains: ['other.test'] });
     await test.controller.handle({ type: 'capture' });
     expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({
-      settings: { connected: false, excludedDomains: ['other.test'] },
+      connections: [],
+      settings: { connected: false },
       permissionGranted: false,
     });
     expect(test.grants.size).toBe(0);
+    // The organization keeps its exclusions for the next sign-in.
+    expect(test.account.settings).toMatchObject({ excludedDomains: ['other.test'] });
     expect(JSON.stringify(test.session())).not.toContain(cookie.value);
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: false });
   });
-  it('remains disconnected if Chrome permission removal fails', async () => {
+  it('signs out even if Chrome permission removal fails, offering to remove the access left', async () => {
     const test = setup();
     await test.connect();
     test.api.permissions.remove.mockRejectedValueOnce(new Error('removal failed'));
-    expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({ ok: false });
+    expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({ connections: [] });
     expect(await test.controller.handle({ type: 'capture' })).toMatchObject({ ok: false });
-    expect(test.stored(settingsKey)).toMatchObject({ connected: false });
-    expect(test.stored(tokensKey)).toBeUndefined();
+    expect(test.entries()).toEqual([]);
+    expect(test.local()[keyOf(tokensKey, origin)]).toBeUndefined();
     expect(await test.controller.handle({ type: 'status' })).toMatchObject({
       permissionGranted: true,
       settings: { connected: false },
     });
+    expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({ permissionGranted: false });
   });
   it('sanitizes schema/API errors and does not publish success on storage exhaustion', async () => {
     const test = setup();
@@ -1138,7 +1164,7 @@ describe('sync to the server', () => {
     expect(await test.controller.alarmFired(syncAlarm)).toEqual({ ok: false, error: 'paused' });
     expect(test.uploads()).toHaveLength(1);
   });
-  it('disconnect deletes the uploaded copy with the bearer token before removing access, and clears the tokens', async () => {
+  it('Sign out deletes the uploads with the bearer token before removing access, and forgets the server', async () => {
     const test = setup();
     await test.connect();
     await test.controller.handle({ type: 'capture' });
@@ -1165,32 +1191,39 @@ describe('sync to the server', () => {
     expect(grantedDuringDelete).toBe(true);
     // Never /oauth2/revoke, which the server refuses for the extension.
     expect(test.requests.map(({ url }) => url)).not.toContain(`${issuer}/oauth2/revoke`);
-    expect(test.stored(syncKey)).toBeUndefined();
-    expect(test.stored(tokensKey)).toBeUndefined();
-    expect(test.stored(accountKey)).toEqual({ id: 'user-a', email: 'a@example.test' });
+    // It names no organization: it signs the browser out of all of them.
+    expect(test.fetch.mock.lastCall![1].headers).not.toHaveProperty('x-organization');
+    expect(test.entries()).toEqual([]);
+    expect(Object.keys(test.local()).filter(key => key.includes(':'))).toEqual([]);
     expect(test.alarms.size).toBe(0);
     expect(test.badge()).toBe('');
   });
   it.each([
     ['network', () => Promise.reject(new TypeError('network'))],
     ['server error', async () => failure(500, 'internal')],
-  ] as const)('still disconnects when the server delete fails (%s), and says so', async (_name, outcome) => {
-    const test = setup();
-    await test.connect();
-    await test.controller.handle({ type: 'capture' });
-    test.fetch.mockImplementationOnce(outcome);
-    expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({
-      ok: true,
-      settings: { connected: false },
-      permissionGranted: false,
-      sync: { state: 'delete_failed' },
-    });
-    expect(test.stored(tokensKey)).toBeUndefined();
-    // Chrome's permissions.onRemoved follows the removal; the notice survives it.
-    await test.controller.permissionsRemoved();
-    expect(await test.controller.handle({ type: 'status' })).toMatchObject({ sync: { state: 'delete_failed' } });
-    expect(JSON.stringify(test.local())).not.toContain('digest');
-  });
+  ] as const)(
+    'still signs out when the server delete fails (%s), and says so until the next sign-in',
+    async (_name, outcome) => {
+      const test = setup();
+      await test.connect();
+      await test.controller.handle({ type: 'capture' });
+      test.fetch.mockImplementationOnce(outcome);
+      expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({
+        ok: true,
+        connections: [],
+        permissionGranted: false,
+        signOutFailed: origin,
+      });
+      expect(test.local()[keyOf(tokensKey, origin)]).toBeUndefined();
+      // Chrome's permissions.onRemoved follows the removal; the notice survives it.
+      await test.controller.permissionsRemoved();
+      expect(await test.controller.handle({ type: 'status' })).toMatchObject({ signOutFailed: origin });
+      expect(JSON.stringify(test.local())).not.toContain('digest');
+      await test.controller.handle({ type: 'connect', mode: 'sites' });
+      await test.authorize();
+      expect(await test.drain()).not.toHaveProperty('signOutFailed');
+    },
+  );
   it('sends the first upload after Connect with the reconnect flag, and never the exclusion list', async () => {
     const test = setup();
     await test.connect();
@@ -1203,7 +1236,7 @@ describe('sync to the server', () => {
     await test.controller.handle({ type: 'capture' });
     expect(JSON.parse(test.uploads()[1]![1].body as string)).not.toHaveProperty('connect');
   });
-  it('asks to reconnect when the server refuses the upload as disconnected, keeping grants and settings', async () => {
+  it('stops syncing to an organization that removed this browser, staying signed in, until it syncs there again', async () => {
     const test = setup();
     await test.connect();
     await test.controller.handle({ type: 'capture' });
@@ -1211,16 +1244,26 @@ describe('sync to the server', () => {
     test.fetch.mockResolvedValueOnce(failure(409, 'sync_disconnected'));
     expect(await test.controller.alarmFired(syncAlarm)).toMatchObject({
       ok: true,
-      settings: { connected: true, mode: 'all' },
-      account: { state: 'reconnect', email: 'a@example.test' },
-      permissionGranted: true,
-      capture: { state: 'empty' },
+      settings: { connected: false, mode: 'sites' },
+      sync: { state: 'removed' },
+      account: { state: 'syncing', email: 'a@example.test' },
+      permissionGranted: false,
+      capture: { state: 'revoked' },
     });
     expect(test.alarms.size).toBe(0);
-    expect(test.badge()).toBe('!');
-    expect(test.stored(tokensKey)).toBeUndefined();
+    expect(test.badge()).toBe('');
+    expect(test.stored(tokensKey)).toBeDefined();
     expect(JSON.stringify(test.session())).not.toContain(cookie.value);
     expect(test.fetch.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(0);
+    // Syncing there again needs no new sign-in, and its first upload lifts the removal.
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.handle({ type: 'connect', mode: 'sites' });
+    expect(test.api.tabs.create).toHaveBeenCalledTimes(1);
+    expect(await test.controller.handle({ type: 'sites', sites: ['capture.test'] })).toMatchObject({
+      settings: { connected: true, sites: ['capture.test'] },
+      sync: { state: 'synced' },
+    });
+    expect(JSON.parse(test.uploads().at(-1)![1].body as string)).toMatchObject({ connect: true });
   });
   it('discards a capture queued before Pause instead of uploading it after', async () => {
     const test = setup();
@@ -1304,19 +1347,17 @@ describe('sync to the server', () => {
 });
 
 describe("the account's settings", () => {
-  // A browser that connected to user-a before and kept its sites.
+  // Signing in with Agree and add <site>.
   async function withSites(sites: string[], account?: { sites: string[]; excludedDomains: string[]; paused: boolean }) {
-    const test = setup({
-      [settingsKey]: { consentVersion: 2, connected: false, paused: false, mode: 'sites', sites, excludedDomains: [] },
-      [accountKey]: { id: 'user-a', email: 'a@example.test' },
-    });
+    const test = setup();
     if (account) test.account.settings = account;
+    await test.controller.handle({ type: 'prepare', connect: 'sites', sites });
     for (const site of sites) for (const grant of siteGrants(site)) test.grants.add(grant);
-    await test.controller.handle({ type: 'connect', mode: 'sites' });
+    await test.controller.handle({ type: 'finish' });
     await test.authorize();
     return test;
   }
-  it("adopts this browser's sites when the account has none, and takes the account's otherwise", async () => {
+  it("adds the click's sites to the organization's, adopting them when it has none", async () => {
     const first = await withSites(['capture.test']);
     await first.drain();
     expect(first.account.settings).toEqual({ sites: ['capture.test'], excludedDomains: [], paused: false });
@@ -1326,12 +1367,11 @@ describe("the account's settings", () => {
       paused: false,
     });
     expect(await second.drain()).toMatchObject({
-      settings: { sites: ['capture.test'], excludedDomains: ['bank.test'] },
+      settings: { sites: ['capture.test', 'other.test'], excludedDomains: ['bank.test'] },
       ungrantedSites: ['capture.test'],
     });
-    // Its own site left with the account's settings, and lost its grant.
-    expect(second.grants.has(siteGrants('other.test')[0]!)).toBe(false);
-    expect(second.account.settings).toMatchObject({ sites: ['capture.test'] });
+    expect(second.grants.has(siteGrants('other.test')[0]!)).toBe(true);
+    expect(second.account.settings).toMatchObject({ sites: ['capture.test', 'other.test'] });
   });
   it('pauses when the account page pauses, and only this browser resumes', async () => {
     const test = setup();
@@ -1360,19 +1400,21 @@ describe("the account's settings", () => {
     expect(await test.controller.handle({ type: 'check' })).toMatchObject({ settings: { paused: true } });
     expect(test.account.settings).toMatchObject({ paused: true });
   });
-  it('asks to reconnect when the account page turns sync off, but not while connecting again', async () => {
+  it('stops syncing to the organization when its page turns sync off, but not while syncing there again', async () => {
     const test = setup();
     await test.connect();
     test.account.disconnected = true;
     // Connected and waiting for the first upload since Connect, which lifts it.
-    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ account: { state: 'syncing' } });
+    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ settings: { connected: true } });
     await test.controller.handle({ type: 'capture' });
     expect(await test.controller.handle({ type: 'check' })).toMatchObject({
-      settings: { connected: true },
-      account: { state: 'reconnect', email: 'a@example.test' },
-      permissionGranted: true,
+      settings: { connected: false },
+      sync: { state: 'removed' },
+      account: { state: 'syncing', email: 'a@example.test' },
+      permissionGranted: false,
     });
-    expect(test.grants.size).toBe(2);
+    expect(test.grants.size).toBe(0);
+    expect(test.stored(tokensKey)).toBeDefined();
   });
   it("uses the server's config within fixed bounds, and fetches settings again only when due", async () => {
     const test = setup();
@@ -1508,11 +1550,11 @@ describe('connecting', () => {
     const exchanged = await test.authorize();
     responses.push(exchanged);
     expect(exchanged).toEqual({ ok: true, email: 'a@example.test', organization: 'Acme', opener: 7 });
-    // Saved together, before the first upload.
+    // Saved before the first upload.
     expect(test.entries()).toEqual([{ id: test.first(), origin, organization: { id: 'org-a', name: 'Acme' } }]);
     expect(test.local()).toMatchObject({
-      [keyOf(tokensKey, test.first())]: { access: expect.any(String), refresh: expect.any(String) },
-      [keyOf(accountKey, test.first())]: { id: 'user-a', email: 'a@example.test' },
+      [keyOf(tokensKey, origin)]: { access: expect.any(String), refresh: expect.any(String) },
+      [keyOf(accountKey, origin)]: { id: 'user-a', email: 'a@example.test' },
       [keyOf(settingsKey, test.first())]: { connected: true, mode: 'all' },
       [keyOf(syncKey, test.first())]: { state: 'never', connect: true },
     });
@@ -1591,21 +1633,17 @@ describe('connecting', () => {
     expect(test.alarms.has(test.alarm())).toBe(false);
     expect(test.uploads()).toEqual([]);
   });
-  it('starts fresh for a different account: drops the previous sites and their grants, keeping the new ones', async () => {
-    const test = setup({
-      [settingsKey]: {
-        consentVersion: 2,
-        connected: false,
-        paused: false,
-        mode: 'sites',
-        sites: ['capture.test'],
-        excludedDomains: ['bank.test'],
-      },
-      [accountKey]: { id: 'user-a', email: 'a@example.test' },
-    });
-    for (const site of ['capture.test', 'other.test']) for (const grant of siteGrants(site)) test.grants.add(grant);
-    await test.controller.handle({ type: 'prepare', connect: 'sites', sites: ['other.test'] });
+  it('starts fresh when Reconnect lands in a different account: drops the previous connections and their grants', async () => {
+    const test = setup();
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.handle({ type: 'prepare', connect: 'sites', sites: ['capture.test'] });
     await test.controller.permissionsAdded();
+    await test.authorize();
+    await test.drain();
+    const previous = test.first();
+    test.revokeFamily();
+    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ account: { state: 'reconnect' } });
+    await test.controller.handle({ type: 'reconnect' });
     expect(await test.authorize('user-b')).toEqual({
       ok: true,
       email: 'b@example.test',
@@ -1613,16 +1651,14 @@ describe('connecting', () => {
       opener: 7,
     });
     expect(await test.drain()).toMatchObject({
-      settings: { connected: true, mode: 'sites', sites: ['other.test'], excludedDomains: [] },
+      settings: { connected: true, mode: 'sites', sites: [], excludedDomains: [] },
       account: { state: 'syncing', email: 'b@example.test' },
     });
+    expect(test.first()).not.toBe(previous);
+    expect(test.entries()).toHaveLength(1);
     expect(test.stored(accountKey)).toEqual({ id: 'user-b', email: 'b@example.test' });
-    expect(test.accounts['user-b']!.settings).toMatchObject({ sites: ['other.test'] });
-    expect([...test.grants]).toEqual(siteGrants('other.test'));
-    // Revoked only after the new settings were saved.
-    const saved = test.api.storage.local.set.mock.calls.findIndex(([data]) => keyOf(tokensKey, test.first()) in data);
-    const revokedAt = test.api.permissions.remove.mock.invocationCallOrder[0]!;
-    expect(test.api.storage.local.set.mock.invocationCallOrder[saved]!).toBeLessThan(revokedAt);
+    expect(test.accounts['user-a']!.settings).toMatchObject({ sites: ['capture.test'] });
+    expect(test.grants.size).toBe(0);
   });
   it.each([
     ['a different account', 'user-b'],
@@ -1630,7 +1666,7 @@ describe('connecting', () => {
   ])('lands a Reconnect from all sites as %s in added sites, without the all-sites grant', async (_name, user) => {
     const test = setup();
     await test.connect();
-    if (user === 'user-a') await test.api.storage.local.remove(keyOf(accountKey, test.first()));
+    if (user === 'user-a') await test.api.storage.local.remove(keyOf(accountKey, origin));
     test.revokeFamily();
     expect(await test.controller.alarmFired(syncAlarm)).toMatchObject({ account: { state: 'reconnect' } });
     await test.controller.handle({ type: 'reconnect' });
@@ -1820,51 +1856,17 @@ describe('connecting', () => {
       expect((test.stored(tokensKey) as { refresh: string }).refresh).toBe(refresh);
     }),
   );
-  it('shows Reconnect once for an install updated from a build that synced with the web sign-in', async () => {
-    const test = setup();
-    test.grant();
-    test.alarms.set(syncAlarm, { periodInMinutes: 1 });
-    await test.api.storage.local.set({
-      [settingsKey]: {
-        consentVersion: 2,
-        connected: true,
-        paused: false,
-        mode: 'all',
-        sites: [],
-        excludedDomains: ['bank.test'],
-      },
-      [accountKey]: { id: 'user-a', email: 'a@example.test' },
-      [syncKey]: { state: 'signed_out', connect: true },
-    });
-    const updated = test.restart();
-    expect(await updated.handle({ type: 'status' })).toMatchObject({
-      settings: { connected: true, mode: 'all', excludedDomains: ['bank.test'] },
-      account: { state: 'reconnect', email: 'a@example.test' },
-      sync: { state: 'failed' },
-      permissionGranted: true,
-    });
-    expect(test.alarms.has(test.alarm())).toBe(false);
-    expect(test.badge()).toBe('!');
-    expect(await updated.alarmFired(syncAlarm)).toBeUndefined();
-    expect(test.getAll).not.toHaveBeenCalled();
-    expect(test.requests).toEqual([]);
-    // Without tokens, Disconnect cannot confirm the deletion.
-    expect(await updated.handle({ type: 'disconnect' })).toMatchObject({
-      settings: { connected: false },
-      sync: { state: 'delete_failed' },
-    });
-  });
-  it('reports an unconfirmed deletion when the server refuses the tokens on Disconnect', async () => {
+  it('reports an unconfirmed deletion when the server refuses the tokens on Sign out', async () => {
     const test = setup();
     await test.connect();
     test.revokeFamily();
     expect(await test.controller.handle({ type: 'disconnect' })).toMatchObject({
-      settings: { connected: false },
+      connections: [],
       account: { state: 'none' },
-      sync: { state: 'delete_failed' },
+      signOutFailed: origin,
       permissionGranted: false,
     });
-    expect(test.stored(tokensKey)).toBeUndefined();
+    expect(test.local()[keyOf(tokensKey, origin)]).toBeUndefined();
     expect(test.badge()).toBe('');
   });
   it('opens a tab when connecting with tokens the server no longer accepts', async () => {
@@ -1897,13 +1899,6 @@ describe('connecting', () => {
 });
 
 describe('several organizations', () => {
-  // Connects whichever organization the person acts in on the server's website, as Connect another organization does.
-  const connectAnother = async (test: Test, user = 'user-a') => {
-    await test.controller.handle({ type: 'connect', mode: 'sites', another: true });
-    await test.authorize(user);
-    await test.drain();
-    return test.entries().at(-1)!.id;
-  };
   const add = async (test: Test, connection: string, sites: string[]) => {
     for (const site of sites) for (const grant of siteGrants(site)) test.grants.add(grant);
     const status = (await test.controller.handle({ type: 'status', connection })) as StatusResponse;
@@ -1922,29 +1917,37 @@ describe('several organizations', () => {
       .filter(each => each.organization === organization)
       .at(-1)
       ?.capture.cookies.map(each => each.domain);
-  // One Chrome profile connected to org-a, then to org-b after switching organizations on the website.
+  // The organizations each request named.
+  const named = (test: Test) =>
+    test.requests
+      .map(({ init }) => (init.headers as { [name: string]: string } | undefined)?.['x-organization'])
+      .filter(Boolean);
+  // One Chrome profile signed in to an account in org-a and org-b.
   async function twoOrganizations() {
     const test = setup();
-    const a = await connectAnother(test);
-    test.acting['user-a'] = 'org-b';
-    const b = await connectAnother(test);
+    test.memberships['user-a'] = ['org-a', 'org-b'];
+    await test.controller.handle({ type: 'connect', mode: 'sites' });
+    await test.authorize();
+    await test.drain();
+    const [a, b] = test.entries().map(entry => entry.id) as [string, string];
     return { test, a, b };
   }
 
-  it('adds a connection for a new organization, and sends each site only to the connections that added it', async () => {
+  it('connects every organization of the account in one sign-in, and sends each site only to the one it was added to', async () => {
     const { test, a, b } = await twoOrganizations();
-    expect(a).not.toBe(b);
     expect(test.entries()).toEqual([
       { id: a, origin, organization: { id: 'org-a', name: 'Acme' } },
       { id: b, origin, organization: { id: 'org-b', name: 'Beta' } },
     ]);
+    expect(test.api.tabs.create).toHaveBeenCalledTimes(1);
     await add(test, a, ['capture.test']);
     await add(test, b, ['other.test']);
     expect(domains(test, 'org-a')).toEqual(['capture.test']);
     expect(domains(test, 'org-b')).toEqual(['other.test']);
+    expect(new Set(named(test))).toEqual(new Set(['org-a', 'org-b']));
     expect(test.accounts['user-a']!.settings).toMatchObject({ sites: ['capture.test'] });
     expect(test.accounts['user-a@org-b']!.settings).toMatchObject({ sites: ['other.test'] });
-    // Each connection has its own periodic capture, which captures only its own sites.
+    // Each organization has its own periodic capture, which captures only its own sites.
     expect(test.alarms.has(alarmOf(a))).toBe(true);
     expect(test.alarms.has(alarmOf(b))).toBe(true);
     test.getAll.mockResolvedValue([
@@ -1955,23 +1958,35 @@ describe('several organizations', () => {
     await test.controller.alarmFired(alarmOf(b));
     expect(test.received.map(each => each.organization)).toEqual(['org-b']);
     expect(domains(test, 'org-b')).toEqual(['other.test']);
-    // The list names every connection, with its organization, origin and sites.
     expect(await test.controller.handle({ type: 'status', connection: b })).toMatchObject({
       connection: b,
       settings: { sites: ['other.test'] },
+      account: { state: 'syncing', email: 'a@example.test' },
       connections: [
         { id: a, origin, organization: { name: 'Acme' }, settings: { sites: ['capture.test'] } },
         { id: b, origin, organization: { name: 'Beta' }, settings: { sites: ['other.test'] } },
       ],
     });
-    // Without a connection, a request acts on the first.
-    expect(await test.controller.handle({ type: 'status' })).toMatchObject({ connection: a });
+    // The popup opens on the organization it showed last, even after the worker restarts.
+    expect(await test.controller.handle({ type: 'status' })).toMatchObject({ connection: b });
+    await settle();
+    expect(await test.restart().handle({ type: 'status' })).toMatchObject({ connection: b });
     expect(await test.controller.handle({ type: 'status', connection: 'unknown' })).toEqual({
       ok: false,
       error: 'invalid_request',
     });
   });
-  it('pauses and disconnects one connection, leaving the other syncing', async () => {
+  it("shows the account's first organization after signing in, whatever the web app is acting in", async () => {
+    const test = setup();
+    test.memberships['user-a'] = ['org-b', 'org-a'];
+    test.acting['user-a'] = 'org-a';
+    await test.controller.handle({ type: 'connect', mode: 'sites' });
+    expect(await test.authorize()).toMatchObject({ ok: true, organization: 'Beta' });
+    const [first] = test.entries();
+    expect(first!.organization).toEqual({ id: 'org-b', name: 'Beta' });
+    expect(await test.drain()).toMatchObject({ connection: first!.id, settings: { connected: true } });
+  });
+  it('pauses one organization, leaving the other syncing, and Sign out ends both', async () => {
     const { test, a, b } = await twoOrganizations();
     await add(test, a, ['capture.test']);
     await add(test, b, ['other.test']);
@@ -1990,30 +2005,31 @@ describe('several organizations', () => {
     expect(await test.controller.handle({ type: 'resume', connection: a })).toMatchObject({
       settings: { paused: false },
     });
-    // Disconnect deletes only that organization's copy, and keeps the grants the other connection uses.
     test.fetch.mockClear();
-    expect(await test.controller.handle({ type: 'disconnect', connection: b })).toMatchObject({
-      settings: { connected: false },
-      account: { state: 'none' },
-    });
+    expect(await test.controller.handle({ type: 'disconnect', connection: b })).toMatchObject({ connections: [] });
     expect(test.fetch.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(1);
-    expect(test.local()[keyOf(tokensKey, b)]).toBeUndefined();
-    expect(test.local()[keyOf(tokensKey, a)]).toBeDefined();
-    expect([...test.grants]).toEqual(siteGrants('capture.test'));
-    expect(test.alarms.has(alarmOf(b))).toBe(false);
-    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
-      settings: { connected: true, sites: ['capture.test'] },
-      account: { state: 'syncing' },
-    });
-    // The server's Delete everything ends only the connection it was done for.
+    expect(test.grants.size).toBe(0);
+    expect(test.alarms.size).toBe(0);
+  });
+  it('stops syncing to an organization that removed this browser, keeping the other and the grants it uses', async () => {
+    const { test, a, b } = await twoOrganizations();
+    await add(test, a, ['capture.test', 'other.test']);
+    await add(test, b, ['other.test']);
     test.accounts['user-a']!.disconnected = true;
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60_000);
+    test.getAll.mockResolvedValue([{ ...cookie, value: 'changed' }]);
     expect(await test.controller.handle({ type: 'capture', connection: a })).toMatchObject({
-      account: { state: 'reconnect' },
+      settings: { connected: false },
+      sync: { state: 'removed' },
+      account: { state: 'syncing' },
     });
-    expect(test.badge()).toBe('!');
+    expect([...test.grants]).toEqual(siteGrants('other.test'));
+    expect(test.badge()).toBe('');
+    expect(await test.controller.handle({ type: 'status', connection: b })).toMatchObject({
+      settings: { connected: true, sites: ['other.test'] },
+    });
   });
-  it("keeps a site's grant while another connection uses it, and a site revoked in Chrome leaves every connection", async () => {
+  it("keeps a site's grant while another organization uses it, and a site revoked in Chrome leaves every one", async () => {
     const { test, a, b } = await twoOrganizations();
     await add(test, a, ['capture.test', 'other.test']);
     await add(test, b, ['capture.test']);
@@ -2031,14 +2047,63 @@ describe('several organizations', () => {
     expect(test.account.settings).toMatchObject({ sites: [] });
     expect(test.accounts['user-a@org-b']!.settings).toMatchObject({ sites: [] });
   });
-  it('keeps the all-sites grant while another connection captures all sites', async () => {
-    const test = setup();
-    await test.connect();
-    const a = test.first();
-    test.acting['user-a'] = 'org-b';
-    const b = await connectAnother(test);
+  it('adds organizations the account joins and drops the ones it leaves, with their grants', async () => {
+    const { test, a, b } = await twoOrganizations();
     await add(test, b, ['other.test']);
-    expect(await test.controller.handle({ type: 'disconnect', connection: b })).toMatchObject({
+    expect(await test.controller.handle({ type: 'status', connection: b })).toMatchObject({ connection: b });
+    test.memberships['user-a'] = ['org-a', 'org-x'];
+    const opened = (await test.controller.handle({ type: 'check' })) as StatusResponse;
+    const x = test.entries().find(entry => entry.organization?.id === 'org-x')!.id;
+    expect(test.entries().map(entry => entry.id)).toEqual([a, x]);
+    // The one it showed is gone, so it shows the first.
+    expect(opened).toMatchObject({ connection: a });
+    expect(opened.connections.find(each => each.id === x)).toMatchObject({
+      settings: { connected: true, mode: 'sites', sites: [] },
+    });
+    expect(test.grants.size).toBe(0);
+    expect(test.alarms.has(alarmOf(b))).toBe(false);
+    expect(test.alarms.has(alarmOf(x))).toBe(true);
+    expect(Object.keys(test.local()).filter(key => key.endsWith(b))).toEqual([]);
+  });
+  it('fetches the organizations again when a request names one the account has left', async () => {
+    const { test, a, b } = await twoOrganizations();
+    await add(test, b, ['other.test']);
+    test.memberships['user-a'] = ['org-a'];
+    test.getAll.mockResolvedValue([{ ...cookie, domain: 'other.test', value: 'changed' }]);
+    await test.controller.handle({ type: 'capture', connection: b });
+    await test.drain();
+    expect(test.entries().map(entry => entry.id)).toEqual([a]);
+    expect(test.grants.size).toBe(0);
+  });
+  it('lands Reconnect in the organization it came from, keeping every organization as it was', async () => {
+    const { test, a, b } = await twoOrganizations();
+    await add(test, a, ['capture.test']);
+    await test.controller.handle({ type: 'pause', connection: a });
+    await add(test, b, ['other.test']);
+    test.revokeFamily();
+    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ account: { state: 'reconnect' } });
+    expect(test.badge()).toBe('!');
+    const tabs = test.api.tabs.create.mock.calls.length;
+    await test.controller.handle({ type: 'reconnect', connection: b });
+    expect(test.api.tabs.create).toHaveBeenCalledTimes(tabs + 1);
+    expect(await test.authorize()).toMatchObject({ ok: true, organization: 'Beta' });
+    expect(await test.drain()).toMatchObject({ connection: b, settings: { connected: true, sites: ['other.test'] } });
+    expect(test.entries().map(entry => entry.id)).toEqual([a, b]);
+    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
+      settings: { connected: true, paused: true, sites: ['capture.test'] },
+      account: { state: 'syncing' },
+    });
+    expect(test.badge()).toBe('');
+  });
+  it('keeps the all-sites grant while another organization captures all sites', async () => {
+    const { test, a, b } = await twoOrganizations();
+    test.grant();
+    await test.controller.handle({ type: 'connect', mode: 'all', connection: a });
+    await add(test, b, ['other.test']);
+    test.accounts['user-a@org-b']!.disconnected = true;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60_000);
+    test.getAll.mockResolvedValue([{ ...cookie, domain: 'other.test', value: 'changed' }]);
+    expect(await test.controller.handle({ type: 'capture', connection: b })).toMatchObject({
       settings: { connected: false },
     });
     expect(test.grants.has(browserOrigins[0])).toBe(true);
@@ -2046,71 +2111,23 @@ describe('several organizations', () => {
       settings: { connected: true, mode: 'all' },
     });
   });
-  it('moves an existing install into the first connection without reconnecting, and names it', async () => {
+  it('syncs to the one organization a server from before accounts names, naming none in its requests', async () => {
     const test = setup();
-    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
-    await test.controller.handle({ type: 'connect', mode: 'sites' });
-    await test.authorize();
-    await test.drain();
-    await test.controller.handle({ type: 'sites', sites: ['capture.test'] });
-    // The keys and alarm a build from before connections kept.
-    const id = test.first();
-    const flat = Object.fromEntries(
-      [settingsKey, tokensKey, accountKey, syncKey].map(key => [key, test.local()[keyOf(key, id)]]),
+    test.me.mockImplementation(async (user: string, organization: string) =>
+      answer(200, {
+        user: { id: user, email: emails[user], name: 'A' },
+        organization: { id: organization, name: 'Acme' },
+      }),
     );
-    await test.api.storage.local.remove([connectionsKey, ...Object.keys(test.local()).filter(key => key.includes(id))]);
-    await test.api.storage.local.set(flat);
-    await test.api.storage.session.set({ [recordKey]: test.session()[keyOf(recordKey, id)] });
-    test.alarms.clear();
-    test.alarms.set(syncAlarm, { periodInMinutes: 1 });
-    const tabs = test.api.tabs.create.mock.calls.length;
-    const updated = test.restart();
-    expect(await updated.handle({ type: 'status' })).toMatchObject({
-      settings: { connected: true, sites: ['capture.test'] },
-      account: { state: 'syncing', email: 'a@example.test' },
-      capture: { state: 'complete' },
-      connections: [{ origin, settings: { sites: ['capture.test'] } }],
-    });
-    const moved = test.first();
-    expect(test.entries()).toEqual([{ id: moved, origin }]);
-    for (const key of Object.keys(flat)) expect(test.local()).not.toHaveProperty(key);
-    expect(test.local()[keyOf(tokensKey, moved)]).toEqual(flat[tokensKey]);
-    expect(test.session()).not.toHaveProperty(recordKey);
-    expect([...test.alarms.keys()]).toEqual([alarmOf(moved)]);
-    // Opening the popup names it, and it syncs with the tokens it had.
-    expect(await updated.handle({ type: 'check' })).toMatchObject({
-      connections: [{ id: moved, organization: { id: 'org-a', name: 'Acme' } }],
-    });
-    test.getAll.mockResolvedValue([{ ...cookie, value: 'changed' }]);
-    expect(await updated.alarmFired(alarmOf(moved))).toMatchObject({ sync: { state: 'synced' } });
-    expect(test.api.tabs.create).toHaveBeenCalledTimes(tabs);
-    // Restarting again moves nothing.
-    expect(await test.restart().handle({ type: 'status' })).toMatchObject({ connection: moved });
-    expect(test.entries()).toHaveLength(1);
-  });
-  it('connects an organization already connected again in place, keeping its settings', async () => {
-    const test = setup();
-    const a = await connectAnother(test);
-    await add(test, a, ['capture.test']);
-    const tokens = test.local()[keyOf(tokensKey, a)];
-    expect(await connectAnother(test)).toBe(a);
-    expect(test.entries()).toHaveLength(1);
-    expect(test.local()[keyOf(tokensKey, a)]).not.toEqual(tokens);
-    expect(await test.controller.handle({ type: 'status' })).toMatchObject({
-      settings: { connected: true, sites: ['capture.test'] },
-      account: { state: 'syncing' },
-    });
-    // Reconnecting a connection whose tokens ended lands in the organization the person acts in now.
-    test.revokeFamily();
-    expect(await test.controller.handle({ type: 'check' })).toMatchObject({ account: { state: 'reconnect' } });
-    test.acting['user-a'] = 'org-b';
-    await test.controller.handle({ type: 'reconnect', connection: a });
+    for (const grant of siteGrants('capture.test')) test.grants.add(grant);
+    await test.controller.handle({ type: 'prepare', connect: 'sites', sites: ['capture.test'] });
+    await test.controller.permissionsAdded();
     await test.authorize();
-    await test.drain();
-    expect(test.entries().map(entry => entry.organization?.id)).toEqual(['org-a', 'org-b']);
-    expect(await test.controller.handle({ type: 'status', connection: a })).toMatchObject({
-      account: { state: 'reconnect' },
-    });
+    expect(await test.drain()).toMatchObject({ settings: { sites: ['capture.test'] }, sync: { state: 'synced' } });
+    expect(test.entries()).toEqual([
+      { id: expect.any(String), origin, organization: { id: 'org-a', name: 'Acme' }, legacy: true },
+    ]);
+    expect(named(test)).toEqual([]);
   });
 });
 
@@ -2158,7 +2175,7 @@ describe('another server', () => {
       expect(await trust(test, invalid)).toEqual({ ok: false, error: 'invalid_request' });
   });
 
-  it('connects another server only after its warning, and syncs that connection to it alone', async () => {
+  it('signs in to another server only after its warning, and syncs its organizations to it alone', async () => {
     const test = setup();
     const before = opened(test);
     // Refused before Chrome's prompt and before any tab, whether or not the click needs a grant.
@@ -2204,7 +2221,7 @@ describe('another server', () => {
       origin: elsewhere,
       warned: true,
     });
-    test.acting['user-a'] = 'org-x';
+    test.memberships['user-a'] = ['org-x'];
     expect(await test.authorize('user-a', elsewhere)).toMatchObject({ ok: true, organization: 'Elsewhere' });
     await test.drain();
     const [entry] = test.entries();

@@ -164,8 +164,8 @@ Syncing sessions is sensitive, so the defaults are narrow and the code is open f
 - **Opt-in per site.** No host permissions at install. Each site you add asks Chrome for its own permission, and only those sites' cookies are read. Capturing every site takes an explicit **Allow all sites**, which only builds outside the Chrome Web Store offer. Excluded domains are never captured.
 - **One way.** Captures flow from your browser to your agents, never back.
 - **Warned before another server.** The store extension connects to a server other than clutchbox.dev only after a full-page warning, unless the server is on the [verified list](apps/extension#connecting-to-another-server) or your administrator approved it.
-- **You stay in control.** Pause, remove a site, or disconnect from the extension at any time. Disconnecting deletes everything that browser uploaded.
-- **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, a key kept outside the database, and keeps only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token disconnects that browser.
+- **You stay in control.** Pause, remove a site, or sign out of the extension at any time. Signing out deletes everything that browser uploaded.
+- **Encrypted at rest.** The web app seals captures with AES-256-GCM under `CAPTURE_ENCRYPTION_KEY`, a key kept outside the database, and keeps only hashes of tokens. Browsers connect with OAuth and PKCE, access tokens last five minutes, and a replayed refresh token signs that browser out.
 - **Cookies, not passwords.** Your passwords and 2FA secrets never leave your browser.
 - **Honest limits.** Whoever runs the server and the agent's browser can use the synced sessions, so connect only agents you trust. Device-bound sessions (Chrome's DBSC) don't carry over, and some sites sign out a copied session.
 

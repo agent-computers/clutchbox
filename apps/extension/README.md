@@ -6,16 +6,16 @@ The Chrome extension (Manifest V3) that keeps your agents signed in to the sites
 
 - **Only the sites you add,** each behind its own Chrome permission; it requests no host permissions at install. Builds outside the Chrome Web Store also offer **Allow all sites**, as an explicit choice.
 - **Excluded domains** are never captured, even under Allow all sites.
-- **Pause, remove a site, or disconnect** at any time. Disconnecting deletes what this browser uploaded.
-- **Several organizations,** on any server, each connected on its own: its own sites, exclusions, pause, and disconnect. A site goes only to the organizations you add it to.
+- **Pause, remove a site, or sign out** at any time. Signing out deletes what this browser uploaded.
+- **Every organization you belong to,** after one sign-in per server: switch between them in the popup, each with its own sites, exclusions, and pause. A site goes only to the organizations you add it to.
 - **A warning before another server,** unless it is on the verified list or your administrator approved it, since that server receives what you sync to it.
 - **Uploads only on change,** in the background while Chrome runs, over OAuth with PKCE and short-lived tokens.
 
 Works in Chrome 130 and later, and in other Chromium browsers (Edge, Brave, Arc).
 
-## Connecting to another server
+## Signing in to another server
 
-The store build connects to clutchbox.dev unless you choose **Connect to another server** in its setup tab (the popup's **Another server…** opens it) and enter a server's address, such as `agents.example.com`. The server must use HTTPS and allow the store build's ID in `EXTENSION_ORIGINS`, as a self-hosted web app does by default.
+The store build signs in to clutchbox.dev unless you choose **Sign in to another server** in its setup tab (the popup's **Another server…** opens it) and enter a server's address, such as `agents.example.com`. The extension can be signed in to one account on each server, and lists every organization of each in its switcher. The server must use HTTPS and allow the store build's ID in `EXTENSION_ORIGINS`, as a self-hosted web app does by default.
 
 A server outside the verified list gets a full-page warning first, before any permission prompt: it, not Clutchbox, receives your sign-ins. Servers on the list, servers you already connected to, and servers your administrator approved connect without it.
 

@@ -21,6 +21,8 @@ export function syncMessage(sync: Sync): string {
       return `The last upload did not finish and retries in a minute.${last}`;
     case 'delete_failed':
       return 'The uploaded copy could not be confirmed deleted. Use Turn off sync or Delete everything on your account page.';
+    case 'removed':
+      return 'This organization removed this browser, or turned sync off there. Sync here again to resume.';
     case 'too_large':
       return 'This capture is over the 4 MB upload limit. Sync only added sites, or exclude domains, to make it smaller.';
     case 'outdated':
@@ -47,7 +49,7 @@ function summarize({ capture, sync, settings, account }: StatusResponse, busy: b
     return {
       label: 'Reconnect needed',
       tone: 'problem',
-      detail: `This browser stopped syncing${account.email ? ` to ${account.email}` : ''}. It was disconnected, unused for 30 days, or updated from an older version. Your sites and exclusions are kept.`,
+      detail: `This browser stopped syncing${account.email ? ` as ${account.email}` : ''}. It was signed out on the server, or unused for 30 days. Your sites and exclusions are kept.`,
       action: 'reconnect',
     };
   if (settings.paused) return { label: 'Paused', tone: 'idle', detail: 'Your agents keep the last upload.' };
@@ -101,7 +103,7 @@ export function SyncStatus({
         </span>
         {children && <span className="flex shrink-0 gap-1">{children}</span>}
       </div>
-      {status.account.state === 'syncing' && <p className={hint}>Syncs to {status.account.email}</p>}
+      {status.account.state === 'syncing' && <p className={hint}>Signed in as {status.account.email}</p>}
       {summary.detail && <p className={hint}>{summary.detail}</p>}
       {summary.action === 'reconnect' && (
         <div>

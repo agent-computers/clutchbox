@@ -301,10 +301,13 @@ export function parseExtensionConfig(input: unknown): ExtensionConfig {
 export const syncResponseSchema = z.object({
   settings: syncSettingsSchema.nullable(),
   disconnected: z.boolean(),
+  // The organization removed this browser on its Browser sync page.
+  removed: z.boolean().optional(),
   config: z.unknown().optional(),
   latestVersion: z.string().max(32).optional(),
 });
-// The connection a request acts on, by the extension's own ID for it; without one, the first connection.
+// The connection a request acts on, by the extension's own ID for it, which the popup then shows when it next opens;
+// without one, the one it showed last.
 const connection = z.string().min(1).max(64).optional();
 const server = { origin: z.string().max(2048).optional(), warned: z.literal(true).optional() };
 export const requestSchema = z.discriminatedUnion('type', [
@@ -328,10 +331,9 @@ export const requestSchema = z.discriminatedUnion('type', [
       connection,
     })
     .strict(),
-  // `another` connects the organization the person acts in on the server's website, adding a connection unless that
-  // organization is already connected, rather than connecting the given or first connection again. `origin` is that
-  // server, the build's without one; `warned` says the person agreed to the warning a server outside the verified list
-  // needs.
+  // `another` signs in to a server (`origin`, the build's without one) beside the connections there are, rather than
+  // connecting the given connection again; `warned` says the person agreed to the warning a server outside the
+  // verified list needs.
   z
     .object({
       type: z.literal('connect'),
@@ -381,6 +383,8 @@ export const syncRecordSchema = z
       'delete_failed',
       'outdated',
       'too_large',
+      // The organization removed this browser on its Browser sync page, or turned sync off there.
+      'removed',
     ]),
     digest: z
       .string()
@@ -430,13 +434,14 @@ export const meSchema = z.object({
   organizations: z.array(organizationSchema).max(100).optional().catch(undefined),
   defaultOrganization: z.string().min(1).max(64).nullish().catch(undefined),
 });
-// The account this browser syncs to. `reconnect`: connected, but its tokens ended (disconnected, unused for 30 days,
-// or updated from a build that synced with the web sign-in), so sync waits for Reconnect.
+// The account on a connection's server. `reconnect`: signed in, but its tokens ended (signed out on the server,
+// or unused for 30 days), so sync waits for Reconnect.
 export type AccountState =
   | { state: 'none' }
   | { state: 'syncing'; email: string }
   | { state: 'reconnect'; email?: string };
-// One connection in the list the popup and the setup tab show: an organization on one server.
+// One connection in the switcher the popup and the setup tab show: an organization on one server, which the browser
+// syncs to as the account signed in there.
 export interface ConnectionSummary {
   id: string;
   origin: string;
@@ -445,8 +450,8 @@ export interface ConnectionSummary {
   account: AccountState;
   settings: CaptureSettings;
 }
-// The status of one connection, with the list of every connection. Without any connection, `connection` is absent and
-// the rest is a new connection's.
+// The status of one connection, with every connection. Without any connection, `connection` is absent and the rest is
+// a new connection's.
 export interface StatusResponse {
   ok: true;
   connection?: string;
@@ -459,6 +464,8 @@ export interface StatusResponse {
   account: AccountState;
   // A connect flow is waiting for the Clutchbox tab.
   connecting?: true;
+  // The server whose deletion of this browser's uploads the last Sign out could not confirm.
+  signOutFailed?: string;
   permissionGranted: boolean;
   // Sites the account lists that this browser has not granted, so they are not captured here.
   ungrantedSites: string[];

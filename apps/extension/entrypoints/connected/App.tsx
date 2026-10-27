@@ -3,9 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { Button } from '../../src/ui/components/button';
 
-const closeAfterMs = 1_500;
-
-// Back to the tab the connect click came from, then closes this one.
+// Back to the tab the connect click came from, closing this one.
 async function returnTo(opener: number | undefined) {
   if (opener !== undefined) {
     try {
@@ -31,9 +29,6 @@ export function App({ url }: { url: string }) {
       if (!('email' in response)) throw new Error('invalid_request');
       return response;
     },
-    onSuccess: ({ opener }) => {
-      setTimeout(() => void returnTo(opener), closeAfterMs);
-    },
   });
   // Once, even under StrictMode's double effects: the code is single-use.
   const started = useRef(false);
@@ -49,7 +44,7 @@ export function App({ url }: { url: string }) {
       <span className="font-serif text-lg font-medium italic">clutchbox</span>
       <p role="status" aria-live="polite">
         {exchange.isSuccess
-          ? `Connected. This browser syncs to ${exchange.data.email}${exchange.data.organization ? ` in ${exchange.data.organization}` : ''}.`
+          ? `Signed in as ${exchange.data.email}.${exchange.data.organization ? ` Syncing to ${exchange.data.organization}; switch organizations in the extension.` : ''}`
           : error === 'expired'
             ? 'This connection attempt expired or was already used. Open the extension and connect again.'
             : error === 'denied'
@@ -58,10 +53,10 @@ export function App({ url }: { url: string }) {
                 ? "Couldn't connect to Clutchbox. Open the extension and try again."
                 : 'Connecting…'}
       </p>
-      {exchange.isError && (
+      {(exchange.isError || exchange.isSuccess) && (
         <div>
-          <Button variant="secondary" onClick={() => void returnTo(undefined)}>
-            Close
+          <Button variant="secondary" onClick={() => void returnTo(exchange.data?.opener)}>
+            {exchange.isSuccess ? 'Back to where you were' : 'Close'}
           </Button>
         </div>
       )}
