@@ -36,7 +36,6 @@ import {
   useLiveViewClipboard,
   useLiveViewControl,
 } from '../lib/api';
-import { resetsOn } from '../lib/computer';
 import { chord, decodeCutText, isMac, keyAction, keyQueue, keysymOf, MODIFIER_CODES } from '../lib/live-view-input';
 import { agentName } from './agent-connections';
 import { useLeaveGuard } from './app-shell';
@@ -73,7 +72,7 @@ const agentOf = ({ agent, host }: NonNullable<Fork['agent']>) => (agent ? agentN
 // uses its time. A session's lease keeps a watch while the page is visible (useHeartbeat), and holds the takeover once
 // the user takes control; the relay passes input only while it does, so noVNC's viewOnly only spares the user dead
 // input. Stopping, switching computers, or leaving the page releases the lease, which ends the watch and hands back.
-// metered: there is a free allowance (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
+// metered: there is an allowance (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
 // resets. forks: the agents' forks that are not paused. A link with ?computer=<fork ID>, the live-view link the REST API
 // gives developers, starts watching that fork.
 export function LiveViewPanel({
@@ -82,7 +81,7 @@ export function LiveViewPanel({
   forks,
 }: {
   metered: boolean;
-  exhausted: { resetsAt: string } | null;
+  exhausted: { message: string } | null;
   forks: Fork[];
 }) {
   const linkedId = useSearchParams().get('computer');
@@ -196,7 +195,7 @@ function LiveViewOff({
   onStart,
 }: {
   metered: boolean;
-  exhausted: { resetsAt: string } | null;
+  exhausted: { message: string } | null;
   onStart: (intent: Intent) => void;
 }) {
   return (
@@ -213,7 +212,7 @@ function LiveViewOff({
             <p className="font-heading text-2xl">Live view is off</p>
             <p className="max-w-sm text-sm text-foreground">
               {exhausted
-                ? `This month's free computer minutes are used up, so live view is off until they reset on ${resetsOn(exhausted.resetsAt)}.`
+                ? `${exhausted.message} Live view is off.`
                 : 'Take control to sign in to sites on your computer. Your agents work on copies of it, made with its sign-ins.'}
             </p>
           </div>
@@ -358,10 +357,7 @@ function LiveSession({ intent, target, onStop }: { intent: Intent; target: Targe
           )}
           {exhausted && (
             <Alert variant="destructive">
-              <AlertDescription>
-                This month's free computer minutes are used up, so live view is off until they reset on{' '}
-                {resetsOn(exhausted.resetsAt)}.
-              </AlertDescription>
+              <AlertDescription>{exhausted.message} Live view is off.</AlertDescription>
             </Alert>
           )}
           {problem && (

@@ -570,8 +570,8 @@ describe('main computer tools', () => {
     expect(opened.result.structuredContent.browser_sync).toContain(
       'No browser has synced to the Clutchbox account a@example.test',
     );
-    // The default hooks have no allowance, so no free minutes.
-    expect(opened.result.structuredContent).not.toHaveProperty('free_minutes_remaining');
+    // The default hooks have no allowance.
+    expect(opened.result.structuredContent).not.toHaveProperty('allowance');
     const acted = await tool(claude.access_token, 'computer_act', {
       session_id: id,
       actions: [
@@ -668,12 +668,14 @@ describe('main computer tools', () => {
     expect((await tool(renewed.access_token, 'computer_open', {})).result.isError).toBe(false);
     expect(fake.calls.create).toBe(1);
   });
-  it("reports the metering hook's free minutes on open and close", async () => {
+  it("reports the metering hook's allowance, in its words, on open and close", async () => {
     const usage = {
       usedSeconds: 90,
       allowanceSeconds: 36_000,
       remainingSeconds: 35_910,
       resetsAt: new Date('2026-11-01T00:00:00Z'),
+      name: 'free minutes',
+      hardStop: true,
     };
     const metering = { ...noMetering, usage: async () => usage };
     endpoint = createMcpEndpoint({
@@ -684,7 +686,14 @@ describe('main computer tools', () => {
       hooks: { metering, operatorAdmin: noOperatorAdmin },
     });
     const token = (await authorize((await identity('a')).cookie, await register()))!.access_token;
-    const minutes = { free_minutes_remaining: 598, free_minutes_reset_at: '2026-11-01T00:00:00.000Z' };
+    const minutes = {
+      allowance: {
+        name: 'free minutes',
+        minutes_remaining: 598,
+        resets_at: '2026-11-01T00:00:00.000Z',
+        when_used_up: 'refused',
+      },
+    };
     const opened = (await tool(token, 'computer_open', {})).result.structuredContent;
     expect(opened).toMatchObject(minutes);
     expect(

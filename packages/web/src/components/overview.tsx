@@ -27,7 +27,7 @@ import {
   setupQuery,
   syncQuery,
 } from '../lib/api';
-import { computerStatus, resetsOn, syncedSignIns } from '../lib/computer';
+import { computerStatus, resetsOn, syncedSignIns, usedShare } from '../lib/computer';
 import { extensionDownloadUrl } from '../lib/extension-download';
 import { promptsFor } from '../lib/setup';
 import { connectedAgents, lastUser } from './agent-connections';
@@ -385,18 +385,16 @@ function ComputerSummary({ view }: { view: ComputerView }) {
           <h2>{status.note}</h2>
         </CardTitle>
       </CardHeader>
-      {/* Only with a free allowance (the metering hook). */}
+      {/* Only with an allowance (the metering hook). */}
       {usage && (
         <CardContent className="grid gap-2">
           <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
-            <div
-              className="h-full rounded-full bg-foreground"
-              style={{ width: `${Math.min(100, (usage.usedMinutes / usage.allowanceMinutes) * 100)}%` }}
-            />
+            <div className="h-full rounded-full bg-foreground" style={{ width: `${usedShare(usage)}%` }} />
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">
-            {usage.usedMinutes} of {usage.allowanceMinutes} free minutes used this month · resets{' '}
+            {usage.usedMinutes} of {usage.allowanceMinutes} {usage.name} used this month · resets{' '}
             {resetsOn(usage.resetsAt)}
+            {usage.estimate && ` · estimated bill ${usage.estimate}`}
           </p>
         </CardContent>
       )}

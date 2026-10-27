@@ -127,6 +127,8 @@ const oneOf = (column: AnyPgColumn, values: readonly string[]) =>
 // An IANA zone name's characters only: it becomes a path on the computer (time-zones.ts checks the zone exists).
 const timeZoneName = (column: AnyPgColumn) => sql`${column} ~ '^[A-Za-z][A-Za-z0-9_+/-]{0,63}$'`;
 export const MEMBER_ROLES = ['owner', 'admin', 'member'] as const;
+// The plans a deployment may put an organization on (organizations.plan).
+export const ORGANIZATION_PLANS = ['paid'] as const;
 // An organization: the tenant whose members sync to it and whose agents use their computers (organizations.ts). A
 // personal organization records the person it was made for, so each person has at most one; a deployment that serves
 // one organization leaves it null. joinDomains: email domains whose people may join it themselves (members.ts),
@@ -148,15 +150,21 @@ export const organizations = pgTable(
     joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
     // Computer minutes a month the deployment allows this organization, for its metering hook; null for its default.
     computerMinutes: integer('computer_minutes'),
-    // Forks that may run at once across the organization's members (computers.ts, openComputerSession); null for
-    // DEFAULT_MAX_RUNNING_FORKS.
+    // Forks that may run at once across the organization's members (computers.ts, openComputerSession); null for the
+    // deployment's limit (hooks.ts, Limits.runningForks), else DEFAULT_MAX_RUNNING_FORKS.
     maxRunningForks: integer('max_running_forks'),
+    // The plan a deployment's operators put the organization on, which its hooks read: 'paid', or null for the
+    // deployment's default. The product itself has no plans. plan_ended_at is when the last one ended, for what the
+    // deployment keeps after.
+    plan: text('plan', { enum: ORGANIZATION_PLANS }),
+    planEndedAt: time('plan_ended_at'),
     ...timestamps(),
   },
   table => [
     check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
     check('organizations_computer_minutes', sql`${table.computerMinutes} >= 0`),
     check('organizations_max_running_forks', sql`${table.maxRunningForks} >= 0`),
+    check('organizations_plan', oneOf(table.plan, ORGANIZATION_PLANS)),
   ],
 );
 // A person's place in one organization. Every app table below belongs to one, as membership_id, except user_settings,

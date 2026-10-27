@@ -36,7 +36,7 @@ import type { Database } from './database';
 import { databaseSchema } from './database-schema';
 import { fakeComputerProvider } from './fake-computer-provider';
 import { heartbeat, heartbeatSchema } from './heartbeat';
-import { type Metering, type MeteringRefusal, noMetering } from './hooks';
+import { type Metering, type MeteringRefusal, noLimits, noMetering } from './hooks';
 import { newPublicId } from './ids';
 import { revokeMcpGrant, revokeMcpGrants } from './mcp';
 import { membership, person } from './member-fixtures';
@@ -599,6 +599,23 @@ describe('forks', () => {
     await db.update(schema.organizations).set({ maxRunningForks: null });
     for (let i = 1; i < DEFAULT_MAX_RUNNING_FORKS; i++) await open(other, 'claude');
     expect(await openComputerSession(db, computers, caller(other, 'claude'))).toMatchObject({ error: 'busy' });
+  });
+  it("takes the deployment's fork limit where the organization sets none of its own", async () => {
+    const a = await user('a');
+    const other = await user('c');
+    const limited = new Set([a.organizationId]);
+    computers = { ...computers, limits: { ...noLimits, runningForks: async (_, id) => (limited.has(id) ? 1 : null) } };
+    await open(a, 'claude');
+    expect(await openComputerSession(db, computers, caller(a, 'chatgpt'))).toMatchObject({ error: 'busy' });
+    // An organization the limit leaves alone gets the product's default.
+    await open(other, 'claude');
+    await open(other, 'chatgpt');
+    // The organization's own cap comes first.
+    await db
+      .update(schema.organizations)
+      .set({ maxRunningForks: 2 })
+      .where(eq(schema.organizations.publicId, a.organizationId));
+    expect(await open(a, 'chatgpt')).toHaveProperty('sessionId');
   });
   it("lists the member's forks with their status, and deletes one with what was on it", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });

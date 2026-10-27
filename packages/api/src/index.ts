@@ -70,7 +70,7 @@ import {
 } from '@agent-computers/server/connect';
 import type { Database } from '@agent-computers/server/database';
 import { heartbeat, heartbeatSchema } from '@agent-computers/server/heartbeat';
-import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
+import { defaultServerHooks, noLimits, type ServerHooks } from '@agent-computers/server/hooks';
 import { logError } from '@agent-computers/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@agent-computers/server/mcp';
 import {
@@ -135,6 +135,9 @@ const MEMBERS_FAILURE_STATUS = {
   public_email_domain: 400,
   connect_app_limit: 409,
   invalid_redirect_uri: 400,
+  // The deployment's limits (hooks.ts), with its message.
+  member_limit: 403,
+  organization_unavailable: 403,
 } as const;
 
 export function createApi({
@@ -151,15 +154,16 @@ export function createApi({
   auth: Auth;
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & { tenancy?: Pick<Tenancy, 'canCreate'> };
+  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> &
+    Partial<Pick<ServerHooks, 'limits'>> & { tenancy?: Pick<Tenancy, 'canCreate'> };
   // The extension build this deployment offers for download.
   extensionVersion?: string | undefined;
   minExtensionVersion?: string;
   extend?: ApiExtension;
 }) {
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
-  const { metering, operatorAdmin, tenancy } = hooks;
-  const running = { provider: computers, metering };
+  const { metering, operatorAdmin, tenancy, limits = noLimits } = hooks;
+  const running = { provider: computers, metering, limits };
   // The member a request acts as: for a sync token, in the organization it names (or the browser's, for a build that
   // names none), or for app auth the person's current one (organizations.ts). A person in no organization here yet
   // gets not_a_member, which our web app answers with its join page, and which tells the extension the person has left
@@ -212,6 +216,9 @@ export function createApi({
       const key = KEY_PATH.test(c.req.path) ? await apiKeyPrincipal(auth, authorization) : null;
       if (!key)
         return c.json({ error: 'unauthenticated' }, 401, { 'WWW-Authenticate': 'Bearer error="invalid_token"' });
+      // The deployment may refuse the organization's developer API (hooks.ts, Limits.apiRefusal).
+      const refused = await limits.apiRefusal(db, key.organizationId);
+      if (refused) return c.json({ error: 'organization_unavailable', message: refused }, 403);
       c.set('apiKey', key);
       return next();
     }
@@ -288,8 +295,10 @@ export function createApi({
   // admins remove members and set the join domains. Invitations, accepting them, role changes, and API keys are Better
   // Auth's organization and api-key plugins' endpoints, under /api/auth (organization-auth.ts).
   const answer = (c: Context<Env>, result: object, status: 200 | 201 = 200) => {
-    const { error } = result as { error?: keyof typeof MEMBERS_FAILURE_STATUS };
-    return error ? c.json({ error }, MEMBERS_FAILURE_STATUS[error]) : c.json(result, status);
+    const { error, message } = result as { error?: keyof typeof MEMBERS_FAILURE_STATUS; message?: string };
+    return error
+      ? c.json({ error, ...(message !== undefined && { message }) }, MEMBERS_FAILURE_STATUS[error])
+      : c.json(result, status);
   };
   const body = async <T extends z.ZodType>(c: Context<Env>, schema: T) =>
     schema.safeParse(await c.req.json().catch(() => null));
@@ -321,7 +330,7 @@ export function createApi({
   app.post('/organizations/join', async c => {
     const parsed = await body(c, z.object({ organizationId: z.string().regex(ORGANIZATION_ID_PATTERN) }).strict());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId));
+    return answer(c, await joinByDomain(db, c.get('principal'), parsed.data.organizationId, limits));
   });
   // Connect apps, which owners and admins register (connect.ts). The client secret is in the answer to POST alone.
   app.get('/organization/connect-apps', async c => answer(c, await listConnectApps(db, await memberOf(c))));
@@ -356,7 +365,7 @@ export function createApi({
     const parsed = await body(c, z.object({ oauthQuery: z.string().min(1).max(8192) }).strict());
     const clientId = parsed.success ? await signedOAuthClient(auth, parsed.data.oauthQuery) : null;
     if (!clientId) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await joinForConnect(db, person(c), clientId));
+    return answer(c, await joinForConnect(db, person(c), clientId, limits));
   });
   // The developer REST API, under an organization API key only.
   const keyOf = (c: Context<Env>) => {

@@ -3,6 +3,7 @@ import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import { removeAllBrowsers } from './browsers';
 import { type ComputerProvider, destroyProviderComputers } from './computers';
 import type { Database } from './database';
+import { type Limits, noLimits } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
 import { revokeMcpGrants } from './mcp';
 import { actIn, type Member, type Person } from './organizations';
@@ -95,6 +96,23 @@ export async function organizationView(db: Database, member: Member) {
   return { organization, role };
 }
 
+// member_limit, with the deployment's words, once the organization has as many members as its limit (hooks.ts,
+// Limits.members). Under the organization's lock, so two joins cannot both take the last place.
+export async function memberLimitFailure(
+  tx: Pick<Database, 'execute' | 'select'>,
+  limits: Limits,
+  organizationId: string,
+) {
+  const limit = await limits.members(tx, organizationId);
+  if (!limit) return null;
+  await lockOrganization(tx, organizationId);
+  const [row] = await tx
+    .select({ members: count() })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.organizationId, organizationId));
+  return (row?.members ?? 0) >= limit.limit ? ({ error: 'member_limit', message: limit.message } as const) : null;
+}
+
 export async function join(
   tx: Pick<Database, 'insert' | 'select' | 'update'>,
   userId: string,
@@ -148,7 +166,12 @@ export async function joinableOrganizations(db: Database, person: Pick<Person, '
     .orderBy(asc(schema.organizations.id));
 }
 
-export async function joinByDomain(db: Database, person: Pick<Person, 'id' | 'email'>, organizationId: string) {
+export async function joinByDomain(
+  db: Database,
+  person: Pick<Person, 'id' | 'email'>,
+  organizationId: string,
+  limits: Limits = noLimits,
+) {
   const [organization] = await db
     .select({ id: schema.organizations.publicId })
     .from(schema.organizations)
@@ -159,7 +182,10 @@ export async function joinByDomain(db: Database, person: Pick<Person, 'id' | 'em
       ),
     );
   if (!organization) return { error: 'not_found' } as const;
-  return db.transaction(tx => join(tx, person.id, organization.id, 'member'));
+  return db.transaction(
+    async tx =>
+      (await memberLimitFailure(tx, limits, organization.id)) ?? join(tx, person.id, organization.id, 'member'),
+  );
 }
 
 // The member a membership ID names, in the actor's organization.

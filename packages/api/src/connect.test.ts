@@ -12,6 +12,7 @@ import { ensureExtensionClient } from '../../server/src/browsers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
+import { defaultServerHooks, type Limits, noLimits } from '../../server/src/hooks';
 import { membership, switchTo } from '../../server/src/member-fixtures';
 import { createOrganization } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
@@ -56,6 +57,7 @@ beforeEach(async () => {
   ))!;
 });
 afterEach(async () => {
+  limits = noLimits;
   vi.unstubAllEnvs();
   await pg.close();
 });
@@ -69,7 +71,10 @@ async function signedIn(id: string) {
   const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
   return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
 }
-const api = () => createApi({ db, auth, origin, computers: fakeComputerProvider().provider });
+// The deployment's limits, none unless a test sets them.
+let limits: Limits = noLimits;
+const api = () =>
+  createApi({ db, auth, origin, computers: fakeComputerProvider().provider, hooks: { ...defaultServerHooks, limits } });
 function request(cookie: string, method: string, path: string, body?: unknown, from = origin) {
   return api().request(`${origin}/api/v1${path}`, {
     method,
@@ -190,6 +195,33 @@ describe('Connect', () => {
     ]);
     // It is not an agent: the Agents page leaves it out.
     expect((await (await request(cookie, 'GET', '/mcp/grants')).json()).grants).toEqual([]);
+  });
+
+  it("refuses joining, and the organization's API keys, as the deployment's limits say", async () => {
+    const app = await registerApp();
+    const { key } = await auth.api.createApiKey({ body: { name: 'K', organizationId: appCo, userId: 'dev' } });
+    const connections = () =>
+      api().request(`${origin}/api/v1/connections`, { headers: { authorization: `Bearer ${key}` } });
+    const cookie = await signedIn('person');
+    const oauthQuery = (await authorize(cookie, app)).location.search.slice(1);
+    const join = () => request(cookie, 'POST', '/connect/join', { oauthQuery });
+    // An organization the deployment refuses: no joining, and its keys are refused before they reach a route.
+    limits = { ...noLimits, apiRefusal: async (_, id) => (id === appCo ? 'Choose a plan.' : null) };
+    for (const refused of [await join(), await connections()]) {
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({ error: 'organization_unavailable', message: 'Choose a plan.' });
+    }
+    expect(await db.select().from(schema.memberships).where(eq(schema.memberships.userId, 'person'))).toEqual([]);
+    // One that is full: no new member, though a member already in it may still go through Connect.
+    limits = { ...noLimits, members: async () => ({ limit: 1, message: 'Full.' }) };
+    expect((await connections()).status).toBe(200);
+    const full = await join();
+    expect(full.status).toBe(403);
+    expect(await full.json()).toEqual({ error: 'member_limit', message: 'Full.' });
+    limits = noLimits;
+    expect((await join()).status).toBe(200);
+    limits = { ...noLimits, members: async () => ({ limit: 1, message: 'Full.' }) };
+    expect((await join()).status).toBe(200);
   });
 
   it('lets a returning member skip the extension steps and consent, and updates the external ID', async () => {

@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agen
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type ComputerView, computerQuery, grantsQuery } from '../lib/api';
-import { computerStatus, resetsOn, syncedSignIns } from '../lib/computer';
+import { computerStatus, resetsOn, syncedSignIns, usedShare } from '../lib/computer';
 import { lastUser } from './agent-connections';
 import { AppPage } from './app-shell';
 import { LiveViewPanel } from './live-view';
@@ -27,8 +27,10 @@ export function YourComputer() {
             forks={view.forks}
             metered={!!view.usage}
             exhausted={
-              view.usage && view.usage.usedMinutes >= view.usage.allowanceMinutes
-                ? { resetsAt: view.usage.resetsAt }
+              view.usage?.hardStop && view.usage.usedMinutes >= view.usage.allowanceMinutes
+                ? {
+                    message: `This month's ${view.usage.name} are used up. They reset on ${resetsOn(view.usage.resetsAt)}.`,
+                  }
                 : null
             }
           />
@@ -49,14 +51,14 @@ function ComputerStats({ view }: { view: ComputerView }) {
   const { usage } = view;
   const stats = [
     { label: 'Status', value: status.short, note: status.note, dot: status.dot },
-    // Only with a free allowance (the metering hook).
+    // Only with an allowance (the metering hook).
     ...(usage
       ? [
           {
-            label: 'Free minutes',
+            label: usage.name.charAt(0).toUpperCase() + usage.name.slice(1),
             value: `${usage.usedMinutes} of ${usage.allowanceMinutes}`,
-            note: `This month · resets ${resetsOn(usage.resetsAt)}`,
-            bar: Math.min(100, (usage.usedMinutes / usage.allowanceMinutes) * 100),
+            note: `This month · resets ${resetsOn(usage.resetsAt)}${usage.estimate ? ` · estimated bill ${usage.estimate}` : ''}`,
+            bar: usedShare(usage),
           },
         ]
       : []),

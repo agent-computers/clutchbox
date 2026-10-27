@@ -14,7 +14,7 @@ import { openComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
-import { defaultServerHooks, noMetering } from '../../server/src/hooks';
+import { defaultServerHooks, type Limits, noLimits, noMetering } from '../../server/src/hooks';
 import { membership } from '../../server/src/member-fixtures';
 import type { Role } from '../../server/src/members';
 import {
@@ -66,15 +66,16 @@ async function inOrganization(id: string, role: Role) {
   await db.update(schema.memberships).set({ role }).where(eq(schema.memberships.id, joined.membershipId));
   return { cookie: session, member: joined };
 }
-// The deployment's tenancy may let people create organizations; by default it doesn't.
+// The deployment's tenancy may let people create organizations; by default it doesn't. Its limits may cap members.
 let tenancy: Pick<Tenancy, 'canCreate'> = {};
+let limits: Limits = noLimits;
 const api = () =>
   createApi({
     db,
     auth,
     origin,
     computers: fake.provider,
-    hooks: { ...defaultServerHooks, tenancy },
+    hooks: { ...defaultServerHooks, tenancy, limits },
   });
 function request(cookie: string, method: string, path: string, body?: unknown, from = origin) {
   return api().request(`${origin}/api/v1${path}`, {
@@ -135,6 +136,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   tenancy = {};
+  limits = noLimits;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   await pg.close();
@@ -293,6 +295,44 @@ describe('members and roles', () => {
     expect((await (await request(colleague, 'GET', '/organization')).json()).role).toBe('member');
     expect((await (await request(colleague, 'GET', '/organizations/joinable')).json()).organizations).toEqual([]);
     expect((await request(colleague, 'POST', '/organizations/join', { organizationId: acme.id })).status).toBe(409);
+  });
+
+  it("hold the deployment's member limit across invitations, accepting them, and joining by domain", async () => {
+    limits = { ...noLimits, members: async (_, id) => (id === organizationId ? { limit: 3, message: 'Full.' } : null) };
+    auth = createAuth(db, config, { limits });
+    const admin = await inOrganization('admin', 'admin');
+    const invite = (email: string) =>
+      authRequest(admin.cookie, 'POST', '/organization/invite-member', { email, role: 'member', organizationId });
+    const accept = (cookie: string, invitationId: string) =>
+      authRequest(cookie, 'POST', '/organization/accept-invitation', { invitationId });
+    // Two members and one pending invitation fill three places, so a second invitation is refused, in the hook's
+    // words; inviting the same address again replaces the first.
+    const first = await invite('first@elsewhere.test');
+    expect(first.status).toBe(200);
+    const refused = await invite('second@elsewhere.test');
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ message: 'Full.' });
+    const again = await (await invite('first@elsewhere.test')).json();
+    expect(again).toMatchObject({ status: 'pending' });
+    // Accepting is refused once the members alone fill it.
+    await signedIn('filler', 'filler@elsewhere.test');
+    await membership(db, 'filler', organizationId);
+    const firstPerson = await signedIn('first', 'first@elsewhere.test');
+    const late = await accept(firstPerson, again.id);
+    expect(late.status).toBe(403);
+    expect(await late.json()).toMatchObject({ message: 'Full.' });
+    expect((await request(firstPerson, 'GET', '/organization')).status).toBe(403);
+    // So is joining by domain.
+    await db.update(schema.organizations).set({ joinDomains: ['acme.example'] });
+    const colleague = await signedIn('colleague', 'colleague@acme.example');
+    const joined = await request(colleague, 'POST', '/organizations/join', { organizationId });
+    expect(joined.status).toBe(403);
+    expect(await joined.json()).toEqual({ error: 'member_limit', message: 'Full.' });
+    // With a place free, both work.
+    await db.delete(schema.memberships).where(eq(schema.memberships.userId, 'filler'));
+    expect((await accept(firstPerson, again.id)).status).toBe(200);
+    await db.delete(schema.memberships).where(eq(schema.memberships.userId, 'admin'));
+    expect((await request(colleague, 'POST', '/organizations/join', { organizationId })).status).toBe(200);
   });
 
   it('let owners set any role and admins only admin and member, keeping an owner', async () => {

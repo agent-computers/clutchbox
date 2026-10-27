@@ -8,8 +8,16 @@ import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient }
 import { useEffect, useRef } from 'react';
 
 export type ComputerView = {
-  // Null without a free allowance (the metering hook).
-  usage: { usedMinutes: number; allowanceMinutes: number; resetsAt: string } | null;
+  // Null without an allowance (the metering hook), whose words it carries: what its minutes are called, whether time
+  // past them is refused, and the month's estimated charge for those who may see it.
+  usage: {
+    usedMinutes: number;
+    allowanceMinutes: number;
+    resetsAt: string;
+    name: string;
+    hardStop: boolean;
+    estimate?: string;
+  } | null;
   capture: { completedAt: string; uploadedAt: string; cookieCount: number } | null;
   computer: { status: string; busy: boolean; inLiveView: boolean; appliedCaptureAt: string | null } | null;
   // Agents' forks of it that are not paused.

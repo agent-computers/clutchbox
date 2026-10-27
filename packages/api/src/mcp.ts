@@ -148,13 +148,18 @@ function syncNote(sync: SyncSummary, email: string) {
         : 'Browser sync failed this time; sites keep their previous sign-ins on the computer. The next computer_open retries.';
   }
 }
-// Without an allowance (hooks.ts), nothing.
-const freeMinutes = async (metering: Metering, db: Database, member: Member) => {
+// The allowance in the deployment's words (hooks.ts, Usage): what its minutes are called, how many are left, when they
+// reset, and whether time past them is refused or charged. Without an allowance, nothing.
+const allowance = async (metering: Metering, db: Database, member: Member) => {
   const usage = await metering.usage(db, member, new Date());
   return usage
     ? {
-        free_minutes_remaining: Math.floor(usage.remainingSeconds / 60),
-        free_minutes_reset_at: usage.resetsAt.toISOString(),
+        allowance: {
+          name: usage.name,
+          minutes_remaining: Math.floor(usage.remainingSeconds / 60),
+          resets_at: usage.resetsAt.toISOString(),
+          when_used_up: usage.hardStop ? 'refused' : 'charged',
+        },
       }
     : {};
 };
@@ -292,7 +297,7 @@ function registerComputerTools(
         await noteSetupStep(db, member, 'setUp');
         markToolStep('screenshot');
         const png = await opened.session.screenshot();
-        // End the call first, so the free minutes count its running time.
+        // End the call first, so the allowance counts its running time.
         await opened.done();
         return image(png, {
           session_id: opened.sessionId,
@@ -307,7 +312,7 @@ function registerComputerTools(
           account_email: principal.email,
           browser_sync: syncNote(opened.sync, principal.email),
           sign_in_help: signInHelp,
-          ...(await freeMinutes(computers.metering, db, member)),
+          ...(await allowance(computers.metering, db, member)),
         });
       } catch (error) {
         toolCallFailed('mcp computer_open', error);
@@ -331,7 +336,7 @@ function registerComputerTools(
       try {
         const closed = await closeComputerSession(db, computers, caller, session_id);
         if ('error' in closed) return failure(closed);
-        return result({ closed: true, ...(await freeMinutes(computers.metering, db, member)) });
+        return result({ closed: true, ...(await allowance(computers.metering, db, member)) });
       } catch (error) {
         toolCallFailed('mcp computer_close', error);
         return unavailable();
@@ -558,7 +563,7 @@ export function createMcpEndpoint({
   auth: Auth;
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'>;
+  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & Partial<Pick<ServerHooks, 'limits'>>;
 }) {
   const resource = `${origin}/api/mcp`;
   const serve = (request: Request, principal: McpPrincipal, member: Member) =>
@@ -596,7 +601,7 @@ export function createMcpEndpoint({
         );
         registerComputerTools(server, {
           db,
-          computers: { provider: computers, metering: hooks.metering },
+          computers: { provider: computers, metering: hooks.metering, ...(hooks.limits && { limits: hooks.limits }) },
           origin,
           principal,
           member,

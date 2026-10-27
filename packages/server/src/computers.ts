@@ -34,7 +34,7 @@ import {
   SYNC_SLACK_MS,
 } from './computer-timing';
 import type { Database } from './database';
-import type { Metering } from './hooks';
+import { type Limits, type Metering, noLimits } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
 import { logError } from './log';
 import type { Member } from './organizations';
@@ -112,8 +112,9 @@ const ownedBy = (caller: Caller) =>
 const isCallers = (session: Pick<SessionRow, 'membershipId' | 'clientId' | 'apiKeyId'>, caller: Caller) =>
   session.membershipId === caller.membershipId &&
   (caller.apiKeyId !== undefined ? session.apiKeyId === caller.apiKeyId : session.clientId === caller.clientId);
-// What the computer service runs computers with: the provider, and the metering hook (hooks.ts) it books time to.
-export type Computers = { provider: ComputerProvider; metering: Metering };
+// What the computer service runs computers with: the provider, the metering hook (hooks.ts) it books time to, and the
+// deployment's limits (none when left out).
+export type Computers = { provider: ComputerProvider; metering: Metering; limits?: Limits };
 // Every computers column but the sealed baseline, which can run to megabytes: only the apply and the
 // pending notice read it, and only once the capture digest changed.
 const { appliedCapture: _baseline, ...computerColumns } = getTableColumns(schema.computers);
@@ -567,7 +568,7 @@ export async function openComputerSession(
   if (profile !== undefined && !choice.named) return profileNotFound;
   const fork = computerId ?? (sessionId ? await forkOfSession(db, caller, sessionId) : null);
   const started = fork
-    ? await reopenFork(db, caller, fork, sessionId, choice)
+    ? await reopenFork(db, computers, caller, fork, sessionId, choice)
     : await createFork(db, computers, caller, label, choice);
   if ('error' in started) return started;
   const { computer } = started;
@@ -869,7 +870,7 @@ async function createFork(
     const denied = await guardFailure(tx, caller);
     if (denied) return denied;
     const now = new Date();
-    const full = await capFailure(tx, caller, now);
+    const full = await capFailure(tx, computers, caller, now);
     if (full) return full;
     // Main's latest snapshot, read under main's row lock, so one superseded since is never used; the fork's reference
     // then keeps it from being deleted (deleteUnusedSnapshots).
@@ -970,6 +971,7 @@ async function provisionFork(db: Database, provider: ComputerProvider, fork: Pic
 // Reopens one of the caller's member's forks for a new computer session.
 async function reopenFork(
   db: Database,
+  computers: Computers,
   caller: Caller,
   computerId: string,
   sessionId: string | undefined,
@@ -980,7 +982,7 @@ async function reopenFork(
     const denied = await guardFailure(tx, caller);
     if (denied) return denied;
     const now = new Date();
-    const cap = await lockForkCap(tx, caller);
+    const cap = await lockForkCap(tx, computers, caller);
     const [fork] = await tx
       .select(computerColumns)
       .from(schema.computers)
@@ -991,7 +993,7 @@ async function reopenFork(
       return { error: 'starting', message: 'This computer is still being created. Try again in a few seconds.' };
     // One already running adds nothing to the organization's running forks.
     if (!running(fork, now)) {
-      const full = await capFailure(tx, caller, now, cap);
+      const full = await capFailure(tx, computers, caller, now, cap);
       if (full) return full;
     }
     const started = await startSession(tx, caller, fork, sessionId, now, choice);
@@ -1001,8 +1003,9 @@ async function reopenFork(
 }
 
 // The organization's cap on running forks, under a lock that serializes opens across its members, so two cannot both
-// take the last place. Taken after the user row and before any computer row.
-async function lockForkCap(tx: Transaction, member: Member) {
+// take the last place: its own max_running_forks, else the deployment's limit, else the product's. Taken after the
+// user row and before any computer row.
+async function lockForkCap(tx: Transaction, computers: Computers, member: Member) {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext('agent-computers-forks'), hashtext(${member.organizationId}))`,
   );
@@ -1010,17 +1013,19 @@ async function lockForkCap(tx: Transaction, member: Member) {
     .select({ max: schema.organizations.maxRunningForks })
     .from(schema.organizations)
     .where(eq(schema.organizations.publicId, member.organizationId));
-  return organization?.max ?? DEFAULT_MAX_RUNNING_FORKS;
+  if (organization?.max != null) return organization.max;
+  return (await (computers.limits ?? noLimits).runningForks(tx, member.organizationId)) ?? DEFAULT_MAX_RUNNING_FORKS;
 }
 // busy once the organization's running forks (not yet paused, or being created) reach its cap, until the first of
 // them is due to pause.
 async function capFailure(
   tx: Transaction,
+  computers: Computers,
   member: Member,
   now: Date,
   locked?: number,
 ): Promise<ComputerFailure | null> {
-  const cap = locked ?? (await lockForkCap(tx, member));
+  const cap = locked ?? (await lockForkCap(tx, computers, member));
   const forks = await tx
     .select({ runsUntil: schema.computers.runsUntil })
     .from(schema.computers)
@@ -1650,7 +1655,8 @@ export type LiveViewStatus = {
   // During a takeover, the agent whose computer session it suspended, once that agent got user_in_control: named
   // like the account page names grants (agents.ts), and since its first such call.
   agentWaiting: { agent: AgentKind | null; host: string; since: string } | null;
-  allowanceExhausted?: { resetsAt: string } | undefined;
+  // The metering refusal (hooks.ts), in its words.
+  allowanceExhausted?: { resetsAt: string; message: string } | undefined;
 };
 type LiveViewComputer = Pick<
   ComputerRow,
@@ -1736,7 +1742,9 @@ export async function liveViewStatus(
     db.select(liveViewColumns).from(schema.computers).where(targetOf(member, target)),
     metering.refusal(db, member, now),
   ]);
-  const exhausted = refusal ? { allowanceExhausted: { resetsAt: refusal.resetsAt.toISOString() } } : {};
+  const exhausted = refusal
+    ? { allowanceExhausted: { resetsAt: refusal.resetsAt.toISOString(), message: refusal.message } }
+    : {};
   if (computer?.status !== 'ready' || !computer.sandboxId)
     return { computer: 'none', watching: false, takeover: null, agentWaiting: null, ...exhausted };
   const takeover = takenOver(computer, now)
@@ -2150,6 +2158,9 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       usedMinutes: Math.floor(usage.usedSeconds / 60),
       allowanceMinutes: usage.allowanceSeconds / 60,
       resetsAt: usage.resetsAt.toISOString(),
+      name: usage.name,
+      hardStop: usage.hardStop,
+      ...(usage.estimate !== undefined && { estimate: usage.estimate }),
     },
     computer: row
       ? {

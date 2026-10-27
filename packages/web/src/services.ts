@@ -17,7 +17,11 @@ export type ServicesOptions = {
 function buildServices(hooks: ServerHooks, { extendApi }: ServicesOptions) {
   const config = readConfig();
   const { db, pool } = createDatabase(config.DATABASE_URL);
-  const auth = createAuth(db, config, { operatorAdmin: hooks.operatorAdmin, tenancy: hooks.tenancy });
+  const auth = createAuth(db, config, {
+    operatorAdmin: hooks.operatorAdmin,
+    tenancy: hooks.tenancy,
+    limits: hooks.limits,
+  });
   // The provider account's computers, or else the deployment's own from its config.
   const computers = hooks.providerAccount(config) ?? providerFromConfig(config);
   return {

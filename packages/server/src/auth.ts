@@ -24,7 +24,7 @@ import {
 import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
-import { noOperatorAdmin, type OperatorAdmin } from './hooks';
+import { type Limits, noLimits, noOperatorAdmin, type OperatorAdmin } from './hooks';
 import { newPublicId } from './ids';
 import { type SendEmail, smtpSender } from './mail';
 import { consentMembership, MCP_SCOPES, MEMBERSHIP_CLAIM } from './mcp';
@@ -191,8 +191,8 @@ const discoveryUrl = (issuer: string) =>
     : `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
 
 // Tests inject a fetcher for client metadata documents and a fake mail sender; production uses the DNS-pinning
-// fetcher and SMTP. Operator admin is a hook (hooks.ts): its plugins, and the paths of theirs that stay off. So is
-// tenancy: which organization a new account joins.
+// fetcher and SMTP. Operator admin is a hook (hooks.ts): its plugins, and the paths of theirs that stay off. So are
+// tenancy, which organization a new account joins, and limits, how many members an invitation may bring.
 export function createAuth(
   db: Database,
   config: ServerConfig,
@@ -200,11 +200,13 @@ export function createAuth(
     fetchClientMetadata = fetchClientMetadataResource,
     operatorAdmin = noOperatorAdmin,
     tenancy = singleOrganization,
+    limits = noLimits,
     sendEmail,
   }: {
     fetchClientMetadata?: typeof fetchClientMetadataResource;
     operatorAdmin?: OperatorAdmin;
     tenancy?: Tenancy;
+    limits?: Limits;
     sendEmail?: SendEmail;
   } = {},
 ) {
@@ -402,7 +404,7 @@ export function createAuth(
         customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [MEMBERSHIP_CLAIM]: referenceId } : {}),
       }),
       cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
-      ...organizationPlugins(db, { baseURL: config.BETTER_AUTH_URL, tenancy, sendEmail: emailLinks }),
+      ...organizationPlugins(db, { baseURL: config.BETTER_AUTH_URL, tenancy, limits, sendEmail: emailLinks }),
       ...operatorAdmin.plugins,
     ],
   });

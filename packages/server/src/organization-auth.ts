@@ -4,8 +4,9 @@ import { APIError } from 'better-auth/api';
 import { organization } from 'better-auth/plugins';
 import { createAccessControl } from 'better-auth/plugins/access';
 import { adminAc, defaultStatements, memberAc, ownerAc } from 'better-auth/plugins/organization/access';
-import { and, count, eq } from 'drizzle-orm';
+import { and, count, eq, gt, ne, sql } from 'drizzle-orm';
 import type { Database } from './database';
+import type { Limits } from './hooks';
 import { newPublicId } from './ids';
 import type { SendEmail } from './mail';
 import { actIn, type Tenancy } from './organizations';
@@ -51,9 +52,47 @@ export async function actInOrganization(db: Database, userId: string, organizati
   if (membership) await actIn(db, userId, membership.id);
 }
 
+// What an invitation or its acceptance is told once the organization is full by the deployment's member limit
+// (hooks.ts, Limits.members); null below it. An invitation counts the pending ones too, but not one to the same
+// address, which it replaces, so accepting every one never passes the limit. Accepting checks the members alone; two
+// accepted at once can pass it by one, since the plugin's accept takes no lock of ours.
+async function memberLimitMessage(
+  db: Database,
+  limits: Limits,
+  organizationId: string,
+  invitedEmail?: string,
+): Promise<string | null> {
+  const limit = await limits.members(db, organizationId);
+  if (!limit) return null;
+  const [members] = await db
+    .select({ count: count() })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.organizationId, organizationId));
+  const [pending] =
+    invitedEmail === undefined
+      ? [{ count: 0 }]
+      : await db
+          .select({ count: count() })
+          .from(schema.organizationInvitations)
+          .where(
+            and(
+              eq(schema.organizationInvitations.organizationId, organizationId),
+              eq(schema.organizationInvitations.status, 'pending'),
+              gt(schema.organizationInvitations.expiresAt, new Date()),
+              ne(sql`lower(${schema.organizationInvitations.email})`, invitedEmail.toLowerCase()),
+            ),
+          );
+  return (members?.count ?? 0) + (pending?.count ?? 0) >= limit.limit ? limit.message : null;
+}
+
 export function organizationPlugins(
   db: Database,
-  { baseURL, tenancy, sendEmail }: { baseURL: string; tenancy: Tenancy; sendEmail: SendEmail | undefined },
+  {
+    baseURL,
+    tenancy,
+    limits,
+    sendEmail,
+  }: { baseURL: string; tenancy: Tenancy; limits: Limits; sendEmail: SendEmail | undefined },
 ) {
   const { canCreate } = tenancy;
   return [
@@ -87,6 +126,14 @@ export function organizationPlugins(
           if (!name || name.length > 100)
             throw new APIError('BAD_REQUEST', { message: 'An organization name is 1 to 100 characters.' });
           return { data: { ...organization, name, slug: newPublicId('organization') } };
+        },
+        beforeCreateInvitation: async ({ invitation, organization }) => {
+          const full = await memberLimitMessage(db, limits, organization.id, invitation.email);
+          if (full) throw new APIError('FORBIDDEN', { message: full });
+        },
+        beforeAcceptInvitation: async ({ organization }) => {
+          const full = await memberLimitMessage(db, limits, organization.id);
+          if (full) throw new APIError('FORBIDDEN', { message: full });
         },
         // Creating or joining an organization switches to it, for agents and the extension as well as the web app.
         afterCreateOrganization: async ({ organization, user }) => actInOrganization(db, user.id, organization.id),

@@ -2,8 +2,9 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 import { and, asc, count, eq, isNull } from 'drizzle-orm';
 import type { Database } from './database';
+import { type Limits, noLimits } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
-import { join, manages, roleOf } from './members';
+import { join, manages, memberLimitFailure, roleOf } from './members';
 import { actIn, type Member, type Person } from './organizations';
 import * as schema from './schema';
 
@@ -155,17 +156,24 @@ export async function connectStatus(db: Database, userId: string, clientId: stri
 }
 
 // Joins the app's organization as a member, if not one already, and acts there, so the extension connects and the
-// grant is made for it.
-export async function joinForConnect(db: Database, person: Person, clientId: string) {
+// grant is made for it. The deployment may refuse the organization's developer API, Connect included, or a member past
+// its limit (hooks.ts, Limits).
+export async function joinForConnect(db: Database, person: Person, clientId: string, limits: Limits = noLimits) {
   const app = await connectApp(db, clientId);
   if (!app) return { error: 'not_found' } as const;
+  const refused = await limits.apiRefusal(db, app.organizationId);
+  if (refused) return { error: 'organization_unavailable', message: refused } as const;
   return db.transaction(async tx => {
     const [membership] = await tx
       .select({ id: schema.memberships.id })
       .from(schema.memberships)
       .where(and(eq(schema.memberships.userId, person.id), eq(schema.memberships.organizationId, app.organizationId)));
     if (membership) await actIn(tx, person.id, membership.id);
-    else await join(tx, person.id, app.organizationId, 'member');
+    else {
+      const full = await memberLimitFailure(tx, limits, app.organizationId);
+      if (full) return full;
+      await join(tx, person.id, app.organizationId, 'member');
+    }
     return { joined: true as const };
   });
 }
