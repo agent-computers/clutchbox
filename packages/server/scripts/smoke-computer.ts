@@ -11,7 +11,13 @@ import { toCdpCookie } from '@agent-computers/apply';
 import { e2bComputerProvider, HELPER_DIR, REVISION, REVISION_FILE } from '@agent-computers/e2b';
 import { WebSocket } from 'ws';
 import { bundle, cookie } from '../src/capture-fixtures';
-import { CALL_HOLD_MS, CLIPBOARD_SET_MS, REFRESH_BUDGET_MS, SYNC_BUDGET_MS } from '../src/computer-timing';
+import {
+  CALL_HOLD_MS,
+  CDP_ENDPOINT_MS,
+  CLIPBOARD_SET_MS,
+  REFRESH_BUDGET_MS,
+  SYNC_BUDGET_MS,
+} from '../src/computer-timing';
 
 if (!process.env.E2B_API_KEY) {
   const cli = JSON.parse(await readFile(join(homedir(), '.e2b', 'config.json'), 'utf8').catch(() => '{}'));
@@ -315,6 +321,23 @@ try {
     await session.exec({ command: "sleep 0.5; pgrep -c -f '^python3 .*set-clipboard'", timeoutSeconds: 10 })
   ).stdout.trim();
   viewer.terminate();
+  // The CDP proxy's way to Chrome: the bridge, through E2B's proxy with the traffic token, which upgrades only with the
+  // relay's Origin. Answers the status of a refused handshake, or Chrome's reply to Browser.getVersion.
+  const endpoint = await timed('cdpEndpoint', () => session.cdpEndpoint(CDP_ENDPOINT_MS));
+  const bridged = (headers: Record<string, string>) =>
+    new Promise<unknown>(resolve => {
+      const socket = new WebSocket(endpoint.url, { headers, handshakeTimeout: 10_000 });
+      socket.once('unexpected-response', (_request, response) => resolve(response.statusCode));
+      socket.once('error', error => resolve(error.message));
+      socket.once('open', () => socket.send(JSON.stringify({ id: 1, method: 'Browser.getVersion' })));
+      socket.on('message', data => {
+        resolve(JSON.parse(String(data)).result?.product?.startsWith('Chrome/'));
+        socket.close();
+      });
+    });
+  checks.cdpBridge = await timed('cdpBridge', () => bridged(endpoint.headers));
+  const { origin: _origin, ...withoutOrigin } = endpoint.headers;
+  checks.cdpBridgeWithoutOrigin = await bridged(withoutOrigin);
 } finally {
   if (forkId) await provider.kill(forkId);
   if (sandboxId) await provider.kill(sandboxId);
@@ -355,6 +378,8 @@ const expected: Record<string, unknown> = {
   largeEchoes: 0,
   overlapping: ['fulfilled', 'fulfilled'],
   helpers: '1',
+  cdpBridge: true,
+  cdpBridgeWithoutOrigin: 403,
   ...(process.env.SMOKE_SYNC === '1' && {
     sync: {
       computerSiteKept: true,
