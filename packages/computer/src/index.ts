@@ -54,12 +54,13 @@ export type ComputerAction = z.infer<typeof actionSchema>;
 // profile's. Names are the caller's, in characters a shell passes through unquoted. FIRST_PROFILE is the directory a
 // computer's Chrome ran before profiles, which the first profile a computer gets keeps.
 // Computer sizes. People see each by its spec (2 vCPU · 4 GB, sizeName); the keys are stored identifiers only. Two CPUs
-// and 4 GB run Chrome on real pages; the larger sizes are for heavier sites and more tabs. A computer keeps the size it
-// was created at, and a fork its main computer's, since a fork starts from the main computer's memory.
+// and 4 GB run Chrome on real pages; the larger sizes are for heavier sites and more tabs. E2B refuses templates with
+// more than 8 GB of memory unless its support raises the limit, so the largest size has 8 CPUs and 8 GB. A computer
+// keeps the size it was created at, and a fork its main computer's, since a fork starts from the main computer's memory.
 export const COMPUTER_SIZES = {
   '1x': { cpuCount: 2, memoryMB: 4096 },
   '2x': { cpuCount: 4, memoryMB: 8192 },
-  '4x': { cpuCount: 8, memoryMB: 16384 },
+  '4x': { cpuCount: 8, memoryMB: 8192 },
 } as const;
 export type ComputerSize = keyof typeof COMPUTER_SIZES;
 export const COMPUTER_SIZE_NAMES = Object.keys(COMPUTER_SIZES) as [ComputerSize, ...ComputerSize[]];
