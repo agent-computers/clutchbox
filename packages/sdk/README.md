@@ -22,6 +22,10 @@ await session.close();
 
 [`examples/playwright.ts`](examples/playwright.ts) runs this end to end against your own deployment.
 
+## Connect your users
+
+To link your own users to members, register your app under **Connect apps** on the Developers page and send people to `/api/auth/oauth2/authorize` with `scope=openid connect`, PKCE (S256), a `state`, and optionally your `external_user_id` for them. They sign in or sign up, join your organization, connect the extension, and approve. Exchange the code at `/api/auth/oauth2/token` with your client ID and secret (HTTP Basic): the response carries `member`, the ID to pass to `computers.open` and `captures.latest`, and your `external_user_id`. `GET /api/v1/connections` with an API key lists every link. Removing the member or deleting the app ends it.
+
 ## Computer sessions
 
 `computers.open({ member })` starts a session on a new fork of the member's computer, a copy with their newest sign-ins applied (`session.sync` says how they applied). Pass `computer: session.computer.id` to reopen that fork later as it was left, and `session` with your current session's ID to replace it on the same fork. A fork unused for a week is deleted.

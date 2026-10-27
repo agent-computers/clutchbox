@@ -20,7 +20,7 @@ bun run db:generate --name missing_migration   # writes nothing when the schema 
 bun run build:web                 # with the variables in apps/web/.env.example set, as CI's placeholders do
 ```
 
-Run `bun run format` before committing. `bun run dev:extension` starts the extension in a development build, and `bun run dev:web` the web app (see the [README](README.md#self-hosted-the-whole-product-for-your-organization) for its configuration).
+Run `bun run format` before committing. `bun run dev:extension` starts the extension in a development build, and `bun run dev:web` the web app (see the [web app README](apps/web/README.md) for its configuration).
 
 ## Guidelines
 
