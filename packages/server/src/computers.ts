@@ -1,5 +1,5 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
 import { siteOfCookie } from '@agent-computers/capture';
 import type { ComputerProvider, ComputerSession } from '@agent-computers/computer';
@@ -91,7 +91,21 @@ export type SessionHandle = {
 // Re-checks the caller's access inside the control transaction (MCP: the live grant), so an in-flight
 // call cannot take control after a revocation ended its sessions. Revocation locks the same user row.
 export type AccessGuard = (tx: Pick<Database, 'select'>) => Promise<boolean>;
-export type Caller = Member & { clientId: string; guard?: AccessGuard | undefined };
+// Who opens and uses a computer session: an MCP client by its OAuth client_id, or an organization API key by its ID
+// (the REST API's). A session works only for the member and the agent that opened it.
+export type SessionAgent = { clientId: string; apiKeyId?: undefined } | { apiKeyId: string; clientId?: undefined };
+export type Caller = Member & SessionAgent & { guard?: AccessGuard | undefined };
+// The caller's own sessions, and whether a session is one.
+const ownedBy = (caller: Caller) =>
+  and(
+    eq(schema.computerSessions.membershipId, caller.membershipId),
+    caller.apiKeyId !== undefined
+      ? eq(schema.computerSessions.apiKeyId, caller.apiKeyId)
+      : eq(schema.computerSessions.clientId, caller.clientId),
+  );
+const isCallers = (session: Pick<SessionRow, 'membershipId' | 'clientId' | 'apiKeyId'>, caller: Caller) =>
+  session.membershipId === caller.membershipId &&
+  (caller.apiKeyId !== undefined ? session.apiKeyId === caller.apiKeyId : session.clientId === caller.clientId);
 // What the computer service runs computers with: the provider, and the metering hook (hooks.ts) it books time to.
 export type Computers = { provider: ComputerProvider; metering: Metering };
 // Every computers column but the sealed baseline, which can run to megabytes: only the apply and the
@@ -245,11 +259,7 @@ async function lockSession(
   now: Date,
   { close = false } = {},
 ): Promise<{ session: SessionRow; computer: ComputerRow } | ComputerFailure> {
-  const own = and(
-    eq(schema.computerSessions.publicId, sessionId),
-    eq(schema.computerSessions.membershipId, caller.membershipId),
-    eq(schema.computerSessions.clientId, caller.clientId),
-  );
+  const own = and(eq(schema.computerSessions.publicId, sessionId), ownedBy(caller));
   const [found] = await tx
     .select({ computerId: schema.computerSessions.computerId })
     .from(schema.computerSessions)
@@ -342,15 +352,16 @@ async function endTakeover<
   return { ...computer, ...cleared };
 }
 // Registers a call in flight (under the computer row lock). It holds control for its session until its
-// deadline, so nobody takes over mid-call, and keeps other calls' ends from letting the computer pause.
+// deadline, budgetMs from now, so nobody takes over mid-call, and keeps other calls' ends from letting the computer pause.
 async function beginCall(
   tx: Transaction,
   computer: Pick<ComputerRow, 'id' | 'callsInFlight'>,
   sessionId: number,
   now: Date,
+  budgetMs = CALL_BUDGET_MS,
 ) {
   const id = randomUUID();
-  const until = new Date(now.getTime() + CALL_BUDGET_MS);
+  const until = new Date(now.getTime() + budgetMs);
   await tx
     .update(schema.computers)
     .set({
@@ -464,8 +475,15 @@ async function finishCall(
     return pauseComputer(tx, metering, call.computerId, call.member, until, now, pauseAfter);
   });
 }
-// Meters and connects for the call's hold. The returned done() must run after the call's work.
-async function startCall(db: Database, { provider, metering }: Computers, call: Call, sandboxId: string) {
+// Meters and connects for the call's hold: its budget and the idle minute. The returned done() must run after the
+// call's work.
+async function startCall(
+  db: Database,
+  { provider, metering }: Computers,
+  call: Call,
+  sandboxId: string,
+  holdMs = CALL_HOLD_MS,
+) {
   let session: ComputerSession | null = null;
   let finished: Promise<void> | undefined;
   const done = () => {
@@ -476,9 +494,9 @@ async function startCall(db: Database, { provider, metering }: Computers, call: 
     return finished;
   };
   try {
-    await meterRun(db, metering, call.computerId, call.member, CALL_HOLD_MS);
+    await meterRun(db, metering, call.computerId, call.member, holdMs);
     markToolStep('connect');
-    session = await provider.connect(sandboxId, CALL_HOLD_MS);
+    session = await provider.connect(sandboxId, holdMs);
   } catch (error) {
     await done();
     throw error;
@@ -560,14 +578,7 @@ async function forkOfSession(db: Database, caller: Caller, sessionId: string) {
     .select({ publicId: schema.computers.publicId })
     .from(schema.computerSessions)
     .innerJoin(schema.computers, eq(schema.computers.id, schema.computerSessions.computerId))
-    .where(
-      and(
-        eq(schema.computerSessions.publicId, sessionId),
-        eq(schema.computerSessions.membershipId, caller.membershipId),
-        eq(schema.computerSessions.clientId, caller.clientId),
-        isNotNull(schema.computers.forkOf),
-      ),
-    );
+    .where(and(eq(schema.computerSessions.publicId, sessionId), ownedBy(caller), isNotNull(schema.computers.forkOf)));
   return row?.publicId ?? null;
 }
 
@@ -587,12 +598,7 @@ async function startSession(
     computer = await endTakeover(tx, computer, now);
     live = await liveSession(tx, computer.id);
   }
-  const own =
-    !!live &&
-    !!sessionId &&
-    live.publicId === sessionId &&
-    live.membershipId === caller.membershipId &&
-    live.clientId === caller.clientId;
+  const own = !!live && !!sessionId && live.publicId === sessionId && isCallers(live, caller);
   // The user's takeover: the session it suspended waits for the hand-back; everyone else is busy until then.
   if (takenOver(computer, now)) return own && live?.suspendedAt ? userInControl : userBusy;
   if (live) {
@@ -612,7 +618,7 @@ async function startSession(
     .values({
       publicId,
       membershipId: caller.membershipId,
-      clientId: caller.clientId,
+      ...(caller.apiKeyId !== undefined ? { apiKeyId: caller.apiKeyId } : { clientId: caller.clientId }),
       computerId: computer.id,
       createdAt: now,
       lastCallAt: now,
@@ -624,12 +630,14 @@ async function startSession(
 }
 
 // One call within the caller's live computer session: resumes the fork without applying, and, once after a hand-back,
-// says that the user had control.
+// says that the user had control. budgetMs: how long the call may hold control, CALL_BUDGET_MS for a tool call's, or
+// as long as the CDP proxy keeps its connection.
 export async function useComputerSession(
   db: Database,
   computers: Computers,
   caller: Caller,
   sessionId: string,
+  { budgetMs = CALL_BUDGET_MS }: { budgetMs?: number } = {},
 ): Promise<SessionHandle | ComputerFailure> {
   if (!SESSION_ID_PATTERN.test(sessionId)) return notFound;
   const control = async (tx: Transaction) =>
@@ -650,7 +658,7 @@ export async function useComputerSession(
       return {
         computer,
         sessionKey: session.id,
-        callId: await beginCall(tx, computer, session.id, new Date()),
+        callId: await beginCall(tx, computer, session.id, new Date(), budgetMs),
         handedBackAt: session.handedBackAt,
       };
     },
@@ -658,7 +666,7 @@ export async function useComputerSession(
   if ('error' in started) return started;
   const { computer, handedBackAt } = started;
   const call = { id: started.callId, sessionId: started.sessionKey, computerId: computer.id, member: caller };
-  const { session, done } = await startCall(db, computers, call, computer.sandboxId!);
+  const { session, done } = await startCall(db, computers, call, computer.sandboxId!, budgetMs + IDLE_PAUSE_MS);
   try {
     // Cleared only once the call can run, so a failed one leaves the notice for the agent's retry; conditional, so
     // a newer hand-back since stays.
@@ -711,6 +719,75 @@ export async function closeComputerSession(
   });
   if ('closed' in closed) await sweepForks(db, provider).catch(error => logError('fork sweep', error));
   return closed;
+}
+
+// --- CDP ---
+// A REST computer session's CDP URL carries a secret of its own, so frameworks that take only a URL (Playwright,
+// browser-use, Stagehand) can connect, and the API key never appears in one. Only its SHA-256 is kept, and it works
+// only while its session is open: the CDP proxy (packages/api/src/cdp.ts) finds the session by it, then acts as the
+// session's caller, re-checking where the session stands as it runs (computerSessionState).
+export const CDP_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const cdpTokenHash = (token: string) => createHash('sha256').update(token).digest('base64url');
+
+// A new CDP secret for the caller's own live session, replacing any earlier one; null without that session.
+export async function issueCdpToken(db: Database, caller: Caller, sessionId: string): Promise<string | null> {
+  const token = randomBytes(32).toString('base64url');
+  const [issued] = await db
+    .update(schema.computerSessions)
+    .set({ cdpTokenHash: cdpTokenHash(token) })
+    .where(
+      and(eq(schema.computerSessions.publicId, sessionId), ownedBy(caller), isNull(schema.computerSessions.endedAt)),
+    )
+    .returning({ id: schema.computerSessions.id });
+  return issued ? token : null;
+}
+
+// The session a CDP secret names, with the member and API key it belongs to; null for an unknown secret or an ended
+// session.
+export async function cdpSessionOf(db: Pick<Database, 'select'>, token: string) {
+  if (!CDP_TOKEN_PATTERN.test(token)) return null;
+  const [found] = await db
+    .select({
+      sessionId: schema.computerSessions.publicId,
+      apiKeyId: schema.computerSessions.apiKeyId,
+      userId: schema.memberships.userId,
+      membershipId: schema.memberships.id,
+      organizationId: schema.memberships.organizationId,
+    })
+    .from(schema.computerSessions)
+    .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computerSessions.membershipId))
+    .where(and(eq(schema.computerSessions.cdpTokenHash, cdpTokenHash(token)), isNull(schema.computerSessions.endedAt)));
+  if (!found?.apiKeyId) return null;
+  const { sessionId, apiKeyId, ...member } = found;
+  return { sessionId, apiKeyId, member };
+}
+
+// Where the caller's computer session stands, for the CDP proxy's re-checks and the REST API's session status: open
+// while the caller's access holds (its guard) and the session is live; user_in_control while the user's takeover
+// suspends it, until the hand-back; ended otherwise. Reads only: the computer service ends what has lapsed on the
+// session's next call.
+export type SessionState = 'open' | 'user_in_control' | 'ended';
+export async function computerSessionState(
+  db: Database,
+  caller: Caller,
+  sessionId: string,
+  now = new Date(),
+): Promise<SessionState> {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return 'ended';
+  if (caller.guard && !(await caller.guard(db))) return 'ended';
+  const [found] = await db
+    .select({
+      endedAt: schema.computerSessions.endedAt,
+      lastCallAt: schema.computerSessions.lastCallAt,
+      suspendedAt: schema.computerSessions.suspendedAt,
+      takeoverUntil: schema.computers.takeoverUntil,
+    })
+    .from(schema.computerSessions)
+    .innerJoin(schema.computers, eq(schema.computers.id, schema.computerSessions.computerId))
+    .where(and(eq(schema.computerSessions.publicId, sessionId), ownedBy(caller)));
+  if (!found || found.endedAt) return 'ended';
+  if (found.suspendedAt || takenOver(found, now)) return 'user_in_control';
+  return expired(found, now) ? 'ended' : 'open';
 }
 
 // --- Forks ---
@@ -1021,7 +1098,8 @@ export type ForkView = {
   lastUsedAt: string;
   // in_use: a computer session holds control, or the user took it over in live view.
   status: 'starting' | 'in_use' | 'running' | 'paused';
-  // The agent whose computer session is open on it, suspended by a takeover or not; null with none.
+  // The agent whose computer session is open on it, suspended by a takeover or not; null with none. host: where an MCP
+  // client's ID points, or an API key's name.
   agent: { agent: AgentKind | null; host: string } | null;
 };
 // The member's forks, most recently used first.
@@ -1045,10 +1123,12 @@ export async function listForks(db: Database, member: Member, now = new Date()):
         .select({
           computerId: schema.computerSessions.computerId,
           clientId: schema.computerSessions.clientId,
+          keyName: schema.apikey.name,
           lastCallAt: schema.computerSessions.lastCallAt,
           suspendedAt: schema.computerSessions.suspendedAt,
         })
         .from(schema.computerSessions)
+        .leftJoin(schema.apikey, eq(schema.apikey.id, schema.computerSessions.apiKeyId))
         .where(
           and(
             inArray(
@@ -1063,9 +1143,11 @@ export async function listForks(db: Database, member: Member, now = new Date()):
   const agents = new Map(
     live
       .filter(session => !expired(session, now))
-      .map(({ computerId, clientId }) => [
+      .map(({ computerId, clientId, keyName }) => [
         computerId,
-        { agent: agentOf(clientId), host: clientHost(clientId) ?? clientId },
+        clientId
+          ? { agent: agentOf(clientId), host: clientHost(clientId) ?? clientId }
+          : { agent: null, host: `${keyName ?? 'An'} API key` },
       ]),
   );
   return forks.map(fork => ({
@@ -1106,7 +1188,7 @@ export async function deleteFork(
     const now = new Date();
     if (takenOver(fork, now)) return userBusy;
     const live = await liveSession(tx, fork.id);
-    if (live && holdsControl(live, now) && live.clientId !== caller.clientId) {
+    if (live && holdsControl(live, now) && !isCallers(live, caller)) {
       const busyUntil = new Date(live.lastCallAt.getTime() + IDLE_PAUSE_MS);
       return {
         error: 'busy',
@@ -1515,7 +1597,8 @@ export async function liveViewStatus(
         ),
       )
       .groupBy(schema.computerSessions.clientId);
-    if (waiting?.since)
+    // Only MCP calls are recorded, so only an MCP client is seen waiting.
+    if (waiting?.since && waiting.clientId)
       agentWaiting = {
         agent: agentOf(waiting.clientId),
         host: clientHost(waiting.clientId) ?? waiting.clientId,

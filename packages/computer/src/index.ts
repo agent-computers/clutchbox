@@ -87,6 +87,10 @@ export interface ComputerSession {
   // a WebSocket URL and the headers it needs, which carry the provider's traffic token, so they never leave the
   // server. Refuses a computer that accepts public traffic. Done within budgetMs.
   stream(budgetMs: number): Promise<{ url: string; headers: Record<string, string> }>;
+  // Starts Chrome and a bridge to its DevTools unless they run, and says where to reach the browser's CDP WebSocket, as
+  // stream() does for live view: the headers carry the provider's traffic token, so they never leave the server.
+  // Refuses a computer that accepts public traffic. Done within budgetMs.
+  cdpEndpoint(budgetMs: number): Promise<{ url: string; headers: Record<string, string> }>;
   // Makes `text` the computer's clipboard, owned anew, so the next paste there gets it (live view's paste). Done, or
   // failed, within budgetMs.
   setClipboard(text: string, budgetMs: number): Promise<void>;

@@ -1,7 +1,7 @@
 {
   "name": "@agent-computers/api",
   "version": "0.1.0",
-  "description": "The Clutchbox web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay.",
+  "description": "The Clutchbox web app's HTTP API: the routes the web app, the extension, and developers' servers call, the MCP server agents connect to, and the live-view and CDP relays.",
   "homepage": "https://www.clutchbox.dev",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
   "author": "Clutchbox",
@@ -17,6 +17,7 @@
     ".": "./src/index.ts",
     "./mcp": "./src/mcp.ts",
     "./live-view": "./src/live-view.ts",
+    "./cdp": "./src/cdp.ts",
     "./node-upgrade": "./src/node-upgrade.ts"
   },
   "scripts": {
@@ -36,7 +37,9 @@
   },
   "devDependencies": {
     "@agent-computers/e2b": "workspace:*",
+    "@agent-computers/sdk": "workspace:*",
     "@types/ws": "8.18.2",
-    "drizzle-orm": "0.45.4"
+    "drizzle-orm": "0.45.4",
+    "playwright-core": "1.64.0"
   }
 }

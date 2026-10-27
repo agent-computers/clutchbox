@@ -15,7 +15,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createdAt, id, key, time, timestamps } from './columns';
-import { oauthClient } from './oauth-schema';
+import { apikey, oauthClient } from './oauth-schema';
 
 export const user = pgTable('auth_user', {
   id: text('id').primaryKey(),
@@ -211,8 +211,9 @@ export const organizationInvitations = pgTable(
     check('organization_invitations_status', oneOf(table.status, INVITATION_STATUSES)),
   ],
 );
-// What an organization API key may do (api-keys.ts), as its permissions. captures: read any member's latest capture.
-export const API_KEY_SCOPES = ['captures'] as const;
+// What an organization API key may do (api-keys.ts), as its permissions. captures: read any member's latest capture;
+// computers: open computer sessions for any member, on forks of their computer, and drive them over CDP.
+export const API_KEY_SCOPES = ['captures', 'computers'] as const;
 // A person connected to an organization's app through Connect (connect.ts): the app's OAuth client, the member, and
 // the app's own ID for them. It goes with either.
 export const connections = pgTable(
@@ -344,8 +345,9 @@ export const computerSnapshots = pgTable(
 );
 // superseded: another agent's computer_open replaced this session after its idle minute.
 export const SESSION_END_REASONS = ['closed', 'idle', 'superseded', 'replaced', 'revoked'] as const;
-// Computer sessions: a server-issued public ID that works only for the member and OAuth client
-// that opened it. At most one is live per computer. `lastCallAt` is when the latest call ended; a call in
+// Computer sessions: a server-issued public ID that works only for the member and the agent that opened it: an MCP
+// client (OAuth client_id) or an organization API key (api_key_id), exactly one of them. At most one is live per
+// computer. `lastCallAt` is when the latest call ended; a call in
 // flight writes its deadline. A user's takeover suspends the live session: `suspendedAt` stops its idle
 // clock, and the resume shifts `lastCallAt` past the suspension and sets `handedBackAt`, which its next call
 // reports to the agent and clears.
@@ -355,12 +357,13 @@ export const computerSessions = pgTable(
     id: id(),
     publicId: text('public_id').notNull().unique(),
     membershipId: membershipId().notNull(),
-    clientId: text('client_id')
-      .notNull()
-      .references(() => oauthClient.clientId, { onDelete: 'cascade' }),
+    clientId: text('client_id').references(() => oauthClient.clientId, { onDelete: 'cascade' }),
+    apiKeyId: text('api_key_id').references(() => apikey.id, { onDelete: 'cascade' }),
     computerId: key('computer_id')
       .notNull()
       .references(() => computers.id, { onDelete: 'cascade' }),
+    // The SHA-256 of the secret in a REST session's CDP URL (computers.ts, CDP); null for MCP's.
+    cdpTokenHash: text('cdp_token_hash').unique(),
     lastCallAt: time('last_call_at').notNull(),
     endedAt: time('ended_at'),
     endReason: text('end_reason', { enum: SESSION_END_REASONS }),
@@ -373,6 +376,8 @@ export const computerSessions = pgTable(
     uniqueIndex('computer_sessions_live_unique').on(table.computerId).where(sql`${table.endedAt} IS NULL`),
     index('computer_sessions_computer_idx').on(table.computerId),
     index('computer_sessions_client_idx').on(table.clientId),
+    index('computer_sessions_api_key_idx').on(table.apiKeyId),
+    check('computer_sessions_agent', sql`(${table.clientId} IS NULL) <> (${table.apiKeyId} IS NULL)`),
     check('computer_sessions_end_reason', oneOf(table.endReason, SESSION_END_REASONS)),
     check('computer_sessions_ended', sql`(${table.endedAt} IS NULL) = (${table.endReason} IS NULL)`),
   ],

@@ -1,4 +1,8 @@
-import { LIVE_VIEW_MAX_DURATION_MS, ROUTE_MAX_DURATION_MS } from '@agent-computers/server/computer-timing';
+import {
+  CDP_MAX_DURATION_MS,
+  LIVE_VIEW_MAX_DURATION_MS,
+  ROUTE_MAX_DURATION_MS,
+} from '@agent-computers/server/computer-timing';
 
 // Every product URL, as the thin route file each app commits for it. Next.js routes only files in an app's own app/,
 // and reads segment config (runtime, dynamic, maxDuration) only as literals written in that file: a re-exported
@@ -161,6 +165,15 @@ export const routeManifest: RouteEntry[] = [
     module: 'live-view',
     factory: { name: 'liveViewRoute', as: ['GET'] },
     segment: { ...server, maxDuration: seconds(LIVE_VIEW_MAX_DURATION_MS) },
+  },
+  {
+    // The CDP proxy, likewise: it closes the connection just before its limit, and the client reconnects.
+    id: 'cdp',
+    dir: 'api/v1/cdp',
+    file: 'route.ts',
+    module: 'cdp',
+    factory: { name: 'cdpRoute', as: ['GET'] },
+    segment: { ...server, maxDuration: seconds(CDP_MAX_DURATION_MS) },
   },
   {
     id: 'extension-client',

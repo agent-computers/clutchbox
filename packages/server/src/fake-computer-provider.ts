@@ -54,6 +54,8 @@ export function fakeComputerProvider() {
     providerTimeouts: [] as number[],
     // Live view stream starts, by sandbox.
     streams: [] as string[],
+    // CDP bridge starts, by sandbox.
+    cdpEndpoints: [] as string[],
     syncBudgets: [] as (number | undefined)[],
     timeZones: [] as string[],
     // Refreshes and cookie syncs, in order.
@@ -72,6 +74,8 @@ export function fakeComputerProvider() {
   let createFromSnapshotFails = false;
   // Where stream() points: a test's own WebSocket server for relay tests.
   let streamUrl = 'wss://stream.example.test/';
+  // Where cdpEndpoint() points: a test's own WebSocket server standing in for Chrome.
+  let cdpUrl = 'wss://cdp.example.test/';
   // Like Storage.setCookies: a cookie replaces the one with its identity, and an expired one deletes it.
   const setCookies = (sandbox: FakeSandbox, cookies: CdpCookieParam[]) => {
     for (const cookie of cookies) {
@@ -189,6 +193,14 @@ export function fakeComputerProvider() {
             headers: { 'e2b-traffic-access-token': `token-${sandboxId}`, origin: 'agent-computers-relay' },
           };
         },
+        async cdpEndpoint() {
+          if (sandbox.public) throw new Error('computer accepts public traffic');
+          calls.cdpEndpoints.push(sandboxId);
+          return {
+            url: cdpUrl,
+            headers: { 'e2b-traffic-access-token': `token-${sandboxId}`, origin: 'agent-computers-relay' },
+          };
+        },
         async setClipboard(text) {
           if (clipboardFails) throw new Error('setClipboard failed in fake');
           sandbox.clipboard = text;
@@ -270,6 +282,9 @@ export function fakeComputerProvider() {
     },
     setStreamUrl: (url: string) => {
       streamUrl = url;
+    },
+    setCdpUrl: (url: string) => {
+      cdpUrl = url;
     },
   };
 }

@@ -33,7 +33,7 @@ export function Developers() {
   return (
     <AppPage
       title="Developers"
-      description="Let your servers read your members' synced sign-ins, and let your app bring its users here to join."
+      description="Let your servers use your members' synced sign-ins and computers, and let your app bring its users here to join."
     >
       {isError && (
         <Alert variant="destructive">
@@ -55,8 +55,13 @@ export function Developers() {
   );
 }
 
-// Keys for the organization's developers' servers, which read every member's latest capture over REST. The secret is
-// shown once, right after creating it.
+// Keys for the organization's developers' servers, which read every member's latest capture and open computer sessions
+// for them over REST. The secret is shown once, right after creating it. Keys made before the computers scope have
+// captures alone, and say so.
+const opensComputers = (permissions: unknown) => {
+  const parsed = typeof permissions === 'string' ? JSON.parse(permissions) : permissions;
+  return !!(parsed as Record<string, string[] | undefined> | null)?.computers?.includes('read');
+};
 function ApiKeys({ organizationId }: { organizationId: string }) {
   const { data } = useListApiKeys(authClient, { query: { organizationId } });
   const keys = data?.apiKeys;
@@ -74,7 +79,8 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
         </CardTitle>
         <CardDescription>
           A key lets your servers read any member's latest synced sign-ins over the REST API, to use in your own
-          browsers. Members agreed to this when they joined. Keep keys secret, and delete one you no longer use.
+          browsers, and open sessions on copies of their computer, already signed in, that your agents drive over CDP.
+          Members agreed to this when they joined. Keep keys secret, and delete one you no longer use.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -121,6 +127,7 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
                   <p className="truncate text-sm font-medium">{key.name}</p>
                   <p className="text-sm text-muted-foreground">
                     {key.start ? `${key.start}… · ` : ''}
+                    {opensComputers(key.permissions) ? '' : 'sign-ins only · '}
                     {key.lastRequest ? `last used ${day.format(new Date(key.lastRequest))}` : 'never used'}
                   </p>
                 </div>

@@ -1,6 +1,6 @@
 # @agent-computers/e2b
 
-Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome that pauses when idle, resumes with its memory, and stays signed in to the sites you sync. It implements the [`ComputerProvider`](../computer) interface: screenshots, mouse and keyboard, commands, Chrome DevTools Protocol, file downloads, live view, and cookie sync.
+Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome that pauses when idle, resumes with its memory, and stays signed in to the sites you sync. It implements the [`ComputerProvider`](../computer) interface: screenshots, mouse and keyboard, commands, Chrome DevTools Protocol (one command at a time, or a connection the server relays), file downloads, live view, and cookie sync.
 
 ## The template
 

@@ -32,8 +32,9 @@ export const INVITATION_TTL_SECONDS = 7 * 24 * 3600;
 const MEMBERSHIP_LIMIT = 100_000;
 // At most this many live API keys per organization: a few per environment, not a list to grow.
 export const MAX_API_KEYS = 20;
-// What a key is for (schema.ts, API_KEY_SCOPES). It is the only scope so far, so every key has it.
-export const API_KEY_PERMISSIONS = { captures: ['read'] };
+// What a new key may do (schema.ts, API_KEY_SCOPES): every scope. The plugin lets only the server set a key's
+// permissions, so this takes no choice; keys made before the computers scope have captures alone.
+export const API_KEY_PERMISSIONS = { captures: ['read'], computers: ['read'] };
 export const API_KEY_PREFIX = 'ack_';
 
 // The membership the person has in an organization, by the organization's public ID.

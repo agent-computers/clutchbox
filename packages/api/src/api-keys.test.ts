@@ -149,7 +149,12 @@ describe('organization API keys', () => {
     expect(key).toMatchObject({ id: expect.stringMatching(/^key_/), secret: expect.stringMatching(/^ack_\w+$/) });
     const listed = await (await listKeys(admin.cookie)).json();
     expect(listed.apiKeys).toEqual([
-      expect.objectContaining({ id: key.id, name: 'Ingest', referenceId: acme, permissions: { captures: ['read'] } }),
+      expect.objectContaining({
+        id: key.id,
+        name: 'Ingest',
+        referenceId: acme,
+        permissions: { captures: ['read'], computers: ['read'] },
+      }),
     ]);
     expect(JSON.stringify(listed)).not.toContain(key.secret);
     const [stored] = await db.select({ key: schema.apikey.key }).from(schema.apikey);

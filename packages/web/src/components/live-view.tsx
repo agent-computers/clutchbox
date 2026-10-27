@@ -26,6 +26,7 @@ import { Spinner } from '@agent-computers/ui/components/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
 import type RFB from '@novnc/novnc';
 import { Eye, Maximize, Monitor, MousePointer2 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ComputerView,
@@ -73,7 +74,8 @@ const agentOf = ({ agent, host }: NonNullable<Fork['agent']>) => (agent ? agentN
 // the user takes control; the relay passes input only while it does, so noVNC's viewOnly only spares the user dead
 // input. Stopping, switching computers, or leaving the page releases the lease, which ends the watch and hands back.
 // metered: there is a free allowance (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
-// resets. forks: the agents' forks that are not paused.
+// resets. forks: the agents' forks that are not paused. A link with ?computer=<fork ID>, the live-view link the REST API
+// gives developers, starts watching that fork.
 export function LiveViewPanel({
   metered,
   exhausted,
@@ -83,7 +85,11 @@ export function LiveViewPanel({
   exhausted: { resetsAt: string } | null;
   forks: Fork[];
 }) {
-  const [session, setSession] = useState<{ intent: Intent; target: Target } | null>(null);
+  const linkedId = useSearchParams().get('computer');
+  const linked = forks.find(fork => fork.computerId === linkedId);
+  const [session, setSession] = useState<{ intent: Intent; target: Target } | null>(() =>
+    linked ? { intent: 'watch', target: { computer: linked.computerId, name: forkName(linked) } } : null,
+  );
   const start = (intent: Intent, target: Target) => setSession({ intent, target });
   return (
     <>

@@ -9,6 +9,8 @@ import {
 import { Sandbox } from '@e2b/desktop';
 import { Sandbox as BaseSandbox, CommandExitError, TimeoutError } from 'e2b';
 import {
+  CDP_BRIDGE_START_MS,
+  CDP_BRIDGE_VERSION_MS,
   CDP_COMMAND_MS,
   CDP_REPLY_MS,
   CLIPBOARD_CLEANUP_MS,
@@ -166,6 +168,55 @@ if ! vnc | grep -q -- ' -noprimary '; then
 fi
 listening || (cd /opt/noVNC/utils/websockify && setsid nohup ./run --auth-plugin ExpectOrigin --auth-source ${STREAM_ORIGIN} --unix-target=$D/vnc.sock 0.0.0.0:${STREAM_PORT} >$D/websockify.log 2>&1 </dev/null 9>&- &)
 while [ "$(date +%s)" -le "$end" ]; do [ -S $D/vnc.sock ] && listening && exit 0; sleep 0.25; done
+exit 1
+`;
+// The bridge to Chrome's DevTools for the server's CDP proxy, started on demand and left running: Chrome listens only
+// on 127.0.0.1:9222, which E2B's proxy does not reach, so this listens on CDP_PORT, the one port the proxy reaches,
+// behind the provider's traffic token. Each WebSocket handshake is passed to the browser's current endpoint (Chrome's
+// changes when it restarts) as a WebSocket handshake of Chrome's own, with only the handshake's headers and the Host
+// Chrome accepts, and then the bytes both ways. Like websockify's, it upgrades only a handshake whose Origin is
+// STREAM_ORIGIN, which no web page on the computer can send. It logs nothing.
+export const CDP_PORT = 9223;
+const CDP_BRIDGE_DIR = '/tmp/cdp-bridge';
+export const CDP_BRIDGE_JS = `import { createServer } from 'node:http';
+import { connect } from 'node:net';
+const HANDSHAKE = /^(upgrade|connection|sec-websocket-(key|version|extensions|protocol))$/i;
+const refuse = (socket, status) => socket.end('HTTP/1.1 ' + status + '\\r\\nConnection: close\\r\\nContent-Length: 0\\r\\n\\r\\n');
+const server = createServer((request, response) => response.writeHead(404).end());
+server.on('upgrade', async (request, socket, head) => {
+  socket.on('error', () => socket.destroy());
+  if (request.headers.origin !== '${STREAM_ORIGIN}' || request.url !== '/') return refuse(socket, '403 Forbidden');
+  let path;
+  try {
+    const version = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(${CDP_BRIDGE_VERSION_MS}) }).then(response => response.json());
+    path = new URL(version.webSocketDebuggerUrl).pathname;
+  } catch {
+    return refuse(socket, '502 Bad Gateway');
+  }
+  const chrome = connect(9222, '127.0.0.1');
+  chrome.on('error', () => socket.destroy());
+  chrome.on('close', () => socket.destroy());
+  socket.on('close', () => chrome.destroy());
+  chrome.on('connect', () => {
+    const lines = ['GET ' + path + ' HTTP/1.1', 'Host: 127.0.0.1:9222'];
+    for (let i = 0; i < request.rawHeaders.length; i += 2)
+      if (HANDSHAKE.test(request.rawHeaders[i])) lines.push(request.rawHeaders[i] + ': ' + request.rawHeaders[i + 1]);
+    chrome.write(lines.join('\\r\\n') + '\\r\\n\\r\\n');
+    if (head.length) chrome.write(head);
+    socket.pipe(chrome).pipe(socket);
+  });
+});
+server.listen(${CDP_PORT}, '0.0.0.0');
+`;
+// Starts the bridge unless its port listens. Idempotent and serialized (flock), so concurrent proxies start one; exits 0
+// once the port is up. Self-contained, so a computer without it can run it inline.
+export const CDP_BRIDGE = `#!/bin/sh
+D=${CDP_BRIDGE_DIR}
+end=$(($(date +%s) + ${CDP_BRIDGE_START_MS / 1000}))
+mkdir -p $D && exec 9>$D/lock && flock -w ${CDP_BRIDGE_START_MS / 1000} 9 || exit 1
+listening() { ss -Hltn "sport = :${CDP_PORT}" | grep -q .; }
+listening || (setsid nohup node --input-type=module -e "$(echo ${Buffer.from(CDP_BRIDGE_JS).toString('base64')} | base64 -d)" >/dev/null 2>&1 </dev/null 9>&- &)
+while [ "$(date +%s)" -le "$end" ]; do listening && exit 0; sleep 0.1; done
 exit 1
 `;
 // Live view's paste, through libX11 with ctypes, since the template has no xclip or xsel.
@@ -326,6 +377,7 @@ export const HELPERS = [
   { name: 'cdp.mjs', content: CDP_HELPER, mode: '644' },
   { name: 'start-desktop.sh', content: START_DESKTOP, mode: '755' },
   { name: 'live-view-stream.sh', content: LIVE_VIEW_STREAM, mode: '755' },
+  { name: 'cdp-bridge.sh', content: CDP_BRIDGE, mode: '755' },
   { name: 'set-clipboard.py', content: SET_CLIPBOARD, mode: '644' },
 ] as const;
 // Changes with any helper, Chrome's flags included. A computer records the revision it runs in REVISION_FILE.
@@ -537,6 +589,25 @@ function session(sandbox: Sandbox): ComputerSession {
       });
       return {
         url: `wss://${sandbox.getHost(STREAM_PORT)}/`,
+        headers: { 'e2b-traffic-access-token': token, origin: STREAM_ORIGIN },
+      };
+    },
+    // As stream() does, refused on a computer that accepts public traffic, whose bridge port would put Chrome's DevTools
+    // on a public URL. Chrome first, since the user may have quit it; then the bridge, inline on a computer whose
+    // refresh has not yet brought the helper.
+    async cdpEndpoint(budgetMs) {
+      const token = sandbox.trafficAccessToken;
+      if (!token) throw new Error('computer accepts public traffic');
+      const end = Date.now() + budgetMs;
+      await ensureChrome(Math.min(budgetMs, ENSURE_CHROME_MS));
+      const helper = `${HELPER_DIR}/cdp-bridge.sh`;
+      const inline = `echo ${Buffer.from(CDP_BRIDGE).toString('base64')} | base64 -d | sh`;
+      await sandbox.commands.run(`if [ -x ${helper} ]; then ${helper}; else ${inline}; fi`, {
+        user: 'user',
+        timeoutMs: Math.max(1, Math.min(end - Date.now(), CDP_BRIDGE_START_MS + STREAM_MARGIN_MS)),
+      });
+      return {
+        url: `wss://${sandbox.getHost(CDP_PORT)}/`,
         headers: { 'e2b-traffic-access-token': token, origin: STREAM_ORIGIN },
       };
     },

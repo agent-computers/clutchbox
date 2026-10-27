@@ -124,7 +124,12 @@ With [Bun](https://bun.sh), Node 24, and your own Postgres: `bun install`, copy 
 
 ### Your own browser: Playwright, browser-use, and Stagehand
 
-[`@agent-computers/playwright`](packages/playwright) applies a capture to any Chromium that Playwright drives, including a Chrome that browser-use or Stagehand attach to by CDP URL; [`@agent-computers/apply`](packages/apply) does the same over a raw CDP connection. Your servers read a member's latest capture from the web app over REST with an organization API key, which owners and admins create on the Developers page (see the [Playwright adapter](packages/playwright#readme)). Agents connected over MCP get synced sign-ins on the web app's computers instead, whose Chrome they can also drive over CDP.
+Your servers reach your members' synced sign-ins over REST with an organization API key, which owners and admins create on the Developers page, two ways:
+
+- **On the web app's computers.** Open a computer session for a member, on a copy of their computer that is already signed in, and drive its Chrome from Playwright (`connectOverCDP`), browser-use, or Stagehand with the CDP URL the session returns. The server relays the connection, so computers stay private, and the member gets a live-view link to watch or take control. The [TypeScript SDK](packages/sdk#readme) wraps it: `computers.open`, `exec`, and `close`.
+- **In your own browser.** Read a member's latest capture (`captures.latest` in the SDK) and apply it: [`@agent-computers/playwright`](packages/playwright) applies one to any Chromium that Playwright drives, including a Chrome that browser-use or Stagehand attach to by CDP URL, and [`@agent-computers/apply`](packages/apply) does the same over a raw CDP connection.
+
+Agents connected over MCP get the same computers through its tools.
 
 To link your own users to members, register your app under **Connect apps** on the Developers page and send people to `/api/auth/oauth2/authorize` with `scope=openid connect`, PKCE (S256), a `state`, and optionally your `external_user_id` for them. They sign in or sign up, join your organization, connect the extension, and approve. Exchange the code at `/api/auth/oauth2/token` with your client ID and secret (HTTP Basic): the response carries `member`, the ID to pass to `fetchCapture`, and your `external_user_id`. `GET /api/v1/connections` with an API key lists every link. Removing the member or deleting the app ends it.
 
@@ -134,6 +139,7 @@ To link your own users to members, register your app under **Connect apps** on t
 | --- | --- |
 | [`apps/extension`](apps/extension) | The Chrome extension (Manifest V3) that captures the sites you authorize and syncs them to your server. |
 | [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults. [`Dockerfile`](Dockerfile) and [`compose.yaml`](compose.yaml) run it with Postgres. |
+| [`packages/sdk`](packages/sdk) | The TypeScript SDK for the developer REST API: members' latest captures, and computer sessions driven over CDP. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
@@ -141,7 +147,7 @@ To link your own users to members, register your app under **Connect apps** on t
 | [`packages/e2b`](packages/e2b) | Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
 | [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres with its migrations. |
-| [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app and extension call, the MCP server agents connect to, and the live-view relay. |
+| [`packages/api`](packages/api) | The web app's HTTP API: the routes the web app, the extension, and developers' servers call, the MCP server agents connect to, and the live-view and CDP relays. |
 | [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node server. |
 
 Planned: adapters for Daytona, Browserbase, and Kernel.
@@ -198,7 +204,7 @@ Install the extension, add the sites the agent needs, and connect the agent to t
 
 ### Does it work with browser-use, Stagehand, or Playwright MCP?
 
-Agents connected over MCP can drive their computer's Chrome over CDP. For your own Chrome, the adapters apply a capture to its default context, and you hand the agent the same CDP URL; read the latest capture for them over REST with an organization API key (`fetchCapture` in the [Playwright adapter](packages/playwright#readme)).
+Yes. Open a computer session for a member with an organization API key and pass its CDP URL to Playwright's `connectOverCDP`, browser-use, or Stagehand: they drive the computer's Chrome, already signed in ([TypeScript SDK](packages/sdk#readme)). For your own Chrome, the adapters apply a capture to its default context, and you hand the agent the same CDP URL; read the latest capture over REST with the same key (`fetchCapture` in the [Playwright adapter](packages/playwright#readme)).
 
 ### Which sites work?
 

@@ -10,6 +10,13 @@
 export const STREAM_START_MS = 10_000;
 export const STREAM_MARGIN_MS = 5_000;
 
+// Starting the CDP bridge (cdp-bridge.sh) when it is not already running, and waiting for its port. Node starts it in
+// well under a second; this bounds the helper's whole run, a concurrent start's lock included. Baked into the helper.
+export const CDP_BRIDGE_START_MS = 5_000;
+// The bridge's wait for Chrome's /json/version on each connection, to find the browser's WebSocket. Chrome is already
+// running by then (ENSURE_CHROME runs first). Baked into the helper.
+export const CDP_BRIDGE_VERSION_MS = 5_000;
+
 // Kept back from a clipboard budget for removing the text's file after a failed run.
 export const CLIPBOARD_CLEANUP_MS = 2_000;
 // set-clipboard.py's wait for its background process to own the clipboard before it reports failure. Taking it is one

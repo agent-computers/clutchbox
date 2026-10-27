@@ -13,6 +13,8 @@ import {
 } from '@agent-computers/capture';
 import {
   apiKeyPrincipal,
+  computerCallerForMember,
+  computerCallerForSession,
   isApiKeyAuthorization,
   type KeyPrincipal,
   latestCaptureForKey,
@@ -36,15 +38,23 @@ import {
   saveCapture,
   syncView,
 } from '@agent-computers/server/captures';
+import { CALL_BUDGET_MS, EXEC_MAX_SECONDS, IDLE_PAUSE_MS } from '@agent-computers/server/computer-timing';
 import {
   COMPUTER_ID_PATTERN,
   type ComputerFailure,
   type ComputerProvider,
+  closeComputerSession,
+  computerSessionState,
   computerView,
   deleteMainComputer,
   handBackComputer,
+  issueCdpToken,
+  openComputerSession,
+  SESSION_ID_PATTERN,
+  type SessionHandle,
   setLiveViewClipboard,
   takeOverComputer,
+  useComputerSession,
 } from '@agent-computers/server/computers';
 import {
   CONNECT_APP_ID_PATTERN,
@@ -81,6 +91,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
+import { failureBody, failureStatus } from './cdp';
 import { allowedMutationOrigin, isPinnedExtension, SYNC_PATHS } from './origins';
 
 export { allowedMutationOrigin, extensionCors, tokenPreflight } from './origins';
@@ -96,7 +107,7 @@ type Principal = {
 };
 // Or, on the developer REST routes alone (KEY_PATH), an organization API key, which acts for its organization.
 type Env = { Variables: { principal: Principal; apiKey?: KeyPrincipal } };
-const KEY_PATH = /^\/api\/v1\/(members(\/[^/]+\/capture)?|connections)$/;
+const KEY_PATH = /^\/api\/v1\/(members(\/[^/]+\/capture)?|connections|computers\/sessions(\/[^/]+(\/exec)?)?)$/;
 // A deployment's own routes, added after the shared middleware so they get its session, origin, and header handling.
 export type ApiExtension = (app: Hono<Env>, services: { db: Database }) => void;
 // Vercel Functions refuse request bodies over 4.5 MB with their own FUNCTION_PAYLOAD_TOO_LARGE. This limit sits
@@ -106,13 +117,10 @@ export const MAX_CAPTURE_BYTES = 4_000_000;
 // Builds before 0.5.0 send no version and count as 0.0.0.
 export const MIN_EXTENSION_VERSION = '0.0.0';
 
-// A computer service's refusal: the free allowance used up is the user's to wait out (403, with when it resets); a
-// fork that is gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
-function computerFailure(c: Context<Env>, { error, message, resetsAt }: ComputerFailure) {
-  return c.json(
-    { error, message, ...(resetsAt ? { resetsAt: resetsAt.toISOString() } : {}) },
-    error === 'allowance_exhausted' ? 403 : error === 'computer_not_found' ? 404 : 409,
-  );
+// A computer service's refusal (cdp.ts, failureStatus): the free allowance used up is the user's to wait out (403, with
+// when it resets); a fork that is gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
+function computerFailure(c: Context<Env>, failure: ComputerFailure) {
+  return c.json(failureBody(failure), failureStatus(failure));
 }
 
 // What each refusal of members.ts and api-keys.ts answers.
@@ -197,7 +205,7 @@ export function createApi({
     const authorization = c.req.header('authorization');
     let principal: Principal | null;
     // A request with Authorization is judged by its token alone, never by a cookie it also carries.
-    // An API key is for a developer's server: read-only routes, so no origin applies.
+    // An API key is for a developer's server, which sends no cookies, so no origin applies.
     if (authorization !== undefined && isApiKeyAuthorization(authorization)) {
       const key = KEY_PATH.test(c.req.path) ? await apiKeyPrincipal(auth, authorization) : null;
       if (!key)
@@ -370,6 +378,125 @@ export function createApi({
         result.error === 'insufficient_scope' ? 403 : result.error === 'capture_unreadable' ? 503 : 404,
       );
     return c.json(result);
+  });
+  // Computer sessions for a member, under a key with the computers scope (api-keys.ts): each on a fork of the member's
+  // computer, like an MCP agent's, and owned by the key. The answer to open carries the session's CDP URL, which the
+  // CDP proxy serves (cdp.ts), and the live-view link the member watches or takes over from.
+  const keyFailure = (
+    c: Context<Env>,
+    result: ComputerFailure | { readonly error: 'insufficient_scope' } | { readonly error: 'not_found' },
+  ) =>
+    result.error === 'insufficient_scope'
+      ? c.json({ error: 'insufficient_scope' }, 403)
+      : result.error === 'not_found'
+        ? c.json({ error: 'not_found' }, 404)
+        : computerFailure(c, result);
+  const computerUnavailable = (c: Context<Env>, sessionId?: string) =>
+    c.json(
+      {
+        error: 'computer_unavailable',
+        message: 'The computer did not respond. Check its state before repeating anything that may already have run.',
+        ...(sessionId ? { session: sessionId } : {}),
+      },
+      503,
+    );
+  const cdpOrigin = origin.replace(/^http/, 'ws');
+  app.post('/computers/sessions', async c => {
+    const parsed = await body(
+      c,
+      z
+        .object({
+          member: z.string().regex(MEMBERSHIP_ID_PATTERN),
+          computer: z.string().regex(COMPUTER_ID_PATTERN).optional(),
+          session: z.string().regex(SESSION_ID_PATTERN).optional(),
+          label: z.string().trim().min(1).max(100).optional(),
+        })
+        .strict(),
+    );
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const { member, computer, session, label } = parsed.data;
+    const caller = await computerCallerForMember(db, keyOf(c), member);
+    if ('error' in caller) return keyFailure(c, caller);
+    let handle: SessionHandle | undefined;
+    try {
+      const opened = await openComputerSession(db, running, caller, {
+        sessionId: session,
+        computerId: computer,
+        label,
+      });
+      if ('error' in opened) return computerFailure(c, opened);
+      handle = opened;
+      await opened.done();
+      const token = await issueCdpToken(db, caller, opened.sessionId);
+      if (!token) return computerFailure(c, { error: 'session_ended', message: 'The computer session ended.' });
+      return c.json(
+        {
+          session: opened.sessionId,
+          computer: { id: opened.computer.id, label: opened.computer.label, created: opened.computer.created },
+          cdpUrl: `${cdpOrigin}/api/v1/cdp?token=${token}`,
+          liveViewUrl: `${origin}/app/computer?computer=${opened.computer.id}`,
+          sync: opened.sync,
+          idlePauseSeconds: IDLE_PAUSE_MS / 1000,
+          ...(opened.userHadControl ? { userHadControl: true } : {}),
+        },
+        201,
+      );
+    } catch (error) {
+      logError('api computer open', error);
+      return computerUnavailable(c, handle?.sessionId);
+    } finally {
+      await handle?.done();
+    }
+  });
+  app.post('/computers/sessions/:id/exec', async c => {
+    const parsed = await body(
+      c,
+      z
+        .object({
+          command: z.string().min(1).max(8000),
+          cwd: z.string().regex(/^\//).max(500).optional(),
+          timeoutSeconds: z.int().min(1).max(EXEC_MAX_SECONDS).default(30),
+        })
+        .strict(),
+    );
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const { command, cwd, timeoutSeconds } = parsed.data;
+    const caller = await computerCallerForSession(db, keyOf(c), c.req.param('id'));
+    if ('error' in caller) return keyFailure(c, caller);
+    const deadline = Date.now() + CALL_BUDGET_MS;
+    let handle: SessionHandle | undefined;
+    try {
+      const found = await useComputerSession(db, running, caller, c.req.param('id'));
+      if ('error' in found) return computerFailure(c, found);
+      handle = found;
+      // As computer_exec: a slow resume eats into the budget, and the command then times out instead of the request.
+      const effective = Math.max(1, Math.min(timeoutSeconds, Math.floor((deadline - Date.now()) / 1000)));
+      const output = await found.session.exec({ command, cwd, timeoutSeconds: effective });
+      return c.json({
+        ...output,
+        ...(effective < timeoutSeconds ? { timeoutSeconds: effective } : {}),
+        ...(found.userHadControl ? { userHadControl: true } : {}),
+      });
+    } catch (error) {
+      logError('api computer exec', error);
+      return computerUnavailable(c);
+    } finally {
+      await handle?.done();
+    }
+  });
+  // Where the session stands: open, user_in_control (the member took control in live view; it resumes at the hand-back),
+  // or ended. The SDK asks when a CDP connection drops, to reconnect or stop.
+  app.get('/computers/sessions/:id', async c => {
+    const caller = await computerCallerForSession(db, keyOf(c), c.req.param('id'));
+    if ('error' in caller) return keyFailure(c, caller);
+    return c.json({ session: c.req.param('id'), state: await computerSessionState(db, caller, c.req.param('id')) });
+  });
+  // Ends the session, pausing its fork, which keeps its tabs and files for the next open with its computer ID.
+  app.delete('/computers/sessions/:id', async c => {
+    const caller = await computerCallerForSession(db, keyOf(c), c.req.param('id'));
+    if ('error' in caller) return keyFailure(c, caller);
+    const closed = await closeComputerSession(db, running, caller, c.req.param('id'));
+    return 'error' in closed ? computerFailure(c, closed) : c.json(closed);
   });
   // The person's organizations, and whether the deployment's tenancy lets them create more. Switching and creating are
   // the organization plugin's (set-active, create).

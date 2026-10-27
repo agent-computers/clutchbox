@@ -17,7 +17,7 @@
     },
     "apps/extension": {
       "name": "@agent-computers/extension",
-      "version": "26.1027.1",
+      "version": "26.1027.2",
       "dependencies": {
         "@agent-computers/capture": "workspace:*",
         "@base-ui/react": "1.9.0",
@@ -83,8 +83,10 @@
       },
       "devDependencies": {
         "@agent-computers/e2b": "workspace:*",
+        "@agent-computers/sdk": "workspace:*",
         "@types/ws": "8.18.2",
         "drizzle-orm": "0.45.4",
+        "playwright-core": "1.64.0",
       },
     },
     "packages/apply": {
@@ -136,6 +138,17 @@
       },
       "peerDependencies": {
         "playwright-core": ">=1.40",
+      },
+    },
+    "packages/sdk": {
+      "name": "@agent-computers/sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "@agent-computers/capture": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "24.19.2",
+        "playwright-core": "1.64.0",
       },
     },
     "packages/server": {
@@ -246,6 +259,8 @@
     "@agent-computers/extension": ["@agent-computers/extension@workspace:apps/extension"],
 
     "@agent-computers/playwright": ["@agent-computers/playwright@workspace:packages/playwright"],
+
+    "@agent-computers/sdk": ["@agent-computers/sdk@workspace:packages/sdk"],
 
     "@agent-computers/server": ["@agent-computers/server@workspace:packages/server"],
 

@@ -5,6 +5,8 @@
 
 // The E2B adapter's command timings live with it (@agent-computers/e2b/timing), clamped to
 // the budgets set here. These are the ones this service uses too.
+import { CDP_BRIDGE_START_MS, ENSURE_CHROME_MS, STREAM_MARGIN_MS } from '@agent-computers/e2b/timing';
+
 export {
   STREAM_MARGIN_MS,
   STREAM_START_MS,
@@ -98,6 +100,32 @@ export const LIVE_VIEW_PING_MS = 30_000;
 // before the page's connection is upgraded, so a computer that never answers gets a 503 rather than a hang. A
 // judgment call: a TLS and WebSocket handshake through E2B's proxy takes well under a second.
 export const LIVE_VIEW_UPSTREAM_OPEN_MS = 10_000;
+
+// --- CDP proxy (cdp-relay.ts, packages/api/src/cdp.ts) ---
+
+// The CDP proxy's connection runs into the same platform limit as live view's, for the same reasons: the route
+// manifest writes it into the /api/v1/cdp route file as its literal `maxDuration`. The connection is one call of its
+// computer session (computers.ts, useComputerSession), holding control and keeping the fork running for as long as it
+// lasts, up to this.
+export const CDP_MAX_DURATION_MS = LIVE_VIEW_MAX_DURATION_MS;
+
+// The proxy closes this long before CDP_MAX_DURATION_MS, with code 4000 'reconnect', so the client reconnects on a close
+// it knows rather than a cut connection; a dropped socket after CDP_CLOSE_WAIT_MS. Live view's, which have the same job.
+export const CDP_CLOSE_MARGIN_MS = LIVE_VIEW_CLOSE_MARGIN_MS;
+export const CDP_CLOSE_WAIT_MS = LIVE_VIEW_CLOSE_WAIT_MS;
+
+// How often the proxy re-reads whether the connection may go on: the API key still has the computers scope and the
+// session is open and not taken over by the user. Live view's heartbeat, so a takeover stops an agent's CDP input as
+// soon as it stops the computer session's.
+export const CDP_ACCESS_RECHECK_MS = HEARTBEAT_MS;
+
+// Pings and the upstream handshake, as live view's.
+export const CDP_PING_MS = LIVE_VIEW_PING_MS;
+export const CDP_UPSTREAM_OPEN_MS = LIVE_VIEW_UPSTREAM_OPEN_MS;
+
+// Reaching the fork's Chrome before the upgrade: starting Chrome if the user or a crash quit it (the adapter's cold
+// start), then the bridge, and the round trip. Usually both already run, and this takes a second.
+export const CDP_ENDPOINT_MS = ENSURE_CHROME_MS + CDP_BRIDGE_START_MS + STREAM_MARGIN_MS;
 
 // --- One MCP tool call ---
 

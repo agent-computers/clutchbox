@@ -1,0 +1,39 @@
+{
+  "name": "@agent-computers/sdk",
+  "version": "0.1.0",
+  "description": "The Clutchbox TypeScript SDK: read members' synced sign-ins, and open computers signed in to them that Playwright, browser-use, and Stagehand drive over CDP.",
+  "keywords": [
+    "playwright",
+    "browser-use",
+    "stagehand",
+    "cdp",
+    "ai-agents",
+    "browser-automation",
+    "logged-in",
+    "session"
+  ],
+  "homepage": "https://www.clutchbox.dev",
+  "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
+  "author": "Clutchbox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clutchbox-hq/clutchbox.git",
+    "directory": "packages/sdk"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agent-computers/capture": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "playwright-core": "1.64.0"
+  }
+}
