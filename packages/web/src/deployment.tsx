@@ -1,10 +1,10 @@
 'use client';
-import { Code } from 'lucide-react';
+import { Code, CreditCard } from 'lucide-react';
 import { type ComponentType, createContext, type ReactNode, useContext } from 'react';
 
 // Icons a deployment's extra pages can name. Shell extras cross from the server layout to the client shell, so they
 // are plain data: a key into this map, not a component.
-export const shellIcons = { code: Code };
+export const shellIcons = { code: Code, creditCard: CreditCard };
 export type ShellIcon = keyof typeof shellIcons;
 
 // What a deployment adds to the signed-in app's shell. Without any, the app shows only the product's own pages, links
