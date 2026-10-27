@@ -9,8 +9,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CaptureRequestError, fetchCapture, listMembers } from '../../playwright/src/index';
 import { latestCaptureForKey } from '../../server/src/api-keys';
 import { createAuth } from '../../server/src/auth';
+import { saveFromBrowser } from '../../server/src/browser-fixtures';
 import { bundle, cookie } from '../../server/src/capture-fixtures';
-import { saveCapture } from '../../server/src/captures';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
@@ -186,8 +186,8 @@ describe('organization API keys', () => {
     const idle = await person('idle', 'member');
     const outsider = await person('outsider', 'owner', other);
     const capture = bundle([cookie({ name: 'session', value: 'synced-secret' })]);
-    expect(await saveCapture(db, synced.member, capture)).not.toHaveProperty('error');
-    await saveCapture(db, outsider.member, bundle([cookie()]));
+    expect(await saveFromBrowser(db, synced.member, capture)).not.toHaveProperty('error');
+    await saveFromBrowser(db, outsider.member, bundle([cookie()]));
     const key = await newKey(admin.cookie);
 
     const members = await listMembers(withKey(key.secret));
@@ -235,7 +235,7 @@ describe('organization API keys', () => {
 
   it('need the captures scope to read a capture', async () => {
     const synced = await person('synced', 'member');
-    await saveCapture(db, synced.member, bundle([cookie()]));
+    await saveFromBrowser(db, synced.member, bundle([cookie()]));
     expect(
       await latestCaptureForKey(
         db,

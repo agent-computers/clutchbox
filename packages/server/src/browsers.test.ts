@@ -466,7 +466,7 @@ describe('connected browsers', () => {
     expect((await refresh(tokens.refresh_token)).status).toBe(200);
   });
 
-  it('are removed from one organization at a time, deleting the capture only when that browser sent it', async () => {
+  it('are removed from one organization at a time, deleting only their own capture there', async () => {
     const a = await identity('a');
     await identity('b');
     const one = await connect(a);
@@ -482,14 +482,19 @@ describe('connected browsers', () => {
     // Another account, or an unknown ID: nothing happens.
     expect(await removeBrowser(db, await member('b'), first.browser.publicId)).toBe(false);
     expect(await removeBrowser(db, mine, 'brw_00000000000000000000000000')).toBe(false);
-    // The first did not send the capture here, so it stays, and the first keeps syncing to the other organization.
+    const captures = async () =>
+      (
+        await db
+          .select({ browser: schema.browserCaptures.connectedBrowserId })
+          .from(schema.browserCaptures)
+          .where(eq(schema.browserCaptures.membershipId, mine.membershipId))
+      ).map(row => row.browser);
+    // Its capture here goes, the second's stays, and the first keeps syncing to the other organization.
     expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(true);
     expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(false);
     expect(await browserRemoved(db, first.browser.id, mine)).toBe(true);
     expect(await browserRemoved(db, first.browser.id, work)).toBe(false);
-    expect(
-      await db.select().from(schema.captures).where(eq(schema.captures.membershipId, mine.membershipId)),
-    ).toHaveLength(1);
+    expect(await captures()).toEqual([second.browser.id]);
     expect(await principal(one)).not.toBeNull();
     expect((await refresh(one.refresh_token)).status).toBe(200);
     expect((await listBrowsers(db, mine)).map(row => row.id)).toEqual([second.browser.publicId]);
@@ -500,14 +505,11 @@ describe('connected browsers', () => {
     expect((await listBrowsers(db, mine)).map(row => row.id).sort()).toEqual(
       [first.browser.publicId, second.browser.publicId].sort(),
     );
-    // The first sent it now: its capture goes, behind a deletion tombstone.
+    // Removed again, its new capture goes too, without a tombstone the second's uploads would have to wait out.
+    expect(await captures()).toHaveLength(2);
     expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(true);
-    expect(await db.select().from(schema.captures).where(eq(schema.captures.membershipId, mine.membershipId))).toEqual(
-      [],
-    );
-    expect(await db.select().from(schema.syncRevocations)).toMatchObject([
-      { membershipId: mine.membershipId, disconnected: false },
-    ]);
+    expect(await captures()).toEqual([second.browser.id]);
+    expect(await db.select().from(schema.syncRevocations)).toEqual([]);
     expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
     // Another client's token is never a sync token, even with the scope.
     expect(await syncPrincipal(db, { authorization: `Bearer ${agent}` })).toBeNull();
@@ -549,7 +551,10 @@ describe('connected browsers', () => {
     await signOutBrowser(db, 'a', found.browser.id);
     expect(await principal(one)).toBeNull();
     expect((await refresh(one.refresh_token)).status).toBe(400);
-    expect(await db.select().from(schema.captures)).toEqual([]);
+    // Its captures in both organizations go; the other browser's stays.
+    expect((await db.select().from(schema.browserCaptures)).map(row => row.connectedBrowserId)).toEqual([
+      (await principal(two))!.browser.id,
+    ]);
     const [tombstone] = await db
       .select()
       .from(schema.connectedBrowsers)

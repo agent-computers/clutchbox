@@ -1,5 +1,6 @@
 import type { CdpCookieParam } from '@agent-computers/apply';
 import { siteOfHost } from '@agent-computers/capture';
+import { FIRST_PROFILE } from '@agent-computers/computer';
 import type { ComputerAction, ComputerProvider } from './computers';
 
 const cookieHost = (cookie: CdpCookieParam) => cookie.domain ?? new URL(cookie.url!).hostname;
@@ -19,7 +20,10 @@ type FakeSandbox = {
   actions: ComputerAction[];
   // Open tabs' URLs, like Chrome's: a computer starts with one blank tab.
   tabs: string[];
+  // The profile Chrome runs, FIRST_PROFILE until useProfile, and its cookie jar; other profiles' jars by profile.
+  profile: string;
   cookies: CdpCookieParam[];
+  profiles: Record<string, CdpCookieParam[]>;
   paused: boolean;
   // Created before computers were private, so live view refuses it.
   public?: boolean;
@@ -32,7 +36,7 @@ type FakeSandbox = {
   snapshotId?: string;
 };
 // What a snapshot keeps of its computer: the browser's state and the system's.
-type FakeSnapshot = Pick<FakeSandbox, 'tabs' | 'cookies' | 'revision' | 'timeZone' | 'public'>;
+type FakeSnapshot = Pick<FakeSandbox, 'tabs' | 'profile' | 'cookies' | 'profiles' | 'revision' | 'timeZone' | 'public'>;
 // In-memory provider for tests. It records calls and keeps a Chrome-like cookie jar per computer;
 // it is NOT evidence about E2B or Chrome.
 export function fakeComputerProvider() {
@@ -58,8 +62,10 @@ export function fakeComputerProvider() {
     cdpEndpoints: [] as string[],
     syncBudgets: [] as (number | undefined)[],
     timeZones: [] as string[],
-    // Refreshes and cookie syncs, in order.
-    steps: [] as ('refresh' | 'sync')[],
+    // Refreshes, profile switches, and cookie syncs, in order.
+    steps: [] as ('refresh' | 'profile' | 'sync')[],
+    // Each useProfile, with the sandbox and the profile asked for: the profile each session ran on.
+    profiles: [] as { sandboxId: string; profile: string }[],
   };
   let revision = 'revision-1';
   let createDelayMs = 0;
@@ -71,6 +77,7 @@ export function fakeComputerProvider() {
   let refreshFails = false;
   let clipboardFails = false;
   let snapshotFails = false;
+  let useProfileFails = false;
   let createFromSnapshotFails = false;
   // Where stream() points: a test's own WebSocket server for relay tests.
   let streamUrl = 'wss://stream.example.test/';
@@ -96,7 +103,16 @@ export function fakeComputerProvider() {
       calls.timeouts.push(timeoutMs);
       await new Promise(resolve => setTimeout(resolve, createDelayMs));
       const id = `sandbox-${++made}`;
-      sandboxes.set(id, { computerId, actions: [], tabs: ['about:blank'], cookies: [], paused: false, revision });
+      sandboxes.set(id, {
+        computerId,
+        actions: [],
+        tabs: ['about:blank'],
+        profile: FIRST_PROFILE,
+        cookies: [],
+        profiles: {},
+        paused: false,
+        revision,
+      });
       return id;
     },
     async createFromSnapshot(snapshotId, computerId, timeoutMs) {
@@ -124,12 +140,14 @@ export function fakeComputerProvider() {
       // Like E2B: a paused computer is resumed to take it.
       sandbox.paused = false;
       const id = `snapshot-${calls.snapshot}`;
-      const { tabs, cookies, revision: helpers, timeZone, public: open } = sandbox;
+      const { tabs, profile, cookies, profiles, revision: helpers, timeZone, public: open } = sandbox;
       snapshots.set(
         id,
         structuredClone({
           tabs,
+          profile,
           cookies,
+          profiles,
           revision: helpers,
           ...(timeZone ? { timeZone } : {}),
           ...(open ? { public: open } : {}),
@@ -181,6 +199,18 @@ export function fakeComputerProvider() {
           sandbox.tabs = ['about:blank'];
           return 'refreshed';
         },
+        // Like a Chrome restart on another user data directory: tabs close, and each profile keeps its own cookies.
+        async useProfile(profile) {
+          calls.steps.push('profile');
+          calls.profiles.push({ sandboxId, profile });
+          if (useProfileFails) throw new Error('useProfile failed in fake');
+          if (profile === sandbox.profile) return;
+          sandbox.profiles[sandbox.profile] = sandbox.cookies;
+          sandbox.cookies = sandbox.profiles[profile] ?? [];
+          delete sandbox.profiles[profile];
+          sandbox.profile = profile;
+          sandbox.tabs = ['about:blank'];
+        },
         async setTimeZone(timeZone) {
           calls.timeZones.push(timeZone);
           if (timeZoneFails) throw new Error('setTimeZone failed in fake');
@@ -205,11 +235,12 @@ export function fakeComputerProvider() {
           if (clipboardFails) throw new Error('setClipboard failed in fake');
           sandbox.clipboard = text;
         },
-        async syncCookies({ clearSites, cookies, budgetMs }) {
+        async syncCookies({ profile, clearSites, cookies, budgetMs }) {
           calls.sync++;
           calls.steps.push('sync');
           calls.syncBudgets.push(budgetMs);
           if (syncFails) throw new Error('sync failed in fake');
+          if (profile !== sandbox.profile) throw new Error('Chrome runs another profile in fake');
           // Like the E2B helper: a sync that would outlast its budget gives up without writing.
           if (syncDelayMs > budgetMs) {
             await new Promise(resolve => setTimeout(resolve, budgetMs));
@@ -276,6 +307,9 @@ export function fakeComputerProvider() {
     },
     failSnapshot: (fails = true) => {
       snapshotFails = fails;
+    },
+    failUseProfile: (fails = true) => {
+      useProfileFails = fails;
     },
     failCreateFromSnapshot: (fails = true) => {
       createFromSnapshotFails = fails;

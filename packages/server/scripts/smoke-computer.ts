@@ -1,13 +1,15 @@
 // Live check of the E2B provider against a disposable computer; always kills it. Its live view checks need the helpers
 // of this checkout: a template built from them (CI), or SMOKE_REFRESH=1, which refreshes the computer first.
 // Usage: bun run computer:smoke [output-dir]   (requires E2B_API_KEY or the E2B CLI login)
-// SMOKE_SYNC=1 also checks cookie sync with synthetic cookies only. SMOKE_REFRESH=1 also checks that a computer
-// made stale like an old one (old Chrome flags, no revision) is refreshed and keeps its cookies.
+// SMOKE_SYNC=1 also checks cookie sync with synthetic cookies only, and switching Chrome between profiles, which needs
+// this checkout's helpers too. SMOKE_REFRESH=1 also checks that a computer made stale like an old one (old Chrome flags,
+// no revision) is refreshed and keeps its cookies.
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { toCdpCookie } from '@agent-computers/apply';
+import { FIRST_PROFILE } from '@agent-computers/computer';
 import { e2bComputerProvider, HELPER_DIR, REVISION, REVISION_FILE } from '@agent-computers/e2b';
 import { WebSocket } from 'ws';
 import { bundle, cookie } from '../src/capture-fixtures';
@@ -15,6 +17,7 @@ import {
   CALL_HOLD_MS,
   CDP_ENDPOINT_MS,
   CLIPBOARD_SET_MS,
+  PROFILE_SWITCH_BUDGET_MS,
   REFRESH_BUDGET_MS,
   SYNC_BUDGET_MS,
 } from '../src/computer-timing';
@@ -102,6 +105,7 @@ try {
     ]).cookies;
     checks.syncCounts = await timed('syncCookies', () =>
       session.syncCookies({
+        profile: FIRST_PROFILE,
         clearSites: ['example.com'],
         cookies: synthetic.map(toCdpCookie),
         budgetMs: SYNC_BUDGET_MS,
@@ -221,6 +225,43 @@ try {
     checks.cookieKeptAcrossRestart = jar.some(entry => entry.name === 'smoke_restart_kept' && entry.value === 'yes');
     checks.refreshAgain = await timed('refreshCurrent', () => session.refresh(REFRESH_BUDGET_MS));
     await writeFile(join(out, 'computer-smoke-refreshed.png'), await session.screenshot());
+  }
+  if (process.env.SMOKE_SYNC === '1') {
+    // Profiles: each its own Chrome, with its own cookies, and a sync only into the one running. A cookie set just
+    // before a switch is still there when its profile runs again, since Chrome is closed rather than killed.
+    const names = async () =>
+      (
+        (JSON.parse(await session.cdp({ method: 'Storage.getCookies' })).result?.cookies ?? []) as { name: string }[]
+      ).map(entry => entry.name);
+    const sync = (profile: string, name: string) =>
+      session.syncCookies({
+        profile,
+        clearSites: [],
+        cookies: [toCdpCookie(cookie({ name, expirationDate: 2_000_000_000 }))],
+        budgetMs: SYNC_BUDGET_MS,
+      });
+    await sync(FIRST_PROFILE, 'first_profile_just_set');
+    await timed('useProfile', () => session.useProfile('brw_smoke', PROFILE_SWITCH_BUDGET_MS));
+    const secondArgs = (await session.exec({ command: 'ps -o args= -C chrome | head -1', timeoutSeconds: 10 })).stdout;
+    await sync('brw_smoke', 'second_profile');
+    const second = await names();
+    const refused = await sync(FIRST_PROFILE, 'wrong_profile').then(
+      () => false,
+      () => true,
+    );
+    await timed('useProfileBack', () => session.useProfile(FIRST_PROFILE, PROFILE_SWITCH_BUDGET_MS));
+    const first = await names();
+    checks.profiles = {
+      secondDirectory: secondArgs.includes('--user-data-dir=/home/user/.config/agent-computers-chrome-brw_smoke'),
+      secondOwnCookie: second.includes('second_profile'),
+      secondWithoutFirst: !second.includes('first_profile_just_set') && !second.includes('host_only'),
+      wrongProfileRefused: refused,
+      firstKeptJustSet: first.includes('first_profile_just_set') && first.includes('host_only'),
+      firstWithoutSecond: !first.includes('second_profile') && !first.includes('wrong_profile'),
+    };
+    checks.profileSwitchCurrent = await timed('useProfileCurrent', () =>
+      session.useProfile(FIRST_PROFILE, PROFILE_SWITCH_BUDGET_MS).then(() => true),
+    );
   }
   // Live view. The stream replaces an x11vnc started without -noprimary, as computers ran it before.
   await session.exec({
@@ -381,6 +422,15 @@ const expected: Record<string, unknown> = {
   cdpBridge: true,
   cdpBridgeWithoutOrigin: 403,
   ...(process.env.SMOKE_SYNC === '1' && {
+    profiles: {
+      secondDirectory: true,
+      secondOwnCookie: true,
+      secondWithoutFirst: true,
+      wrongProfileRefused: true,
+      firstKeptJustSet: true,
+      firstWithoutSecond: true,
+    },
+    profileSwitchCurrent: true,
     sync: {
       computerSiteKept: true,
       staleCleared: true,

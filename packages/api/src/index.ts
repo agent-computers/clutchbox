@@ -35,6 +35,8 @@ import {
   adoptSyncSettings,
   changeSyncSettings,
   deleteCaptures,
+  listProfiles,
+  profileView,
   saveCapture,
   syncView,
 } from '@agent-computers/server/captures';
@@ -367,11 +369,14 @@ export function createApi({
   app.get('/connections', async c =>
     c.json({ connections: await connectionsForOrganization(db, keyOf(c).organizationId) }),
   );
+  // The default profile's capture, or with ?profile= another of the member's profiles' (by its browser's ID).
   app.get('/members/:id/capture', async c => {
     const key = keyOf(c);
     const id = c.req.param('id');
-    if (!MEMBERSHIP_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
-    const result = await latestCaptureForKey(db, key, id);
+    const profile = c.req.query('profile');
+    if (!MEMBERSHIP_ID_PATTERN.test(id) || (profile !== undefined && !BROWSER_ID_PATTERN.test(profile)))
+      return c.json({ error: 'invalid_request' }, 400);
+    const result = await latestCaptureForKey(db, key, id, profile);
     if ('error' in result)
       return c.json(
         { error: result.error },
@@ -380,8 +385,9 @@ export function createApi({
     return c.json(result);
   });
   // Computer sessions for a member, under a key with the computers scope (api-keys.ts): each on a fork of the member's
-  // computer, like an MCP agent's, and owned by the key. The answer to open carries the session's CDP URL, which the
-  // CDP proxy serves (cdp.ts), and the live-view link the member watches or takes over from.
+  // computer, like an MCP agent's, on one of the member's profiles, and owned by the key. The answer to open carries the
+  // session's CDP URL, which the CDP proxy serves (cdp.ts), the live-view link the member watches or takes over from,
+  // and the member's profiles, to name one in a later open.
   const keyFailure = (
     c: Context<Env>,
     result: ComputerFailure | { readonly error: 'insufficient_scope' } | { readonly error: 'not_found' },
@@ -410,11 +416,12 @@ export function createApi({
           computer: z.string().regex(COMPUTER_ID_PATTERN).optional(),
           session: z.string().regex(SESSION_ID_PATTERN).optional(),
           label: z.string().trim().min(1).max(100).optional(),
+          profile: z.string().regex(BROWSER_ID_PATTERN).optional(),
         })
         .strict(),
     );
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const { member, computer, session, label } = parsed.data;
+    const { member, computer, session, label, profile } = parsed.data;
     const caller = await computerCallerForMember(db, keyOf(c), member);
     if ('error' in caller) return keyFailure(c, caller);
     let handle: SessionHandle | undefined;
@@ -423,6 +430,7 @@ export function createApi({
         sessionId: session,
         computerId: computer,
         label,
+        profile,
       });
       if ('error' in opened) return computerFailure(c, opened);
       handle = opened;
@@ -435,6 +443,8 @@ export function createApi({
           computer: { id: opened.computer.id, label: opened.computer.label, created: opened.computer.created },
           cdpUrl: `${cdpOrigin}/api/v1/cdp?token=${token}`,
           liveViewUrl: `${origin}/app/computer?computer=${opened.computer.id}`,
+          profile: opened.profile && profileView(opened.profile),
+          profiles: opened.profiles.map(profileView),
           sync: opened.sync,
           idlePauseSeconds: IDLE_PAUSE_MS / 1000,
           ...(opened.userHadControl ? { userHadControl: true } : {}),
@@ -518,6 +528,8 @@ export function createApi({
   // the capture if it sent it; it keeps syncing to the person's other organizations. Neither path takes a sync token or
   // the extension's origin.
   app.get('/browsers', async c => c.json({ browsers: await listBrowsers(db, await memberOf(c)) }));
+  // The browsers with a capture here, each a Chrome profile on the member's computers, the default (synced last) first.
+  app.get('/profiles', async c => c.json({ profiles: (await listProfiles(db, await memberOf(c))).map(profileView) }));
   app.post('/browsers/disconnect', async c => {
     const parsed = z
       .object({ id: z.string().regex(BROWSER_ID_PATTERN) })

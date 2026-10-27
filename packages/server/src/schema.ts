@@ -262,9 +262,8 @@ export const computers = pgTable(
     lastUsedAt: time('last_used_at'),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
     sandboxId: text('sandbox_id'),
-    // The last applied capture, the sites it wrote (cleared when absent later), and its cookies sealed
-    // (captures.ts, sealAppliedCapture) as the baseline the next apply diffs against. A null baseline
-    // makes the next apply replace each target site wholesale.
+    // Before profiles, the one apply baseline (computer_profiles has one per profile). Read and written only by code
+    // deployed before them; dropped in a later release.
     appliedCaptureDigest: text('applied_capture_digest'),
     appliedCaptureAt: time('applied_capture_at'),
     syncedSites: text('synced_sites').array().notNull().default(sql`'{}'::text[]`),
@@ -322,9 +321,9 @@ export const computers = pgTable(
   ],
 );
 // Snapshots of a main computer (computers.ts, Forks), each with what main had applied when it was taken, which a fork
-// made from it starts with: the apply baseline (sealed for main, as computers.applied_capture), helper revision, and
-// time zone. Kept while main's latest or while a fork made from it remains, since the provider refuses to delete a
-// snapshot before that; then deleted at the provider and here.
+// made from it starts with: its profiles' apply baselines (computer_profiles), helper revision, and time zone. Kept
+// while main's latest or while a fork made from it remains, since the provider refuses to delete a snapshot before
+// that; then deleted at the provider and here. The applied_capture columns are from before profiles, like computers'.
 export const computerSnapshots = pgTable(
   'computer_snapshots',
   {
@@ -343,11 +342,42 @@ export const computerSnapshots = pgTable(
   },
   table => [index('computer_snapshots_computer_idx').on(table.computerId)],
 );
+// A connected browser's Chrome profile on one of the member's computers, or as a snapshot of main had it (computers.ts,
+// Profiles): its directory there (chrome_profile, the provider's profile name), the last capture of the browser's
+// applied to it, the sites that wrote (cleared when absent later), and its cookies sealed (captures.ts,
+// sealAppliedCapture, for the computer's public ID; a snapshot's for main's) as the baseline the next apply diffs
+// against. A null baseline makes the next apply replace each target site wholesale. Kept once the browser stops
+// syncing, so the next open can clear its sites and nobody else gets its directory.
+export const computerProfiles = pgTable(
+  'computer_profiles',
+  {
+    id: id(),
+    computerId: key('computer_id').references((): AnyPgColumn => computers.id, { onDelete: 'cascade' }),
+    snapshotId: key('snapshot_id').references((): AnyPgColumn => computerSnapshots.id, { onDelete: 'cascade' }),
+    connectedBrowserId: key('connected_browser_id')
+      .notNull()
+      .references((): AnyPgColumn => connectedBrowsers.id, { onDelete: 'cascade' }),
+    chromeProfile: text('chrome_profile').notNull(),
+    appliedCaptureDigest: text('applied_capture_digest'),
+    appliedCaptureAt: time('applied_capture_at'),
+    syncedSites: text('synced_sites').array().notNull().default(sql`'{}'::text[]`),
+    appliedCapture: text('applied_capture'),
+    ...timestamps(),
+  },
+  table => [
+    unique('computer_profiles_computer_browser_unique').on(table.computerId, table.connectedBrowserId),
+    unique('computer_profiles_computer_chrome_profile_unique').on(table.computerId, table.chromeProfile),
+    unique('computer_profiles_snapshot_browser_unique').on(table.snapshotId, table.connectedBrowserId),
+    index('computer_profiles_connected_browser_idx').on(table.connectedBrowserId),
+    check('computer_profiles_owner', sql`(${table.computerId} IS NULL) <> (${table.snapshotId} IS NULL)`),
+    check('computer_profiles_chrome_profile', sql`${table.chromeProfile} ~ '^[a-z0-9_]{1,64}$'`),
+  ],
+);
 // superseded: another agent's computer_open replaced this session after its idle minute.
 export const SESSION_END_REASONS = ['closed', 'idle', 'superseded', 'replaced', 'revoked'] as const;
 // Computer sessions: a server-issued public ID that works only for the member and the agent that opened it: an MCP
-// client (OAuth client_id) or an organization API key (api_key_id), exactly one of them. At most one is live per
-// computer. `lastCallAt` is when the latest call ended; a call in
+// client (OAuth client_id) or an organization API key (api_key_id), exactly one of them, on one profile (the connected
+// browser's; null with none, and on sessions from before profiles). At most one is live per computer. `lastCallAt` is when the latest call ended; a call in
 // flight writes its deadline. A user's takeover suspends the live session: `suspendedAt` stops its idle
 // clock, and the resume shifts `lastCallAt` past the suspension and sets `handedBackAt`, which its next call
 // reports to the agent and clears.
@@ -362,6 +392,9 @@ export const computerSessions = pgTable(
     computerId: key('computer_id')
       .notNull()
       .references(() => computers.id, { onDelete: 'cascade' }),
+    connectedBrowserId: key('connected_browser_id').references((): AnyPgColumn => connectedBrowsers.id, {
+      onDelete: 'set null',
+    }),
     // The SHA-256 of the secret in a REST session's CDP URL (computers.ts, CDP); null for MCP's.
     cdpTokenHash: text('cdp_token_hash').unique(),
     lastCallAt: time('last_call_at').notNull(),
@@ -377,6 +410,7 @@ export const computerSessions = pgTable(
     index('computer_sessions_computer_idx').on(table.computerId),
     index('computer_sessions_client_idx').on(table.clientId),
     index('computer_sessions_api_key_idx').on(table.apiKeyId),
+    index('computer_sessions_connected_browser_idx').on(table.connectedBrowserId),
     check('computer_sessions_agent', sql`(${table.clientId} IS NULL) <> (${table.apiKeyId} IS NULL)`),
     check('computer_sessions_end_reason', oneOf(table.endReason, SESSION_END_REASONS)),
     check('computer_sessions_ended', sql`(${table.endedAt} IS NULL) = (${table.endReason} IS NULL)`),
@@ -479,8 +513,38 @@ export const browserMemberships = pgTable(
   ],
 );
 
-// Latest browser capture per member, sealed with AES-256-GCM (sealing.ts). Only the
-// digest and counts are plaintext; cookies and the site list stay sealed.
+// The latest capture of each connected browser in each organization it syncs to: the browser's profile there
+// (computers.ts, Profiles). Sealed with AES-256-GCM (sealing.ts), with the membership as associated data; only the
+// digest and counts are plaintext, and cookies and the site list stay sealed. Deleted when the browser signs out or is
+// removed there.
+export const browserCaptures = pgTable(
+  'browser_captures',
+  {
+    id: id(),
+    membershipId: membershipId().notNull(),
+    connectedBrowserId: key('connected_browser_id')
+      .notNull()
+      .references(() => connectedBrowsers.id, { onDelete: 'cascade' }),
+    // The extension's ID for this capture.
+    captureId: uuid('capture_id').notNull(),
+    digest: text('digest').notNull(),
+    cookieCount: integer('cookie_count').notNull(),
+    sealed: text('sealed').notNull(),
+    // The capture's scope ({mode, sites}, no exclusions) sealed on its own, so the account page can list synced sites
+    // without opening the whole capture. Null on rows stored before it existed.
+    sealedScope: text('sealed_scope'),
+    completedAt: time('completed_at').notNull(),
+    // Server receive time of the latest upload, changed or not: orders uploads, and the latest is the default profile.
+    uploadedAt: time('uploaded_at').defaultNow().notNull(),
+    ...timestamps(),
+  },
+  table => [
+    unique('browser_captures_membership_browser_unique').on(table.membershipId, table.connectedBrowserId),
+    index('browser_captures_connected_browser_idx').on(table.connectedBrowserId),
+  ],
+);
+// Before profiles, the latest capture per member, which browser_captures replaces. Read and written only by code
+// deployed before profiles; dropped in a later release.
 export const captures = pgTable(
   'captures',
   {

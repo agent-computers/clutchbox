@@ -5,8 +5,8 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { saveFromBrowser } from './browser-fixtures';
 import { bundle, cookie, siteBundle } from './capture-fixtures';
-import { saveCapture } from './captures';
 import type { Database } from './database';
 import { databaseSchema } from './database-schema';
 import { membership, person } from './member-fixtures';
@@ -129,18 +129,18 @@ describe('setup view', () => {
     };
     expect(await setupView(db, a)).toEqual(empty);
     // Agreed, but no site added yet.
-    await saveCapture(db, a, siteBundle([], []));
+    await saveFromBrowser(db, a, siteBundle([], []));
     expect(await setupView(db, a)).toMatchObject({
       items: { browserSync: false },
       sync: { mode: 'sites', sites: [] },
     });
     // A site with no cookies still counts once its scope arrives.
-    await saveCapture(db, a, siteBundle([], ['github.com']));
+    await saveFromBrowser(db, a, siteBundle([], ['github.com']));
     expect(await setupView(db, a)).toMatchObject({
       items: { browserSync: true },
       sync: { mode: 'sites', sites: ['github.com'], readable: true },
     });
-    await saveCapture(db, b, bundle([cookie()]));
+    await saveFromBrowser(db, b, bundle([cookie()]));
     expect(await setupView(db, b)).toMatchObject({
       items: { browserSync: true },
       sync: { mode: 'whole-browser', sites: [] },
@@ -166,7 +166,7 @@ describe('setup view', () => {
   it('reports an unreadable capture as synced without listing it', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const a = await user('a');
-    await saveCapture(db, a, siteBundle([], ['github.com']));
+    await saveFromBrowser(db, a, siteBundle([], ['github.com']));
     vi.stubEnv('CAPTURE_ENCRYPTION_KEY', '');
     expect(await setupView(db, a)).toMatchObject({
       items: { browserSync: true },
@@ -178,23 +178,23 @@ describe('setup view', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const a = await user('a');
     const capture = siteBundle([cookie({ domain: 'github.com' })], ['github.com']);
-    await saveCapture(db, a, capture);
-    await db.update(schema.captures).set({ sealedScope: null });
+    await saveFromBrowser(db, a, capture);
+    await db.update(schema.browserCaptures).set({ sealedScope: null });
     // Synced, but the cookies are never opened just to list sites.
     expect(await setupView(db, a)).toMatchObject({
       items: { browserSync: true },
       sync: { mode: null, sites: [], readable: false },
     });
-    expect((await db.select().from(schema.captures))[0]!.sealedScope).toBeNull();
+    expect((await db.select().from(schema.browserCaptures))[0]!.sealedScope).toBeNull();
     expect(errors).not.toHaveBeenCalled();
-    expect(await saveCapture(db, a, capture)).toMatchObject({ status: 'unchanged' });
+    expect(await saveFromBrowser(db, a, capture)).toMatchObject({ status: 'unchanged' });
     expect((await setupView(db, a)).sync).toEqual({ mode: 'sites', sites: ['github.com'], readable: true });
   });
   it("keeps one person's setup apart in each of their memberships", async () => {
     const a = await user('a');
     const team = await membership(db, a.userId, (await user('b')).organizationId);
     await noteSetupStep(db, team, 'setUp');
-    await saveCapture(db, team, siteBundle([], ['github.com']));
+    await saveFromBrowser(db, team, siteBundle([], ['github.com']));
     expect((await setupView(db, a)).items).toMatchObject({ browserSync: false, computer: false });
     expect((await setupView(db, team)).items).toMatchObject({ browserSync: true, computer: true });
     await noteSetupStep(db, a, 'setUp');

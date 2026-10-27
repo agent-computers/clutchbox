@@ -167,6 +167,14 @@ export const ACT_ACTION_ESTIMATE_MS = 1_000;
 // SYNC_BUDGET_MS). Runs once per helper change per computer, so a slow one is rare and is retried next open.
 export const REFRESH_BUDGET_MS = 30_000;
 
+// --- Profiles on open (computers.ts, applyProfiles) ---
+
+// Running the session's profile's Chrome, or a profile to sign out, once per profile: nothing when Chrome already runs
+// it, else Chrome's graceful exit (the adapter's PROFILE_STOP_MS at most, a second or two) and a warm start on the
+// other profile, a few seconds, like refresh's restart, which gets REFRESH_BUDGET_MS. Also clamped to what is left of
+// SYNC_DEADLINE_MS, and the apply that follows gets the rest.
+export const PROFILE_SWITCH_BUDGET_MS = REFRESH_BUDGET_MS;
+
 // --- Apply-on-open (computers.ts, applyLatestCapture) ---
 
 // An apply on computer_open must finish, or give up, this long after the call starts, after creating a fork if it

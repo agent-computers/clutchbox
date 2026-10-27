@@ -4,7 +4,9 @@ import {
   type ComputerSession,
   DISPLAY,
   type ExecResult,
+  FIRST_PROFILE,
   keyNamePattern,
+  PROFILE_PATTERN,
 } from '@agent-computers/computer';
 import { Sandbox } from '@e2b/desktop';
 import { Sandbox as BaseSandbox, CommandExitError, TimeoutError } from 'e2b';
@@ -17,6 +19,7 @@ import {
   CLIPBOARD_HOLD_MS,
   CLIPBOARD_OWN_MS,
   ENSURE_CHROME_MS,
+  PROFILE_STOP_MS,
   PROVIDER_REQUEST_MS,
   REFRESH_STEP_MS,
   SNAPSHOT_REQUEST_MS,
@@ -46,15 +49,46 @@ const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 // A tab showing nothing yet: Chrome's start page or a new tab.
 const isBlank = (url: string) => url === 'about:blank' || /^chrome:\/\/(newtab|new-tab-page)\//.test(url);
 
-// Sandboxed Chrome (no --no-sandbox). With no GPU, --ignore-gpu-blocklist gives WebGL through Mesa's llvmpipe
-// (maps, charts, and bot checks that expect it), and --disable-gpu-compositing keeps ordinary pages on the faster
-// software compositor (scrolling at 55-60 fps instead of 40-51 on 2 vCPUs). No TZ: Chrome follows the system zone
-// (setTimeZone).
+// The desktop user's private directory for cookie syncs and the profile Chrome runs.
+const SYNC_DIR = '/home/user/.agent-computers';
+// Profiles (useProfile): each is a user data directory of its own, FIRST_PROFILE's the one Chrome ran before profiles.
+// PROFILE_FILE names the profile Chrome runs, FIRST_PROFILE while it is missing; it changes only while no Chrome runs,
+// under the lock cookie syncs take, so it always names the running Chrome's profile.
+const CHROME_DIR = '/home/user/.config/agent-computers-chrome';
+export const PROFILE_FILE = `${SYNC_DIR}/chrome-profile`;
+const SYNC_LOCK = `${SYNC_DIR}/sync.lock`;
+const currentProfile = `$(cat ${PROFILE_FILE} 2>/dev/null || echo ${FIRST_PROFILE})`;
+
+// Sandboxed Chrome (no --no-sandbox), on the profile PROFILE_FILE names. With no GPU, --ignore-gpu-blocklist gives
+// WebGL through Mesa's llvmpipe (maps, charts, and bot checks that expect it), and --disable-gpu-compositing keeps
+// ordinary pages on the faster software compositor (scrolling at 55-60 fps instead of 40-51 on 2 vCPUs). No TZ: Chrome
+// follows the system zone (setTimeZone).
 export const ENSURE_CHROME = `#!/bin/sh
 curl -sf http://127.0.0.1:9222/json/version >/dev/null && exit 0
-DISPLAY=:0 nohup google-chrome --user-data-dir=/home/user/.config/agent-computers-chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --ignore-gpu-blocklist --disable-gpu-compositing --start-maximized about:blank >/tmp/agent-computers-chrome.log 2>&1 &
+P=${currentProfile}
+case "$P" in ${FIRST_PROFILE}) D=${CHROME_DIR} ;; ''|*[!a-z0-9_]*) exit 1 ;; *) D=${CHROME_DIR}-$P ;; esac
+DISPLAY=:0 nohup google-chrome --user-data-dir="$D" --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --ignore-gpu-blocklist --disable-gpu-compositing --start-maximized about:blank >/tmp/agent-computers-chrome.log 2>&1 &
 for i in $(seq 1 60); do curl -sf http://127.0.0.1:9222/json/version >/dev/null && exit 0; sleep 0.5; done
 exit 1
+`;
+// `use-profile.sh <profile> <seconds>`: runs Chrome on the profile. A Chrome on another one is closed over CDP
+// (Browser.close, Chrome's own quit, which writes its cookie store to disk; a signal can leave cookies set in the last
+// half minute unwritten), or sent SIGTERM when that is not answered, and SIGKILL once <seconds> pass; only then does
+// PROFILE_FILE change. Chrome starts without the lock's descriptor, which it would otherwise hold for as long as it runs.
+export const USE_PROFILE = `#!/bin/sh
+case "$1" in ''|*[!a-z0-9_]*) exit 2 ;; esac
+umask 077 && mkdir -p ${SYNC_DIR} && chmod 700 ${SYNC_DIR} && exec 9>${SYNC_LOCK} && flock -w "$2" 9 || exit 1
+if [ "${currentProfile}" != "$1" ]; then
+  if pgrep -x chrome >/dev/null; then
+    end=$(($(date +%s) + $2))
+    timeout 5 node -e "fetch('http://127.0.0.1:9222/json/version').then(r => r.json()).then(v => { const s = new WebSocket(v.webSocketDebuggerUrl); s.onopen = () => s.send(JSON.stringify({ id: 1, method: 'Browser.close' })); s.onmessage = s.onclose = () => process.exit(0); s.onerror = () => process.exit(1); }, () => process.exit(1))" 9>&- || pkill -TERM -o -x chrome
+    while pgrep -x chrome >/dev/null && [ "$(date +%s)" -lt "$end" ]; do sleep 0.25; done
+    pkill -KILL -x chrome && sleep 0.5
+    pgrep -x chrome >/dev/null && exit 1
+  fi
+  echo "$1" > ${PROFILE_FILE}.new && mv -f ${PROFILE_FILE}.new ${PROFILE_FILE} || exit 1
+fi
+${HELPER_DIR}/ensure-chrome.sh 9>&-
 `;
 // The template's start command: E2B snapshots the desktop with Chrome already running, so a new
 // computer skips Chrome's cold first launch (~10-28s on a lazily loaded disk). Mirrors @e2b/desktop's
@@ -374,6 +408,7 @@ while time.monotonic() < end:
 // an older template, which keep running it until reset.
 export const HELPERS = [
   { name: 'ensure-chrome.sh', content: ENSURE_CHROME, mode: '755' },
+  { name: 'use-profile.sh', content: USE_PROFILE, mode: '755' },
   { name: 'cdp.mjs', content: CDP_HELPER, mode: '644' },
   { name: 'start-desktop.sh', content: START_DESKTOP, mode: '755' },
   { name: 'live-view-stream.sh', content: LIVE_VIEW_STREAM, mode: '755' },
@@ -389,7 +424,6 @@ export const writeHelpers = () =>
     ({ name, content, mode }) =>
       `echo ${Buffer.from(content).toString('base64')} | base64 -d > ${HELPER_DIR}/${name}.new && chmod ${mode} ${HELPER_DIR}/${name}.new && mv -f ${HELPER_DIR}/${name}.new ${HELPER_DIR}/${name}`,
   ).join(' && ');
-const SYNC_DIR = '/home/user/.agent-computers';
 
 function session(sandbox: Sandbox): ComputerSession {
   const xdotool = async (args: string) => {
@@ -529,11 +563,26 @@ function session(sandbox: Sandbox): ComputerSession {
         { user: 'root', timeoutMs: TIME_ZONE_MS },
       );
     },
+    // As the desktop user, whose Chrome it stops. A computer whose refresh has not yet brought the helper runs Chrome on
+    // FIRST_PROFILE, as its older helpers do, and refuses any other: the helper and ensure-chrome.sh that follows the
+    // profile arrive together.
+    async useProfile(profile, budgetMs) {
+      if (!PROFILE_PATTERN.test(profile)) throw new Error('Invalid profile');
+      const helper = `${HELPER_DIR}/use-profile.sh`;
+      const stopSeconds = Math.max(1, Math.floor(Math.min(PROFILE_STOP_MS, budgetMs / 3) / 1000));
+      const older = profile === FIRST_PROFILE ? `${HELPER_DIR}/ensure-chrome.sh` : 'exit 3';
+      await sandbox.commands.run(`if [ -x ${helper} ]; then ${helper} ${profile} ${stopSeconds}; else ${older}; fi`, {
+        user: 'user',
+        timeoutMs: budgetMs,
+      });
+    },
     // The payload holds session cookies: written to a private file (never argv) and always removed.
     // Every step is clamped to budgetMs and the helper exits on its own inside it, so nothing in
     // the computer changes cookies after the caller gives up: sync never lands during a task.
-    // flock serializes overlapping applies (an open and a close racing on one computer).
-    async syncCookies({ clearSites, cookies, budgetMs }) {
+    // flock serializes overlapping applies (an open and a close racing on one computer) and profile switches, and under
+    // it the helper runs only while Chrome runs `profile`.
+    async syncCookies({ profile, clearSites, cookies, budgetMs }) {
+      if (!PROFILE_PATTERN.test(profile)) throw new Error('Invalid profile');
       const helper = `${SYNC_DIR}/sync-cookies.mjs`;
       const payload = `${SYNC_DIR}/sync-${randomUUID()}.json`;
       const end = Date.now() + budgetMs;
@@ -562,9 +611,9 @@ function session(sandbox: Sandbox): ComputerSession {
         // Too little time to clear and re-set cookies: starting would sign the synced sites out.
         if (inside < SYNC_HELPER_MIN_MS) throw new Error('sync budget exceeded');
         const waitSeconds = Math.min(10, Math.floor(inside / 3000));
-        const node = `node ${helper} ${payload} ${inside - waitSeconds * 1000}`;
+        const node = `test "${currentProfile}" = ${profile} && exec node ${helper} ${payload} ${inside - waitSeconds * 1000}`;
         const { stdout } = await sandbox.commands.run(
-          `umask 077 && chmod 600 ${helper} ${payload} && if command -v flock >/dev/null; then flock -w ${waitSeconds} ${SYNC_DIR}/sync.lock ${node}; else ${node}; fi`,
+          `umask 077 && chmod 600 ${helper} ${payload} && if command -v flock >/dev/null; then flock -w ${waitSeconds} ${SYNC_LOCK} sh -c ${quote(node)}; else sh -c ${quote(node)}; fi`,
           { user: 'user', timeoutMs },
         );
         const counts = JSON.parse(stdout.trim()) as { kept: number; cleared: number; set: number };

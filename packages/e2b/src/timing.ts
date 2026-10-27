@@ -63,6 +63,10 @@ export const CDP_COMMAND_MS = CDP_REPLY_MS + 10_000;
 // stamp: record the revision.
 export const REFRESH_STEP_MS = { write: 10_000, stop: 10_000, start: 20_000, stamp: 5_000 };
 
+// A profile switch's wait for Chrome's graceful exit before it is killed: refresh's stop step, for the same exit. Capped
+// at a third of the caller's budget, so the start that follows has the rest. Passed to the helper, not baked into it.
+export const PROFILE_STOP_MS = REFRESH_STEP_MS.stop;
+
 // Caps for each step of a cookie apply, each also clamped to what is left of the caller's budget. chrome: start Chrome
 // if needed (usually already running). prepare: create the private sync directory. upload: write the helper and the
 // cookie payload. helper: run the helper, including the wait for a concurrent apply's lock. cleanup: remove the

@@ -8,10 +8,10 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAuth } from '../../server/src/auth';
-import { connectBrowser, type Tokens } from '../../server/src/browser-fixtures';
+import { connectBrowser, saveFromBrowser, type Tokens } from '../../server/src/browser-fixtures';
 import { ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie, siteBundle } from '../../server/src/capture-fixtures';
-import { adoptSyncSettings, captureView, saveCapture, syncView } from '../../server/src/captures';
+import { adoptSyncSettings, captureView, syncView } from '../../server/src/captures';
 import type { ComputerProvider } from '../../server/src/computers';
 import { openComputerSession, useComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
@@ -828,7 +828,7 @@ describe('API routes', () => {
       'a',
       (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner })))!,
     );
-    await saveCapture(db, team, siteBundle([cookie({ domain: 'notion.so' })], ['notion.so']));
+    await saveFromBrowser(db, team, siteBundle([cookie({ domain: 'notion.so' })], ['notion.so']));
     await adoptSyncSettings(db, team, { sites: ['notion.so'], excludedDomains: [], paused: true }, '127.0.0.1');
     await recordSetupStep(db, team, 'setUp');
     expect(await (await request('GET', '/sync', { cookie: a })).json()).toMatchObject({

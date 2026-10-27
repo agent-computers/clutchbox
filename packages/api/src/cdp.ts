@@ -38,10 +38,10 @@ export type CdpDeps = {
 const refuse = (error: string, status: number, extra: Record<string, unknown> = {}) =>
   Response.json({ error, ...extra }, { status, headers: { 'Cache-Control': 'private, no-store' } });
 
-// What each computer service refusal answers, here and on the REST routes: no such session or computer is 404; the
-// allowance used up, or access revoked, 403; the rest (ended, busy, starting, the user in control) 409.
+// What each computer service refusal answers, here and on the REST routes: no such session, computer, or profile is
+// 404; the allowance used up, or access revoked, 403; the rest (ended, busy, starting, the user in control) 409.
 export const failureStatus = ({ error }: Pick<ComputerFailure, 'error'>) =>
-  error === 'session_not_found' || error === 'computer_not_found'
+  error === 'session_not_found' || error === 'computer_not_found' || error === 'profile_not_found'
     ? 404
     : error === 'allowance_exhausted' || error === 'access_revoked'
       ? 403

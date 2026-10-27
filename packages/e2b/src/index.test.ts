@@ -7,7 +7,16 @@ import { siteOfHost } from '@agent-computers/capture';
 import { Sandbox } from '@e2b/desktop';
 import { Sandbox as BaseSandbox, CommandExitError, InvalidArgumentError } from 'e2b';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CDP_HELPER, e2bComputerProvider, HELPERS, REVISION, REVISION_FILE, STREAM_ORIGIN, SYNC_CORE } from './index';
+import {
+  CDP_HELPER,
+  e2bComputerProvider,
+  HELPERS,
+  PROFILE_FILE,
+  REVISION,
+  REVISION_FILE,
+  STREAM_ORIGIN,
+  SYNC_CORE,
+} from './index';
 
 // The E2B SDK, mocked: tests stand in a sandbox whose commands they answer.
 const e2b = vi.hoisted(() => ({ sandbox: undefined as unknown }));
@@ -90,14 +99,18 @@ describe('E2B cookie sync budget', () => {
     const budgetMs = 13_000;
     const steps = sandbox(command => (command.includes('ensure-chrome') ? 4_000 : 0));
     const session = await e2bComputerProvider().connect('sandbox', 300_000);
-    expect(await session.syncCookies({ clearSites: [], cookies: [], budgetMs })).toEqual({
+    expect(await session.syncCookies({ profile: 'default', clearSites: [], cookies: [], budgetMs })).toEqual({
       kept: 0,
       cleared: 0,
       set: 1,
     });
     for (const step of steps) expect(step.timeoutMs).toBeLessThanOrEqual(budgetMs);
     const helper = steps.at(-1)!;
-    const [, wait, exit] = helper.command.match(/flock -w (\d+) .*sync-[^ ]+\.json (\d+);/)!;
+    const [, wait, exit] = helper.command.match(/flock -w (\d+) .*sync-[^ ]+\.json (\d+)'/)!;
+    // Under the lock, the helper runs only while Chrome runs the profile it was given.
+    expect(helper.command).toContain(
+      `sh -c 'test "$(cat ${PROFILE_FILE} 2>/dev/null || echo default)" = default && exec node`,
+    );
     // The helper is done inside the run's own timeout, which ends by the budget.
     expect(Number(wait) * 1000 + Number(exit)).toBeLessThan(helper.timeoutMs);
     expect(helper.timeoutMs).toBeLessThanOrEqual(budgetMs - 4_000);
@@ -126,12 +139,35 @@ describe('E2B cookie sync budget', () => {
     expect(await (await e2bComputerProvider().connect('sandbox', 300_000)).refresh(REFRESH_BUDGET)).toBe('current');
     expect(checked).toHaveLength(1);
   });
+  it('switches profiles with the helper, or on older helpers runs only the first profile (E2B adapter)', async () => {
+    const steps = sandbox();
+    const session = await e2bComputerProvider().connect('sandbox', 300_000);
+    await session.useProfile('brw_0abc', REFRESH_BUDGET);
+    await session.useProfile('default', REFRESH_BUDGET);
+    expect(steps.map(step => [step.command, step.user, step.timeoutMs])).toEqual([
+      [
+        'if [ -x /opt/agent-computers/use-profile.sh ]; then /opt/agent-computers/use-profile.sh brw_0abc 10; else exit 3; fi',
+        'user',
+        REFRESH_BUDGET,
+      ],
+      [
+        'if [ -x /opt/agent-computers/use-profile.sh ]; then /opt/agent-computers/use-profile.sh default 10; else /opt/agent-computers/ensure-chrome.sh; fi',
+        'user',
+        REFRESH_BUDGET,
+      ],
+    ]);
+    await expect(session.useProfile('../other', REFRESH_BUDGET)).rejects.toThrow('Invalid profile');
+    await expect(
+      session.syncCookies({ profile: 'a b', clearSites: [], cookies: [], budgetMs: REFRESH_BUDGET }),
+    ).rejects.toThrow('Invalid profile');
+    expect(steps).toHaveLength(2);
+  });
   it('never starts the helper once the budget is used up', async () => {
     const steps = sandbox(command => (command.includes('ensure-chrome') ? 11_000 : 0));
     const session = await e2bComputerProvider().connect('sandbox', 300_000);
-    await expect(session.syncCookies({ clearSites: [], cookies: [], budgetMs: 12_000 })).rejects.toThrow(
-      'cookie sync failed',
-    );
+    await expect(
+      session.syncCookies({ profile: 'default', clearSites: [], cookies: [], budgetMs: 12_000 }),
+    ).rejects.toThrow('cookie sync failed');
     expect(steps.map(step => step.command)).toEqual([expect.stringContaining('ensure-chrome')]);
   });
 });

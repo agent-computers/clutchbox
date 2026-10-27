@@ -7,10 +7,9 @@ import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAuth } from '../../server/src/auth';
-import { connectBrowser } from '../../server/src/browser-fixtures';
+import { connectBrowser, saveFromBrowser } from '../../server/src/browser-fixtures';
 import { ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie } from '../../server/src/capture-fixtures';
-import { saveCapture } from '../../server/src/captures';
 import { openComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
@@ -346,7 +345,7 @@ describe('members and roles', () => {
     );
     const browserTokens = await connectBrowser(auth, leaver.cookie, { extensionOrigin: extension });
     for (const member of [leaver.member, elsewhere]) {
-      await saveCapture(db, member, bundle([cookie()]));
+      await saveFromBrowser(db, member, bundle([cookie()]));
       const opened = await openComputerSession(
         db,
         { provider: fake.provider, metering: noMetering },
@@ -395,9 +394,9 @@ describe('members and roles', () => {
     expect((await asBrowser('/sync', leaver.member.organizationId)).status).toBe(403);
     expect((await asBrowser('/sync', elsewhere.organizationId)).status).toBe(200);
     const owners = (rows: { membershipId: number }[]) => rows.map(row => row.membershipId);
-    expect(owners(await db.select({ membershipId: schema.captures.membershipId }).from(schema.captures))).toEqual([
-      elsewhere.membershipId,
-    ]);
+    expect(
+      owners(await db.select({ membershipId: schema.browserCaptures.membershipId }).from(schema.browserCaptures)),
+    ).toEqual([elsewhere.membershipId]);
     expect(owners(await db.select({ membershipId: schema.computers.membershipId }).from(schema.computers))).toEqual([
       elsewhere.membershipId,
       elsewhere.membershipId,

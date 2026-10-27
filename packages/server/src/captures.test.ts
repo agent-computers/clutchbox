@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EDGE_ON_WINDOWS, saveFromBrowser, syncingBrowser } from './browser-fixtures';
 import { bundle, cookie, siteBundle } from './capture-fixtures';
 import {
   adoptSyncSettings,
@@ -14,10 +15,10 @@ import {
   captureView,
   changeSyncSettings,
   deleteCaptures,
+  listProfiles,
   loadLatestCapture,
   openAppliedCapture,
   openCapture,
-  saveCapture,
   sealAppliedCapture,
   sealCapture,
   syncView,
@@ -25,11 +26,14 @@ import {
 import type { Database } from './database';
 import { databaseSchema } from './database-schema';
 import { membership, person } from './member-fixtures';
+import type { Member } from './organizations';
 import * as schema from './schema';
 
 let pg: PGlite;
 let db: Database;
 const user = (id: string) => person(db, id);
+// The capture of the member's test browser (syncingBrowser).
+const latest = async (member: Member) => loadLatestCapture(db, member, (await syncingBrowser(db, member)).id);
 // Migrate once per file; each test gets its own clone, which is much cheaper than a fresh database.
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 let template: PGlite;
@@ -96,37 +100,41 @@ describe('sealed captures', () => {
   it('stores only digest and counts in plaintext, and skips unchanged uploads', async () => {
     const a = await user('a');
     const first = bundle([cookie()], new Date('2026-10-15T10:00:00Z'));
-    expect(await saveCapture(db, a, first)).toEqual({
+    expect(await saveFromBrowser(db, a, first)).toEqual({
       status: 'stored',
       completedAt: '2026-10-15T10:00:00.000Z',
       cookieCount: 1,
     });
-    const [row] = await db.select().from(schema.captures);
+    const [row] = await db.select().from(schema.browserCaptures);
     expect(row).toMatchObject({ digest: await captureDigest(first.cookies), cookieCount: 1, captureId: first.id });
     expect(row!.sealed).not.toMatch(/example\.com|local/);
     const uploadedAt = row!.uploadedAt;
     await new Promise(resolve => setTimeout(resolve, 5));
-    expect(await saveCapture(db, a, bundle([cookie()], new Date('2026-10-15T10:15:00Z')))).toMatchObject({
+    expect(await saveFromBrowser(db, a, bundle([cookie()], new Date('2026-10-15T10:15:00Z')))).toMatchObject({
       status: 'unchanged',
       completedAt: '2026-10-15T10:00:00.000Z',
     });
-    const [after] = await db.select().from(schema.captures);
+    const [after] = await db.select().from(schema.browserCaptures);
     expect(after!.sealed).toBe(row!.sealed);
     expect(after!.uploadedAt.getTime()).toBeGreaterThan(uploadedAt.getTime());
     // An upload received before the stored one commits late: refused, not reported as accepted.
     const newer = bundle([cookie({ value: 'newer' })], new Date('2026-10-15T11:00:00Z'));
-    expect(await saveCapture(db, a, newer)).toMatchObject({ status: 'stored' });
+    expect(await saveFromBrowser(db, a, newer)).toMatchObject({ status: 'stored' });
     expect(
-      await saveCapture(db, a, bundle([cookie({ value: 'older' })]), { receivedAt: new Date(Date.now() - 60_000) }),
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'older' })]), { receivedAt: new Date(Date.now() - 60_000) }),
     ).toEqual({ error: 'superseded' });
-    expect((await loadLatestCapture(db, a))!.capture).toEqual(newer);
+    expect((await latest(a))!.capture).toEqual(newer);
     expect(await captureView(db, a)).toMatchObject({ completedAt: '2026-10-15T11:00:00.000Z', cookieCount: 1 });
     // The client clock does not order uploads; a future capture time is clamped to receipt.
-    const ahead = await saveCapture(db, a, bundle([cookie({ value: 'ahead' })], new Date(Date.now() + 7 * 86_400_000)));
+    const ahead = await saveFromBrowser(
+      db,
+      a,
+      bundle([cookie({ value: 'ahead' })], new Date(Date.now() + 7 * 86_400_000)),
+    );
     expect(ahead).toMatchObject({ status: 'stored' });
     expect(Date.parse((ahead as { completedAt: string }).completedAt)).toBeLessThanOrEqual(Date.now());
     expect(
-      await saveCapture(db, a, bundle([cookie({ value: 'behind' })], new Date('2026-10-15T09:00:00Z'))),
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'behind' })], new Date('2026-10-15T09:00:00Z'))),
     ).toMatchObject({ status: 'stored' });
     await deleteCaptures(db, a);
     expect(await captureView(db, a)).toBeNull();
@@ -135,114 +143,145 @@ describe('sealed captures', () => {
     const a = await user('a');
     const b = await user('b');
     const cookies = [cookie({ domain: 'github.com' })];
-    expect(await saveCapture(db, a, siteBundle(cookies, ['github.com']))).toMatchObject({ status: 'stored' });
-    const [first] = await db.select().from(schema.captures);
+    expect(await saveFromBrowser(db, a, siteBundle(cookies, ['github.com']))).toMatchObject({ status: 'stored' });
+    const [first] = await db.select().from(schema.browserCaptures);
     for (const sealed of [first!.sealed, first!.sealedScope]) expect(sealed).not.toMatch(/github|notion/);
     // A site added with no cookies yet: the cookie digest is unchanged, the scope is not.
-    const added = await saveCapture(db, a, siteBundle(cookies, ['github.com', 'notion.so']));
+    const added = await saveFromBrowser(db, a, siteBundle(cookies, ['github.com', 'notion.so']));
     expect(added).toMatchObject({ status: 'unchanged' });
-    const [after] = await db.select().from(schema.captures);
+    const [after] = await db.select().from(schema.browserCaptures);
     expect(after).toMatchObject({ digest: first!.digest, sealed: first!.sealed });
     expect(after!.sealedScope).not.toBe(first!.sealedScope);
     expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['github.com', 'notion.so'] });
     // An upload received before the stored one never overwrites its scope.
     expect(
-      await saveCapture(db, a, siteBundle(cookies, ['github.com']), { receivedAt: new Date(Date.now() - 60_000) }),
+      await saveFromBrowser(db, a, siteBundle(cookies, ['github.com']), { receivedAt: new Date(Date.now() - 60_000) }),
     ).toMatchObject({ status: 'unchanged' });
     expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['github.com', 'notion.so'] });
     // The scope is bound to its membership like the capture.
-    await saveCapture(db, b, siteBundle(cookies, ['github.com']));
+    await saveFromBrowser(db, b, siteBundle(cookies, ['github.com']));
     const [sealedB] = await db
-      .select({ sealedScope: schema.captures.sealedScope })
-      .from(schema.captures)
-      .where(eq(schema.captures.membershipId, b.membershipId));
+      .select({ sealedScope: schema.browserCaptures.sealedScope })
+      .from(schema.browserCaptures)
+      .where(eq(schema.browserCaptures.membershipId, b.membershipId));
     await db
-      .update(schema.captures)
+      .update(schema.browserCaptures)
       .set({ sealedScope: sealedB!.sealedScope })
-      .where(eq(schema.captures.membershipId, a.membershipId));
+      .where(eq(schema.browserCaptures.membershipId, a.membershipId));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await captureScope(db, a)).toBe('unreadable');
     await deleteCaptures(db, a);
     expect(await captureScope(db, a)).toBeNull();
     expect(
-      await db.select().from(schema.captures).where(eq(schema.captures.membershipId, a.membershipId)),
+      await db.select().from(schema.browserCaptures).where(eq(schema.browserCaptures.membershipId, a.membershipId)),
     ).toHaveLength(0);
   });
   it('answers sync_unavailable without a valid key', async () => {
     const a = await user('a');
     for (const key of ['', randomBytes(16).toString('base64')]) {
       vi.stubEnv('CAPTURE_ENCRYPTION_KEY', key);
-      expect(await saveCapture(db, a, bundle([cookie()]))).toEqual({ error: 'sync_unavailable' });
+      expect(await saveFromBrowser(db, a, bundle([cookie()]))).toEqual({ error: 'sync_unavailable' });
     }
-    expect(await db.select().from(schema.captures)).toHaveLength(0);
+    expect(await db.select().from(schema.browserCaptures)).toHaveLength(0);
   });
   it('lets a deletion win over an upload received before it', async () => {
     const a = await user('a');
     const before = new Date();
     await new Promise(resolve => setTimeout(resolve, 5));
     await deleteCaptures(db, a);
-    expect(await saveCapture(db, a, bundle([cookie()]), { receivedAt: before })).toEqual({ error: 'superseded' });
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { receivedAt: before })).toEqual({ error: 'superseded' });
     expect(await captureView(db, a)).toBeNull();
-    expect(await saveCapture(db, a, bundle([cookie()]))).toMatchObject({ status: 'stored' });
+    expect(await saveFromBrowser(db, a, bundle([cookie()]))).toMatchObject({ status: 'stored' });
   });
   it('turns sync off after Delete everything until the extension reconnects', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     await deleteCaptures(db, a, { disconnect: true });
-    expect(await saveCapture(db, a, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
+    expect(await saveFromBrowser(db, a, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
     await deleteCaptures(db, a);
-    expect(await saveCapture(db, a, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
+    expect(await saveFromBrowser(db, a, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
     expect(await captureView(db, a)).toBeNull();
-    expect(await saveCapture(db, a, bundle([cookie()]), { connect: true })).toMatchObject({ status: 'stored' });
-    expect(await saveCapture(db, a, bundle([cookie({ value: 'next' })]))).toMatchObject({ status: 'stored' });
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { connect: true })).toMatchObject({ status: 'stored' });
+    expect(await saveFromBrowser(db, a, bundle([cookie({ value: 'next' })]))).toMatchObject({ status: 'stored' });
   });
-  it('records which connected browser sent the latest upload, and when each last synced', async () => {
+  it("keeps each browser's capture its own, with when it last synced, and lists the profiles synced last first", async () => {
     const a = await user('a');
-    const [one, two] = await db
-      .insert(schema.connectedBrowsers)
-      .values(
-        ['one', 'two'].map(name => ({
-          publicId: `brw_${name}`,
-          membershipId: a.membershipId,
-          authorizationCodeId: name,
-        })),
-      )
-      .returning({ id: schema.connectedBrowsers.id });
-    const state = async () => ({
-      sender: (await db.select().from(schema.captures))[0]?.connectedBrowserId ?? null,
-      synced: Object.fromEntries(
-        (await db.select().from(schema.connectedBrowsers)).map(row => [
-          row.id,
-          row.lastSyncedAt?.toISOString() ?? null,
-        ]),
-      ),
-    });
+    const one = await syncingBrowser(db, a, { name: 'one' });
+    const two = await syncingBrowser(db, a, { name: 'two', userAgent: EDGE_ON_WINDOWS });
     const t = (seconds: number) => new Date(Date.UTC(2026, 9, 21, 12, 0, seconds));
-    const capture = bundle([cookie()], t(0));
-    expect(await saveCapture(db, a, capture, { browser: one!.id, receivedAt: t(10) })).toMatchObject({
-      status: 'stored',
+    const stored = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          [one, two].map(async browser => [
+            browser.publicId,
+            (await loadLatestCapture(db, a, browser.id))?.capture.cookies.map(each => each.value) ?? null,
+          ]),
+        ),
+      );
+    // The same site, signed in as two people: each browser's upload replaces only its own.
+    expect(
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'work' })], t(0)), { browser: one.id, receivedAt: t(10) }),
+    ).toMatchObject({ status: 'stored' });
+    expect(
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'personal' })], t(0)), {
+        browser: two.id,
+        receivedAt: t(20),
+      }),
+    ).toMatchObject({ status: 'stored' });
+    expect(await stored()).toEqual({ [one.publicId]: ['work'], [two.publicId]: ['personal'] });
+    expect(await listProfiles(db, a)).toEqual([
+      {
+        browserId: two.id,
+        id: two.publicId,
+        browser: 'edge',
+        platform: 'windows',
+        lastSyncedAt: t(20).toISOString(),
+        default: true,
+      },
+      {
+        browserId: one.id,
+        id: one.publicId,
+        browser: 'chrome',
+        platform: 'macos',
+        lastSyncedAt: t(10).toISOString(),
+        default: false,
+      },
+    ]);
+    // An unchanged upload counts as a sync: that browser is the default again. One received earlier changes nothing.
+    expect(
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'work' })], t(0)), { browser: one.id, receivedAt: t(30) }),
+    ).toMatchObject({ status: 'unchanged' });
+    expect(
+      await saveFromBrowser(db, a, bundle([cookie({ value: 'personal' })], t(0)), {
+        browser: two.id,
+        receivedAt: t(15),
+      }),
+    ).toMatchObject({ status: 'unchanged' });
+    expect((await listProfiles(db, a)).map(profile => [profile.id, profile.lastSyncedAt])).toEqual([
+      [one.publicId, t(30).toISOString()],
+      [two.publicId, t(20).toISOString()],
+    ]);
+    expect(await stored()).toEqual({ [one.publicId]: ['work'], [two.publicId]: ['personal'] });
+    // The Browser sync page's last sync per browser.
+    const synced = await db
+      .select({ id: schema.browserMemberships.connectedBrowserId, at: schema.browserMemberships.lastSyncedAt })
+      .from(schema.browserMemberships);
+    expect(Object.fromEntries(synced.map(row => [row.id, row.at?.toISOString()]))).toEqual({
+      [one.id]: t(30).toISOString(),
+      [two.id]: t(20).toISOString(),
     });
-    expect(await state()).toEqual({ sender: one!.id, synced: { [one!.id]: t(10).toISOString(), [two!.id]: null } });
-    // Unchanged cookies from the other browser: it becomes the sender.
-    expect(await saveCapture(db, a, capture, { browser: two!.id, receivedAt: t(20) })).toMatchObject({
-      status: 'unchanged',
-    });
-    expect((await state()).sender).toBe(two!.id);
-    // An upload received earlier changes neither the sender nor the last sync time.
-    expect(await saveCapture(db, a, capture, { browser: one!.id, receivedAt: t(5) })).toMatchObject({
-      status: 'unchanged',
-    });
-    expect(await state()).toEqual({
-      sender: two!.id,
-      synced: { [one!.id]: t(10).toISOString(), [two!.id]: t(20).toISOString() },
-    });
-    // An app-auth upload names no browser.
-    expect(await saveCapture(db, a, bundle([cookie({ value: 'next' })], t(30)), { receivedAt: t(30) })).toMatchObject({
-      status: 'stored',
-    });
-    expect((await state()).sender).toBeNull();
+    // A browser that signed out, or was removed here, is no profile, even while its capture is being deleted.
+    await db
+      .update(schema.connectedBrowsers)
+      .set({ disconnectedAt: t(40) })
+      .where(eq(schema.connectedBrowsers.id, one.id));
+    await db
+      .update(schema.browserMemberships)
+      .set({ removedAt: t(40) })
+      .where(eq(schema.browserMemberships.connectedBrowserId, two.id));
+    expect(await listProfiles(db, a)).toEqual([]);
   });
-  it('refuses a disconnected browser even when it reconnects sync, and deletes only what a browser sent', async () => {
+  it("refuses a disconnected browser even when it reconnects sync, and deletes only a browser's own capture", async () => {
     const a = await user('a');
     const [one, two] = await db
       .insert(schema.connectedBrowsers)
@@ -251,21 +290,28 @@ describe('sealed captures', () => {
         { publicId: 'brw_two', membershipId: a.membershipId, authorizationCodeId: 'two', disconnectedAt: new Date() },
       ])
       .returning({ id: schema.connectedBrowsers.id });
+    const three = await syncingBrowser(db, a, { name: 'three' });
     await deleteCaptures(db, a, { disconnect: true });
-    expect(await saveCapture(db, a, bundle([cookie()]), { browser: two!.id, connect: true })).toEqual({
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { browser: two!.id, connect: true })).toEqual({
       error: 'sync_disconnected',
     });
-    expect(await saveCapture(db, a, bundle([cookie()]), { browser: 999, connect: true })).toEqual({
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { browser: 999, connect: true })).toEqual({
       error: 'sync_disconnected',
     });
     expect((await syncView(db, a)).disconnected).toBe(true);
-    expect(await saveCapture(db, a, bundle([cookie()]), { browser: one!.id, connect: true })).toMatchObject({
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { browser: one!.id, connect: true })).toMatchObject({
       status: 'stored',
     });
-    await deleteCaptures(db, a, { uploadedBy: two!.id });
-    expect(await captureView(db, a)).not.toBeNull();
-    await deleteCaptures(db, a, { uploadedBy: one!.id });
-    expect(await captureView(db, a)).toBeNull();
+    const earlier = new Date();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await deleteCaptures(db, a, { browser: one!.id });
+    expect(await loadLatestCapture(db, a, one!.id)).toBeNull();
+    // Without a tombstone: another browser's upload received before the deletion is still stored.
+    expect(await saveFromBrowser(db, a, bundle([cookie()]), { browser: three.id, receivedAt: earlier })).toMatchObject({
+      status: 'stored',
+    });
+    await deleteCaptures(db, a, { browser: one!.id });
+    expect(await loadLatestCapture(db, a, three.id)).not.toBeNull();
   });
 });
 
@@ -320,42 +366,47 @@ describe('sync settings', () => {
       cookie({ domain: 'gist.github.com' }),
     ];
     // Before adoption, an upload is stored as sent.
-    expect(await saveCapture(db, a, siteBundle(cookies, ['github.com', 'notion.so']))).toMatchObject({
+    expect(await saveFromBrowser(db, a, siteBundle(cookies, ['github.com', 'notion.so']))).toMatchObject({
       cookieCount: 3,
     });
     await adoptSyncSettings(db, a, { ...local, excludedDomains: [] }, serverSite);
     // Removing a site re-seals the stored copy without it, with a new digest so the next open applies it.
-    const [before] = await db.select().from(schema.captures);
+    const [before] = await db.select().from(schema.browserCaptures);
     await changeSyncSettings(db, a, { removeSites: ['notion.so'] }, serverSite);
-    const [after] = await db.select().from(schema.captures);
+    const [after] = await db.select().from(schema.browserCaptures);
     expect(after!.digest).not.toBe(before!.digest);
     expect(after!.uploadedAt).toEqual(before!.uploadedAt);
     expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['github.com'] });
-    expect((await loadLatestCapture(db, a))!.capture.cookies.map(each => each.domain)).toEqual([
-      'github.com',
-      'gist.github.com',
-    ]);
+    expect((await latest(a))!.capture.cookies.map(each => each.domain)).toEqual(['github.com', 'gist.github.com']);
     // An exclusion inside an added site drops its cookies too.
     await changeSyncSettings(db, a, { excludedDomains: ['gist.github.com'] }, serverSite);
-    expect((await loadLatestCapture(db, a))!.capture.cookies.map(each => each.domain)).toEqual(['github.com']);
+    expect((await latest(a))!.capture.cookies.map(each => each.domain)).toEqual(['github.com']);
     // A stale extension still uploading the removed site and excluded domain gets neither stored, and learns the
     // settings from the answer.
-    const saved = await saveCapture(db, a, siteBundle(cookies, ['github.com', 'notion.so']));
+    const saved = await saveFromBrowser(db, a, siteBundle(cookies, ['github.com', 'notion.so']));
     expect(saved).toMatchObject({
       cookieCount: 1,
       settings: { sites: ['github.com'], excludedDomains: ['gist.github.com'], paused: false },
     });
     expect(await captureScope(db, a)).toEqual({ mode: 'sites', sites: ['github.com'] });
+    // Every browser's capture is narrowed by the member's settings.
+    const other = await syncingBrowser(db, a, { name: 'other' });
+    await saveFromBrowser(db, a, bundle(cookies), { browser: other.id });
+    await changeSyncSettings(db, a, { excludedDomains: ['gist.github.com', 'notion.so'] }, serverSite);
+    expect((await loadLatestCapture(db, a, other.id))!.capture.cookies.map(each => each.domain)).toEqual([
+      'github.com',
+    ]);
+    await changeSyncSettings(db, a, { excludedDomains: ['gist.github.com'] }, serverSite);
     // All-sites captures keep every site but the excluded ones.
-    await saveCapture(db, a, bundle([...cookies, cookie({ domain: 'other.test' })]));
-    expect((await loadLatestCapture(db, a))!.capture.cookies.map(each => each.domain)).toEqual([
+    await saveFromBrowser(db, a, bundle([...cookies, cookie({ domain: 'other.test' })]));
+    expect((await latest(a))!.capture.cookies.map(each => each.domain)).toEqual([
       'github.com',
       'notion.so',
       'other.test',
     ]);
     // Paused, uploads are refused with the settings, and the stored copy stays.
     await changeSyncSettings(db, a, { paused: true }, serverSite);
-    expect(await saveCapture(db, a, bundle([cookie({ value: 'new' })]))).toEqual({
+    expect(await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })]))).toEqual({
       error: 'sync_paused',
       settings: { sites: ['github.com'], excludedDomains: ['gist.github.com'], paused: true },
     });
@@ -393,28 +444,28 @@ describe('memberships', () => {
     const team = await membership(db, a.userId, (await user('b')).organizationId);
     const settings = { sites: ['example.com', 'github.com'], excludedDomains: [], paused: false };
     await adoptSyncSettings(db, a, settings, 'agent-computers.test');
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       siteBundle([cookie(), cookie({ name: 'gh', domain: 'github.com' })], ['example.com', 'github.com']),
     );
-    await saveCapture(db, team, bundle([cookie({ value: 'team' })]));
+    await saveFromBrowser(db, team, bundle([cookie({ value: 'team' })]));
     // The second membership has its own settings, which nothing adopted yet.
     expect((await syncView(db, team)).settings).toBeNull();
     expect(await changeSyncSettings(db, team, { removeSites: ['github.com'] }, 'agent-computers.test')).toEqual({
       error: 'sync_settings_missing',
     });
-    expect((await loadLatestCapture(db, a))!.capture.cookies).toHaveLength(2);
-    expect((await loadLatestCapture(db, team))!.capture.cookies.map(entry => entry.value)).toEqual(['team']);
+    expect((await latest(a))!.capture.cookies).toHaveLength(2);
+    expect((await latest(team))!.capture.cookies.map(entry => entry.value)).toEqual(['team']);
     // Narrowing one membership's settings narrows only its capture.
     await changeSyncSettings(db, a, { removeSites: ['github.com'] }, 'agent-computers.test');
-    expect((await loadLatestCapture(db, a))!.capture.cookies).toHaveLength(1);
+    expect((await latest(a))!.capture.cookies).toHaveLength(1);
     // Delete everything in the second membership leaves the first's capture, settings, and sync on.
     await deleteCaptures(db, team, { disconnect: true, forget: true });
     expect(await captureView(db, team)).toBeNull();
-    expect(await saveCapture(db, team, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
+    expect(await saveFromBrowser(db, team, bundle([cookie()]))).toEqual({ error: 'sync_disconnected' });
     expect(await captureView(db, a)).not.toBeNull();
     expect(await syncView(db, a)).toEqual({ settings: { ...settings, sites: ['example.com'] }, disconnected: false });
-    expect(await saveCapture(db, a, bundle([cookie({ value: 'later' })]))).toMatchObject({ status: 'stored' });
+    expect(await saveFromBrowser(db, a, bundle([cookie({ value: 'later' })]))).toMatchObject({ status: 'stored' });
   });
 });

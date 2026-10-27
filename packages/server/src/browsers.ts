@@ -324,8 +324,9 @@ export async function listBrowsers(db: Database, member: Owner, now = new Date()
     .orderBy(asc(browsers.createdAt), asc(browsers.id));
 }
 
-// Removes one browser from the member, by its public ID (the Browser sync page), deleting the capture if it sent it.
-// It keeps syncing to the person's other organizations. False when it is not syncing to the member.
+// Removes one browser from the member, by its public ID (the Browser sync page), deleting its capture there, and so its
+// profile (captures.ts, Profiles); the next open signs its profile out of what it synced. It keeps syncing to the
+// person's other organizations. False when it is not syncing to the member.
 export async function removeBrowser(db: Database, member: Owner, publicId: string) {
   return db.transaction(async tx => {
     await lockMember(tx, member);
@@ -344,7 +345,7 @@ export async function removeBrowser(db: Database, member: Owner, publicId: strin
       );
     if (!row) return false;
     await tx.update(rows).set({ removedAt: new Date() }).where(eq(rows.id, row.id));
-    await deleteCapturesIn(tx, member, { uploadedBy: row.browser });
+    await deleteCapturesIn(tx, member, { browser: row.browser });
     return true;
   });
 }
@@ -361,8 +362,8 @@ export async function removeAllBrowsers(db: Database, member: Owner) {
   });
 }
 
-// Signs a family out: tombstones it and deletes its tokens, so it syncs nowhere, then deletes each capture it sent in
-// any of the person's organizations. The tombstone commits first, so an upload that was already admitted finishes
+// Signs a family out: tombstones it and deletes its tokens, so it syncs nowhere, then deletes its capture, and so its
+// profile, in each of the person's organizations. The tombstone commits first, so an upload that was already admitted finishes
 // before its capture is deleted, and any later one is refused.
 async function signOutFamily(db: Database, userId: string, family: string, now: Date) {
   const browsers = schema.connectedBrowsers;
@@ -398,7 +399,7 @@ async function signOutFamily(db: Database, userId: string, family: string, now: 
     ...recorded.map(each => each.membershipId),
     ...(row.membershipId ? [row.membershipId] : []),
   ]);
-  for (const membershipId of memberships) await deleteCaptures(db, { membershipId }, { uploadedBy: row.id });
+  for (const membershipId of memberships) await deleteCaptures(db, { membershipId }, { browser: row.id });
 }
 // The extension's Sign out, with its own token.
 export async function signOutBrowser(db: Database, userId: string, browser: number) {

@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+import { EDGE_ON_WINDOWS, saveFromBrowser, syncingBrowser } from '../../server/src/browser-fixtures';
+import { bundle, cookie } from '../../server/src/capture-fixtures';
 import { CDP_CLOSE } from '../../server/src/cdp-relay';
 import { handBackComputer, listForks, SESSION_ID_PATTERN, takeOverComputer } from '../../server/src/computers';
 import type { Member } from '../../server/src/organizations';
@@ -118,6 +120,61 @@ describe('computer sessions over REST', () => {
       }),
     );
     expect(await refusal(key.client.computers.open({ member: admin.publicId }))).toEqual([401, 'unauthenticated']);
+  });
+
+  it("open on one of the member's profiles, list them, and refuse one that is not theirs", async () => {
+    const admin = await person('admin', 'admin');
+    const worker = await person('worker', 'member');
+    const { secret, client } = await newKey(admin.cookie);
+    const signIn = async (member: Member, name: string, userAgent?: string) => {
+      const browser = await syncingBrowser(developer.db, member, { name, ...(userAgent ? { userAgent } : {}) });
+      await saveFromBrowser(developer.db, member, bundle([cookie({ value: name })]), { browser: browser.id });
+      return browser;
+    };
+    const work = await signIn(worker.member, 'work');
+    const personal = await signIn(worker.member, 'personal', EDGE_ON_WINDOWS);
+    const theirs = await signIn(admin.member, 'admin');
+    // The default, the browser synced last, with every profile of the member's.
+    const session = await client.computers.open({ member: worker.publicId });
+    expect(session.profile).toEqual({
+      id: personal.publicId,
+      browser: 'edge',
+      platform: 'windows',
+      lastSyncedAt: expect.any(String),
+      default: true,
+    });
+    expect(session.profiles.map(profile => [profile.id, profile.default])).toEqual([
+      [personal.publicId, true],
+      [work.publicId, false],
+    ]);
+    const named = await client.computers.open({
+      member: worker.publicId,
+      computer: session.computer.id,
+      session: session.id,
+      profile: work.publicId,
+    });
+    expect(named.profile?.id).toBe(work.publicId);
+    expect(developer.fake.calls.profiles.map(call => call.profile)).toEqual(['default', work.publicId]);
+    // A capture: the default profile's, or the one named.
+    const values = (latest: { capture: { cookies: { value: string }[] } }) =>
+      latest.capture.cookies.map(entry => entry.value);
+    expect(values(await client.captures.latest(worker.publicId))).toEqual(['personal']);
+    const latest = await client.captures.latest(worker.publicId, { profile: work.publicId });
+    expect(latest.profile).toBe(work.publicId);
+    expect(values(latest)).toEqual(['work']);
+    // Another member's browser is no profile of this one's.
+    expect(await refusal(client.computers.open({ member: worker.publicId, profile: theirs.publicId }))).toEqual([
+      404,
+      'profile_not_found',
+    ]);
+    expect(await refusal(client.captures.latest(worker.publicId, { profile: theirs.publicId }))).toEqual([
+      404,
+      'not_found',
+    ]);
+    expect(
+      (await rawRequest(secret, 'POST', '/computers/sessions', { member: worker.publicId, profile: 'brw_x' })).status,
+    ).toBe(400);
+    expect((await rawRequest(secret, 'GET', `/members/${worker.publicId}/capture?profile=cmp_x`)).status).toBe(400);
   });
 
   it('refuse malformed requests', async () => {

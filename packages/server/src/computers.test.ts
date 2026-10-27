@@ -1,12 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { FIRST_PROFILE } from '@agent-computers/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EDGE_ON_WINDOWS, saveFromBrowser, syncingBrowser } from './browser-fixtures';
+import { removeBrowser } from './browsers';
 import { bundle, cookie } from './capture-fixtures';
-import { deleteCaptures, saveCapture } from './captures';
+import { deleteCaptures } from './captures';
 import {
   type Caller,
   type Computers,
@@ -107,6 +110,19 @@ const sandbox = () => [...fake.sandboxes.values()].at(-1)!;
 const sandboxOf = async (publicId: string) => fake.sandboxes.get((await forkRow(publicId)).sandboxId!)!;
 const mainSandbox = async () => fake.sandboxes.get((await mainRow()).sandboxId!)!;
 const snapshotRows = () => db.select().from(schema.computerSnapshots).orderBy(schema.computerSnapshots.id);
+// A computer's profiles (computer_profiles), or a snapshot's, oldest first; the first is the test browser's.
+const profilesOf = (owner: { computerId: number } | { snapshotId: number }) =>
+  db
+    .select()
+    .from(schema.computerProfiles)
+    .where(
+      'computerId' in owner
+        ? eq(schema.computerProfiles.computerId, owner.computerId)
+        : eq(schema.computerProfiles.snapshotId, owner.snapshotId),
+    )
+    .orderBy(schema.computerProfiles.id);
+// What the newest computer applied to its first profile.
+const applied = async () => (await profilesOf({ computerId: (await computerRow()).id }))[0]!;
 const used = async (member: Member) => {
   const months = new Map<string, number>();
   for (const charge of charges.filter(entry => entry.membershipId === member.membershipId))
@@ -229,7 +245,9 @@ describe('main computer', () => {
       computerId: row!.publicId,
       actions: [],
       tabs: ['about:blank'],
+      profile: 'default',
       cookies: [],
+      profiles: {},
       paused: false,
       revision: fake.provider.revision,
     });
@@ -294,7 +312,7 @@ describe('forks', () => {
   const lease = () => randomUUID();
   it("creates a fork for each open from main's latest snapshot, with the latest capture, and runs them at once", async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const claude = await openComputerSession(db, computers, caller(a, 'claude'), { label: 'Order history' });
     if ('error' in claude) throw new Error(claude.error);
     await claude.done();
@@ -325,13 +343,13 @@ describe('forks', () => {
   });
   it('reopens a fork by ID for any agent of the member, applying only captures newer than its last open', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const first = await open(a, 'claude');
     const id = first.computer.id;
     await closeComputerSession(db, computers, caller(a, 'claude'), first.sessionId);
     expect(await sandboxOf(id)).toMatchObject({ paused: true });
     (await sandboxOf(id)).tabs = ['https://example.com/work'];
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })], new Date('2026-10-20T11:00:00Z')));
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })], new Date('2026-10-20T11:00:00Z')));
     const reopened = await open(a, 'chatgpt', undefined, id);
     expect(reopened.computer).toEqual({ id, label: null, created: false });
     expect(reopened.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
@@ -676,14 +694,15 @@ describe('forks', () => {
   });
   it('clears what each snapshot had applied when captures are deleted, so new forks apply the next one wholesale', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const page = lease();
     await takeOverComputer(db, computers, a, page);
     await handBackComputer(db, computers, a, page);
-    expect((await snapshotRows())[0]).toMatchObject({ appliedCaptureDigest: expect.any(String) });
+    const snapshot = { snapshotId: (await snapshotRows())[0]!.id };
+    expect((await profilesOf(snapshot))[0]).toMatchObject({ appliedCaptureDigest: expect.any(String) });
     await deleteCaptures(db, a);
-    expect((await snapshotRows())[0]).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
-    await saveCapture(db, a, bundle([cookie({ value: 'again' })]));
+    expect((await profilesOf(snapshot))[0]).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'again' })]));
     const fork = await open(a);
     expect(fork.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     expect((await sandboxOf(fork.computer.id)).cookies.map(entry => entry.value)).toEqual(['again']);
@@ -932,7 +951,7 @@ describe('computer_close', () => {
     const a = await user('a');
     const opened = await open(a, 'claude');
     sandbox().tabs = ['https://a.example.com/', 'https://b.example.com/'];
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     at('2026-10-20T12:00:20Z');
     expect(await closeComputerSession(db, computers, caller(a, 'chatgpt'), opened.sessionId)).toMatchObject({
       error: 'session_not_found',
@@ -1021,7 +1040,7 @@ describe('apply on open', () => {
       { name: 'sid', value: 'computer', domain: '.google.com', path: '/', secure: true, httpOnly: true },
       computerCookie('tmp', 'agent', 'agent.dev'),
     );
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       bundle(
@@ -1045,21 +1064,21 @@ describe('apply on open', () => {
       'example.com:sid=local',
       'mail.google.com:sid=local',
     ]);
-    expect(await computerRow()).toMatchObject({ appliedCaptureAt: new Date('2026-10-15T10:00:00Z') });
-    expect((await computerRow()).syncedSites).toEqual(['example.com', 'github.com', 'google.com']);
-    expect((await computerRow()).appliedCapture).not.toMatch(/local|example/);
+    expect(await applied()).toMatchObject({ appliedCaptureAt: new Date('2026-10-15T10:00:00Z') });
+    expect((await applied()).syncedSites).toEqual(['example.com', 'github.com', 'google.com']);
+    expect((await applied()).appliedCapture).not.toMatch(/local|example/);
     // Unchanged capture: no provider work.
     expect((await reopen(a)).sync).toEqual({ status: 'unchanged', captureCompletedAt: '2026-10-15T10:00:00.000Z' });
     expect(fake.calls.sync).toBe(1);
     // Signed out of GitHub and Gmail locally, example.com refreshed.
-    await saveCapture(db, a, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'fresh' })], new Date('2026-10-15T11:00:00Z')));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 3 });
     expect(jar()).toEqual(['agent.dev:tmp=agent', 'example.com:sid=fresh']);
-    expect((await computerRow()).syncedSites).toEqual(['example.com']);
+    expect((await applied()).syncedSites).toEqual(['example.com']);
   });
   it('sets only what the host changed: the host wins its changes, the computer keeps the rest', async () => {
     const a = await user('a');
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       bundle([
@@ -1076,7 +1095,7 @@ describe('apply on open', () => {
       ...sandbox().cookies.filter(entry => !own.includes(entry.name)),
       ...own.map(name => computerCookie(name, 'computer')),
     ];
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       bundle([
@@ -1093,14 +1112,14 @@ describe('apply on open', () => {
       'example.com:own=computer',
     ]);
     // A legacy row (or one after Delete everything) has no baseline: the next apply is wholesale again.
-    await db.update(schema.computers).set({ appliedCapture: null });
-    await saveCapture(db, a, bundle([cookie({ name: 'kept', value: '1' })]));
+    await db.update(schema.computerProfiles).set({ appliedCapture: null });
+    await saveFromBrowser(db, a, bundle([cookie({ name: 'kept', value: '1' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     expect(jar()).toEqual(['example.com:kept=1']);
   });
   it('starts a fork with what main had applied, so its first apply sends only what changed since', async () => {
     const a = await user('a');
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       bundle([cookie({ name: 'kept', value: '1' }), cookie({ name: 'gh', domain: 'github.com' })]),
@@ -1113,10 +1132,12 @@ describe('apply on open', () => {
     const unchanged = await open(a);
     expect(unchanged.sync).toMatchObject({ status: 'unchanged' });
     expect(fake.calls.sync).toBe(1);
-    expect((await forkRow(unchanged.computer.id)).appliedCapture).not.toBe((await mainRow()).appliedCapture);
+    const baseline = async (computer: { id: number }) =>
+      (await profilesOf({ computerId: computer.id }))[0]!.appliedCapture;
+    expect(await baseline(await forkRow(unchanged.computer.id))).not.toBe(await baseline(await mainRow()));
     // A newer capture: the fork gets only the changed site, and keeps what main rotated on the other.
     (await mainSandbox()).cookies.push(computerCookie('rotated', 'main', 'github.com'));
-    await saveCapture(
+    await saveFromBrowser(
       db,
       a,
       bundle([cookie({ name: 'kept', value: '2' }), cookie({ name: 'gh', domain: 'github.com' })]),
@@ -1128,9 +1149,9 @@ describe('apply on open', () => {
   });
   it('never applies within a computer session; the next open of the fork does', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]));
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'rotated' }), cookie({ name: 'new', domain: 'notion.so' })]));
     expect(await use(a, last!)).not.toHaveProperty('pending');
     expect(fake.calls.sync).toBe(1);
     expect(jar()).toEqual(['example.com:sid=local']);
@@ -1139,13 +1160,13 @@ describe('apply on open', () => {
   });
   it('still opens when apply fails and retries on the next open', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
+    await saveFromBrowser(db, a, bundle([cookie()], new Date('2026-10-15T10:00:00Z')));
     fake.failSync();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failed = await reopen(a);
     expect(failed.sync).toEqual({ status: 'failed', captureCompletedAt: '2026-10-15T10:00:00.000Z' });
     expect(error.mock.calls.flat().join(' ')).not.toMatch(/local|example\.com/);
-    expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCaptureAt: null });
+    expect(await applied()).toMatchObject({ appliedCaptureDigest: null, appliedCaptureAt: null });
     fake.failSync(false);
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     expect(jar()).toEqual(['example.com:sid=local']);
@@ -1172,16 +1193,17 @@ describe('apply on open', () => {
   });
   it('brings a computer behind the provider revision current on open, before the apply, and retries a failure', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     await reopen(a);
     // A new fork of a current main is only checked, once.
     expect((await computerRow()).revision).toBe('revision-1');
     await reopen(a);
-    expect(fake.calls.steps).toEqual(['refresh', 'sync']);
+    // The open runs Chrome on the session's profile after the refresh, which may restart it, and before the apply.
+    expect(fake.calls.steps).toEqual(['refresh', 'profile', 'sync', 'profile']);
     fake.setRevision('revision-2');
     fake.failRefresh();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })]));
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
     expect(error).toHaveBeenCalled();
     expect((await computerRow()).revision).toBe('revision-1');
@@ -1193,35 +1215,45 @@ describe('apply on open', () => {
     expect((await computerRow()).revision).toBe('revision-2');
     // Closing never refreshes; only opens do, before control is handed over.
     await closeComputerSession(db, computers, caller(a), last!);
-    expect(fake.calls.steps).toEqual(['refresh', 'sync', 'refresh', 'sync', 'refresh']);
+    expect(fake.calls.steps).toEqual([
+      'refresh',
+      'profile',
+      'sync',
+      'profile',
+      'refresh',
+      'profile',
+      'sync',
+      'refresh',
+      'profile',
+    ]);
   });
   it('signs the computer out of its synced sites once captures are deleted, retrying a failure, and keeps the rest', async () => {
     const a = await user('a');
     const capture = bundle([cookie(), cookie({ name: 'new', domain: 'notion.so' })]);
-    await saveCapture(db, a, capture);
+    await saveFromBrowser(db, a, capture);
     await reopen(a);
     // A site the computer signed in to on its own.
     sandbox().cookies.push(computerCookie('sid', 'own', 'own.test'));
     await deleteCaptures(db, a);
-    expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
+    expect(await applied()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
     fake.failSync();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await reopen(a)).sync).toEqual({ status: 'failed', sites: ['example.com', 'notion.so'] });
     expect(error).toHaveBeenCalled();
-    expect((await computerRow()).syncedSites).toEqual(['example.com', 'notion.so']);
+    expect((await applied()).syncedSites).toEqual(['example.com', 'notion.so']);
     fake.failSync(false);
     expect((await reopen(a)).sync).toEqual({ status: 'cleared', sites: ['example.com', 'notion.so'] });
     expect(jar()).toEqual(['own.test:sid=own']);
-    expect((await computerRow()).syncedSites).toEqual([]);
+    expect((await applied()).syncedSites).toEqual([]);
     // Nothing more to sign out.
     expect((await reopen(a)).sync).toEqual({ status: 'none' });
-    await saveCapture(db, a, capture);
+    await saveFromBrowser(db, a, capture);
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 2 });
   });
   it('does not overwrite a concurrent apply of another capture, and re-applies wholesale next time', async () => {
     const a = await user('a');
     const first = await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     // Another open racing this one applies a different capture while this one runs.
     const connect = fake.provider.connect;
     fake.provider.connect = async (sandboxId, timeoutMs) => {
@@ -1230,24 +1262,24 @@ describe('apply on open', () => {
         ...session,
         syncCookies: async input => {
           await db
-            .update(schema.computers)
+            .update(schema.computerProfiles)
             .set({ appliedCaptureDigest: 'other', syncedSites: ['other.test'] })
-            .where(eq(schema.computers.publicId, first.computer.id));
+            .where(eq(schema.computerProfiles.computerId, (await forkRow(first.computer.id)).id));
           return session.syncCookies(input);
         },
       };
     };
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
-    expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
-    expect((await computerRow()).syncedSites.sort()).toEqual(['example.com', 'other.test']);
+    expect(await applied()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
+    expect((await applied()).syncedSites.sort()).toEqual(['example.com', 'other.test']);
     fake.provider.connect = connect;
     expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 2 });
-    expect((await computerRow()).syncedSites).toEqual(['example.com']);
+    expect((await applied()).syncedSites).toEqual(['example.com']);
   });
   it('skips the apply when the open has no time left, without failing the open', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const now = Date.now.bind(Date);
     let skew = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => now() + skew);
@@ -1268,7 +1300,7 @@ describe('apply on open', () => {
   it('gives the provider its budget, so a sync cut short never changes cookies after the open returns', async () => {
     const a = await user('a');
     await reopen(a);
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -1288,6 +1320,149 @@ describe('apply on open', () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('profiles', () => {
+  // A browser of the member's signed in to example.com as someone, by its cookie's value.
+  const signIn = async (member: Member, name: string, value = name) => {
+    const browser = await syncingBrowser(db, member, {
+      name,
+      ...(name === 'personal' ? { userAgent: EDGE_ON_WINDOWS } : {}),
+    });
+    expect(await saveFromBrowser(db, member, bundle([cookie({ value })]), { browser: browser.id })).toMatchObject({
+      status: 'stored',
+    });
+    return browser;
+  };
+  // An open whose call has ended, as the MCP layer leaves it.
+  const openWith = async (member: Member, options: Parameters<typeof openComputerSession>[3] = {}) => {
+    const opened = await openComputerSession(db, computers, caller(member), options);
+    if ('error' in opened) throw new Error(opened.error);
+    await opened.done();
+    return opened;
+  };
+  const values = (cookies: { value: string }[] = []) => cookies.map(entry => entry.value).sort();
+  const sessionProfiles = async () =>
+    (await db.select().from(schema.computerSessions).orderBy(schema.computerSessions.id)).map(
+      row => row.connectedBrowserId,
+    );
+  it('gives each browser its own Chrome profile, so one site is signed in as each person', async () => {
+    const a = await user('a');
+    const work = await signIn(a, 'work');
+    const personal = await signIn(a, 'personal');
+    // Without a profile, a new computer gets the browser synced last, in the directory its Chrome already runs.
+    const first = await openWith(a);
+    expect(first.profile).toMatchObject({ id: personal.publicId, browser: 'edge', platform: 'windows', default: true });
+    expect(first.profiles.map(profile => profile.id)).toEqual([personal.publicId, work.publicId]);
+    const fork = await sandboxOf(first.computer.id);
+    expect(fork.profile).toBe(FIRST_PROFILE);
+    expect(values(fork.cookies)).toEqual(['personal']);
+    // Naming the other runs Chrome on a profile of its own, signed in as that person; the first keeps its sign-in.
+    const second = await openWith(a, {
+      computerId: first.computer.id,
+      sessionId: first.sessionId,
+      profile: work.publicId,
+    });
+    expect(second.profile).toMatchObject({ id: work.publicId, default: false });
+    expect(second.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
+    expect(fork.profile).toBe(work.publicId);
+    expect(values(fork.cookies)).toEqual(['work']);
+    expect(values(fork.profiles[FIRST_PROFILE])).toEqual(['personal']);
+    // A sync from one browser changes nothing in the other's profile, and a reopen without a profile keeps the
+    // computer's, though the other browser synced since.
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'personal again' })]), { browser: personal.id });
+    const kept = await openWith(a, { computerId: first.computer.id, sessionId: second.sessionId });
+    expect(kept.profile?.id).toBe(work.publicId);
+    expect(kept.sync).toMatchObject({ status: 'unchanged' });
+    expect(values(fork.cookies)).toEqual(['work']);
+    expect(values(fork.profiles[FIRST_PROFILE])).toEqual(['personal']);
+    const back = await openWith(a, {
+      computerId: first.computer.id,
+      sessionId: kept.sessionId,
+      profile: personal.publicId,
+    });
+    expect(back.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
+    expect(values(fork.cookies)).toEqual(['personal again']);
+    expect(values(fork.profiles[work.publicId])).toEqual(['work']);
+    // A new computer gets the default again.
+    expect((await openWith(a)).profile?.id).toBe(personal.publicId);
+    // Each session records its profile, and Chrome ran each.
+    expect(await sessionProfiles()).toEqual([personal.id, work.id, work.id, personal.id, personal.id]);
+    expect(fake.calls.profiles.map(call => call.profile)).toEqual([
+      FIRST_PROFILE,
+      work.publicId,
+      work.publicId,
+      FIRST_PROFILE,
+      FIRST_PROFILE,
+    ]);
+  });
+  it("refuses a profile that is unknown, another member's, or no longer syncing, before making a computer", async () => {
+    const a = await user('a');
+    const b = await user('b');
+    const mine = await signIn(a, 'work');
+    const theirs = await signIn(b, 'work');
+    const removed = await signIn(a, 'removed');
+    const signedOut = await signIn(a, 'signed-out');
+    expect(await removeBrowser(db, a, removed.publicId)).toBe(true);
+    await db
+      .update(schema.connectedBrowsers)
+      .set({ disconnectedAt: new Date() })
+      .where(eq(schema.connectedBrowsers.id, signedOut.id));
+    for (const profile of [newPublicId('browser'), theirs.publicId, removed.publicId, signedOut.publicId, 'brw_x'])
+      expect(await openComputerSession(db, computers, caller(a), { profile }), profile).toMatchObject({
+        error: 'profile_not_found',
+      });
+    expect(await db.select().from(schema.computers)).toEqual([]);
+    expect(await sessions()).toEqual([]);
+    expect((await openWith(a, { profile: mine.publicId })).profile?.id).toBe(mine.publicId);
+  });
+  it("signs a browser's profile out of what it synced once it stops syncing, on each computer's next open", async () => {
+    const a = await user('a');
+    const work = await signIn(a, 'work');
+    // The member's takeover applies it on main, and the hand-back snapshots main for new computers.
+    const page = randomUUID();
+    await takeOverComputer(db, computers, a, page);
+    await handBackComputer(db, computers, a, page);
+    const personal = await signIn(a, 'personal');
+    const opened = await openWith(a, { profile: work.publicId });
+    const fork = await sandboxOf(opened.computer.id);
+    expect(opened.sync).toMatchObject({ status: 'unchanged' });
+    // A site only the computer signed in to, in the work profile, which stays.
+    fork.cookies.push({ name: 'sid', value: 'own', url: 'https://own.test/', path: '/', secure: true, httpOnly: true });
+    const both = await openWith(a, {
+      computerId: opened.computer.id,
+      sessionId: opened.sessionId,
+      profile: personal.publicId,
+    });
+    expect(await removeBrowser(db, a, work.publicId)).toBe(true);
+    const next = await openWith(a, { computerId: opened.computer.id, sessionId: both.sessionId });
+    expect(next.profile?.id).toBe(personal.publicId);
+    expect(next.profiles.map(profile => profile.id)).toEqual([personal.publicId]);
+    expect(next.sync).toMatchObject({ status: 'unchanged' });
+    expect(values(fork.profiles[FIRST_PROFILE])).toEqual(['own']);
+    expect(values(fork.cookies)).toEqual(['personal']);
+    // A new computer from main's snapshot, which still had the work profile signed in: signed out on its first open.
+    const fresh = await openWith(a);
+    const copy = await sandboxOf(fresh.computer.id);
+    expect(copy.profile).toBe(personal.publicId);
+    expect(values(copy.profiles[FIRST_PROFILE])).toEqual([]);
+    expect(values(copy.cookies)).toEqual(['personal']);
+    // Main changes only with the member's takeover, whose next one signs it out there too.
+    const main = await mainSandbox();
+    expect(values(main.cookies)).toEqual(['work']);
+    await takeOverComputer(db, computers, a, randomUUID());
+    expect(main.profile).toBe(personal.publicId);
+    expect(values(main.profiles[FIRST_PROFILE])).toEqual([]);
+    expect(values(main.cookies)).toEqual(['personal']);
+  });
+  it('fails the open rather than give the session another profile when Chrome cannot switch', async () => {
+    const a = await user('a');
+    await signIn(a, 'work');
+    fake.failUseProfile();
+    await expect(openComputerSession(db, computers, caller(a))).rejects.toThrow('useProfile failed');
+    expect(fake.calls.sync).toBe(0);
+    expect(await sessions()).toMatchObject([{ endReason: 'closed' }]);
   });
 });
 
@@ -1344,7 +1519,7 @@ describe('live view', () => {
     await db.insert(schema.oauthClient).values({ id: randomUUID(), clientId: claudeCode, redirectUris: [] });
     const agent = await open(a, claudeCode);
     const fork = { computerId: agent.computer.id };
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const page = lease();
     at('2026-10-20T12:00:20Z');
     expect(await takeOver(a, page, fork)).toEqual({
@@ -1446,7 +1621,7 @@ describe('live view', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     await setTimeZone(db, a.userId, 'Europe/London');
     const page = lease();
     // Creates the main computer, then applies the capture and time zone.
@@ -1462,7 +1637,7 @@ describe('live view', () => {
     const fork = { computerId: agent.computer.id };
     // An agent idle past its minute, but not ended, is still working: the next takeover of its fork suspends it, no apply.
     at('2026-10-20T12:05:00Z');
-    await saveCapture(db, a, bundle([cookie({ value: 'new' })]));
+    await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })]));
     await takeOver(a, page, fork);
     expect(fake.calls.sync).toBe(1);
     expect(await sessionRow(agent.sessionId)).toMatchObject({ suspendedAt: new Date('2026-10-20T12:05:00Z') });
@@ -1614,7 +1789,7 @@ describe('live view', () => {
   });
   it('creates the main computer for a watch with the latest capture, without marking the user set up', async () => {
     const a = await user('a');
-    await saveCapture(db, a, bundle([cookie()]));
+    await saveFromBrowser(db, a, bundle([cookie()]));
     const page = lease();
     expect(await beat(a, page, 'visible')).toEqual({
       computer: 'running',

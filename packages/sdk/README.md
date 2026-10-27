@@ -26,6 +26,8 @@ await session.close();
 
 `computers.open({ member })` starts a session on a new fork of the member's computer, a copy with their newest sign-ins applied (`session.sync` says how they applied). Pass `computer: session.computer.id` to reopen that fork later as it was left, and `session` with your current session's ID to replace it on the same fork. A fork unused for a week is deleted.
 
+Each browser the member syncs is its own Chrome profile on their computers, with that browser's sign-ins, so a site can be signed in as a different person in each, such as a work and a personal account. A session uses one: `session.profile`, among `session.profiles` (`{ id, browser, platform, lastSyncedAt, default }`). Pass `profile: id` to `computers.open` to choose one; without it, a reopened fork keeps the profile it had, and a new fork gets the default, the browser that synced last. `captures.latest(member, { profile })` reads one profile's capture, and the default's without it.
+
 - `session.cdpUrl` is a WebSocket URL for the fork's Chrome, through the server, which keeps computers private. It works only while the session is open, and only for this session: keep it as secret as the key. Pass it to `chromium.connectOverCDP`, browser-use's `Browser(cdp_url=…)`, or Stagehand's `localBrowserLaunchOptions.cdpUrl`; the member's sign-ins are in Chrome's default context.
 - `session.liveViewUrl` opens live view of the fork for the member, signed in to the server in the same organization. While they take control, the session waits.
 - `session.exec(command)` runs a shell command as the desktop user, for up to 90 seconds.
@@ -47,7 +49,7 @@ await session.close();
 
 ## Errors
 
-Every call throws `ClutchboxError` on a refusal, with the server's `code` and `status`: `unauthenticated` (a wrong or deleted key), `insufficient_scope`, `not_found` (no such member in the key's organization), `no_capture`, `session_not_found`, `session_ended`, `busy` (another session holds the fork; `busyUntil` says until when), `user_in_control`, `allowance_exhausted`, and `computer_unavailable`.
+Every call throws `ClutchboxError` on a refusal, with the server's `code` and `status`: `unauthenticated` (a wrong or deleted key), `insufficient_scope`, `not_found` (no such member in the key's organization, or profile of theirs), `no_capture`, `profile_not_found` (that browser no longer syncs to the member), `session_not_found`, `session_ended`, `busy` (another session holds the fork; `busyUntil` says until when), `user_in_control`, `allowance_exhausted`, and `computer_unavailable`.
 
 ## The REST API
 
@@ -56,8 +58,8 @@ All under `/api/v1`, with `Authorization: Bearer <key>`:
 | Call | |
 | --- | --- |
 | `GET /members` | The organization's members. |
-| `GET /members/<id>/capture` | A member's latest capture (`captures`). |
-| `POST /computers/sessions` | `{ member, computer?, session?, label? }`: opens a session (`computers`). Answers `{ session, computer, cdpUrl, liveViewUrl, sync, idlePauseSeconds }`. |
+| `GET /members/<id>/capture?profile=` | A member's latest capture, the default profile's or `profile`'s (`captures`). |
+| `POST /computers/sessions` | `{ member, computer?, session?, label?, profile? }`: opens a session (`computers`). Answers `{ session, computer, cdpUrl, liveViewUrl, profile, profiles, sync, idlePauseSeconds }`. |
 | `GET /computers/sessions/<id>` | `{ state }`: `open`, `user_in_control`, or `ended`. |
 | `POST /computers/sessions/<id>/exec` | `{ command, cwd?, timeoutSeconds? }`: `{ exitCode, stdout, stderr, truncated, timedOut }`. |
 | `DELETE /computers/sessions/<id>` | Closes the session. |

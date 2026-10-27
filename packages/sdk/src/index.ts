@@ -28,12 +28,23 @@ export class ClutchboxError extends Error {
 }
 
 export type Member = { id: string; name: string; email: string; role: string; lastSyncedAt: string | null };
-export type LatestCapture = { member: string; completedAt: string; capture: Capture };
-// How the member's latest capture applied to the computer when the session opened.
+// One of a member's browsers, each its own Chrome profile on their computers with that browser's sign-ins, so a site can
+// be signed in as a different person in each. The default is the one that synced last.
+export type Profile = {
+  id: string;
+  browser: 'chrome' | 'edge' | 'opera' | null;
+  platform: 'macos' | 'windows' | 'linux' | 'chromeos' | null;
+  lastSyncedAt: string;
+  default: boolean;
+};
+export type LatestCapture = { member: string; profile: string; completedAt: string; capture: Capture };
+// How the session's profile's latest capture applied to the computer when the session opened. cleared: a browser
+// stopped syncing, so the computer was signed out of the sites it had synced; sites lists them.
 export type SyncSummary = {
-  status: 'none' | 'unchanged' | 'applied' | 'failed';
+  status: 'none' | 'unchanged' | 'applied' | 'cleared' | 'failed';
   captureCompletedAt?: string;
   sitesUpdated?: number;
+  sites?: string[];
 };
 export type ExecResult = {
   exitCode: number | null;
@@ -58,6 +69,9 @@ export type OpenOptions = {
   session?: string;
   // For a new computer: a short name, shown to the member.
   label?: string;
+  // The profile to use, by its ID from a session's profiles. Without it, a reopened computer keeps the profile it had,
+  // and a new one gets the default.
+  profile?: string;
 };
 
 type SessionAnswer = {
@@ -65,6 +79,9 @@ type SessionAnswer = {
   computer: { id: string; label: string | null; created: boolean };
   cdpUrl: string;
   liveViewUrl: string;
+  // The session's profile, null when no browser syncs to the member, and all of theirs.
+  profile: Profile | null;
+  profiles: Profile[];
   sync: SyncSummary;
   idlePauseSeconds: number;
   userHadControl?: boolean;
@@ -117,9 +134,11 @@ export function createClient(options: ClientOptions) {
       list: async () => (await call<{ members: Member[] }>('GET', '/members')).members,
     },
     captures: {
-      // A member's latest capture, checked against the capture format. Needs the captures scope.
-      async latest(member: string): Promise<LatestCapture> {
-        const answer = await call<LatestCapture>('GET', `/members/${encodeURIComponent(member)}/capture`);
+      // A member's latest capture, checked against the capture format: the default profile's, or `profile`'s. Needs the
+      // captures scope.
+      async latest(member: string, { profile }: { profile?: string } = {}): Promise<LatestCapture> {
+        const query = profile === undefined ? '' : `?profile=${encodeURIComponent(profile)}`;
+        const answer = await call<LatestCapture>('GET', `/members/${encodeURIComponent(member)}/capture${query}`);
         return { ...answer, capture: captureSchema.parse(answer.capture) };
       },
     },
@@ -158,6 +177,8 @@ export class ComputerSession {
   readonly computer: SessionAnswer['computer'];
   readonly cdpUrl: string;
   readonly liveViewUrl: string;
+  readonly profile: Profile | null;
+  readonly profiles: Profile[];
   readonly sync: SyncSummary;
   readonly userHadControl: boolean;
   private closed = false;
@@ -170,6 +191,8 @@ export class ComputerSession {
     this.computer = answer.computer;
     this.cdpUrl = answer.cdpUrl;
     this.liveViewUrl = answer.liveViewUrl;
+    this.profile = answer.profile;
+    this.profiles = answer.profiles;
     this.sync = answer.sync;
     this.userHadControl = !!answer.userHadControl;
   }

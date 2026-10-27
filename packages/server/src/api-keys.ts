@@ -1,7 +1,7 @@
 import 'server-only';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, max } from 'drizzle-orm';
 import type { Auth } from './auth';
-import { loadLatestCapture } from './captures';
+import { listProfiles, loadLatestCapture } from './captures';
 import { type Caller, type ComputerFailure, SESSION_ID_PATTERN } from './computers';
 import type { Database } from './database';
 import { logError } from './log';
@@ -108,7 +108,8 @@ export async function computerCallerForSession(
   return member ? keyCaller(member, key.keyId) : sessionNotFound;
 }
 
-// The organization's members, for a key to address them by ID, with when each last synced.
+// The organization's members, for a key to address them by ID, with when each last synced: the newest capture of any of
+// their browsers.
 export async function membersForKey(db: Database, key: KeyPrincipal) {
   return db
     .select({
@@ -116,18 +117,25 @@ export async function membersForKey(db: Database, key: KeyPrincipal) {
       name: schema.user.name,
       email: schema.user.email,
       role: schema.memberships.role,
-      lastSyncedAt: schema.captures.completedAt,
+      lastSyncedAt: max(schema.browserCaptures.completedAt),
     })
     .from(schema.memberships)
     .innerJoin(schema.user, eq(schema.user.id, schema.memberships.userId))
-    .leftJoin(schema.captures, eq(schema.captures.membershipId, schema.memberships.id))
+    .leftJoin(schema.browserCaptures, eq(schema.browserCaptures.membershipId, schema.memberships.id))
     .where(eq(schema.memberships.organizationId, key.organizationId))
+    .groupBy(schema.memberships.id, schema.user.id)
     .orderBy(asc(schema.memberships.id));
 }
 
-// A member's latest capture, in the capture format. Needs the captures scope; another organization's member is not
-// found. 'unreadable' when it can't be opened (no key on this server, or a decrypt failure).
-export async function latestCaptureForKey(db: Database, key: KeyPrincipal, membershipPublicId: string) {
+// A member's latest capture, in the capture format: one profile's (captures.ts, Profiles), by its browser's public ID,
+// or the default's. Needs the captures scope; another organization's member is not found, and so is a profile that is
+// not theirs. 'unreadable' when it can't be opened (no key on this server, or a decrypt failure).
+export async function latestCaptureForKey(
+  db: Database,
+  key: KeyPrincipal,
+  membershipPublicId: string,
+  profileId?: string | undefined,
+) {
   if (!key.scopes.includes('captures')) return { error: 'insufficient_scope' } as const;
   const [member] = await db
     .select({
@@ -143,10 +151,18 @@ export async function latestCaptureForKey(db: Database, key: KeyPrincipal, membe
       ),
     );
   if (!member) return { error: 'not_found' } as const;
+  const profiles = await listProfiles(db, member);
+  const profile = profileId === undefined ? profiles[0] : profiles.find(each => each.id === profileId);
+  if (!profile) return profileId === undefined ? ({ error: 'no_capture' } as const) : ({ error: 'not_found' } as const);
   try {
-    const latest = await loadLatestCapture(db, member);
+    const latest = await loadLatestCapture(db, member, profile.browserId);
     if (!latest) return { error: 'no_capture' } as const;
-    return { member: membershipPublicId, completedAt: latest.completedAt, capture: latest.capture };
+    return {
+      member: membershipPublicId,
+      profile: profile.id,
+      completedAt: latest.completedAt,
+      capture: latest.capture,
+    };
   } catch (error) {
     logError('api key capture', error);
     return { error: 'capture_unreadable' } as const;

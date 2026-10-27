@@ -1,7 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { Capture } from '@agent-computers/capture';
 import { expect } from 'vitest';
 import type { Auth } from './auth';
-import { EXTENSION_CLIENT_ID } from './browsers';
+import { browserOf, EXTENSION_CLIENT_ID } from './browsers';
+import { saveCapture } from './captures';
+import type { Database } from './database';
+import { newPublicId } from './ids';
+import type { Member } from './organizations';
+import * as schema from './schema';
 
 // Connects a synthetic browser through the real OAuth flow, for tests only.
 export const CHROME_ON_MAC =
@@ -81,3 +87,37 @@ export async function connectBrowser(
 }
 export const refreshBrowser = (auth: Auth, extensionOrigin: string, refreshToken: string, extra = {}) =>
   tokenRequest(auth, extensionOrigin, { grant_type: 'refresh_token', refresh_token: refreshToken, ...extra });
+
+// A browser of the member's, recorded as connecting would record it, without OAuth: the same one for each name, so a
+// test syncs from one browser, or from several by name. For tests of what syncs; connectBrowser covers connecting.
+export async function syncingBrowser(
+  db: Database,
+  member: Member,
+  { name = 'browser', userAgent = CHROME_ON_MAC }: { name?: string; userAgent?: string } = {},
+) {
+  const browsers = schema.connectedBrowsers;
+  const [row] = await db
+    .insert(browsers)
+    .values({
+      publicId: newPublicId('browser'),
+      userId: member.userId,
+      membershipId: member.membershipId,
+      authorizationCodeId: `test-${member.membershipId}-${name}`,
+      ...browserOf(userAgent),
+    })
+    .onConflictDoUpdate({ target: browsers.authorizationCodeId, set: { updatedAt: new Date() } })
+    .returning({ id: browsers.id, publicId: browsers.publicId });
+  return row!;
+}
+// An upload from the member's browser (syncingBrowser), or the one the options name.
+export async function saveFromBrowser(
+  db: Database,
+  member: Member,
+  capture: Capture,
+  options: Partial<Parameters<typeof saveCapture>[3]> = {},
+) {
+  return saveCapture(db, member, capture, {
+    ...options,
+    browser: options.browser ?? (await syncingBrowser(db, member)).id,
+  });
+}

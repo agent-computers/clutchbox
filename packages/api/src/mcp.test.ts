@@ -9,10 +9,10 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { createAuth } from '../../server/src/auth';
-import { connectBrowser } from '../../server/src/browser-fixtures';
-import { EXTENSION_CLIENT_ID, ensureExtensionClient } from '../../server/src/browsers';
+import { connectBrowser, EDGE_ON_WINDOWS, saveFromBrowser, syncingBrowser } from '../../server/src/browser-fixtures';
+import { EXTENSION_CLIENT_ID, ensureExtensionClient, removeBrowser } from '../../server/src/browsers';
 import { bundle, cookie } from '../../server/src/capture-fixtures';
-import { deleteCaptures, saveCapture } from '../../server/src/captures';
+import { deleteCaptures } from '../../server/src/captures';
 import {
   COMPUTER_ID_PATTERN,
   deleteMainComputer,
@@ -591,7 +591,7 @@ describe('main computer tools', () => {
     // Every call ends by letting the computer pause after the idle minute.
     expect(fake.calls.setTimeouts.every(ms => ms === 60_000)).toBe(true);
     // A sign-in on the host never reaches a computer session; the agent reopens with its session to apply it.
-    await saveCapture(db, await member(a.id), bundle([cookie()]));
+    await saveFromBrowser(db, await member(a.id), bundle([cookie()]));
     const shot = (await tool(claude.access_token, 'computer_screenshot', { session_id: id })).result.structuredContent;
     expect(shot).toEqual({ session_id: id, display: { width: 1280, height: 800 } });
     expect(fake.calls.sync).toBe(0);
@@ -715,6 +715,38 @@ describe('main computer tools', () => {
     // A malformed ID fails validation before reaching the computer.
     const malformed = await tool(outsider.access_token, 'computer_screenshot', { session_id: 'cs_short' });
     expect(malformed.error ?? malformed.result.isError).toBeTruthy();
+  });
+  it("opens on the browser profile it names, lists the user's profiles, and says when one stops syncing", async () => {
+    const fake = fakeComputerProvider();
+    vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    endpoint = createMcpEndpoint({ db, auth, origin, computers: fake.provider });
+    const a = await identity('a');
+    const token = (await authorize(a.cookie, await register()))!.access_token;
+    const mine = await member(a.id);
+    const work = await syncingBrowser(db, mine, { name: 'work' });
+    const personal = await syncingBrowser(db, mine, { name: 'personal', userAgent: EDGE_ON_WINDOWS });
+    for (const browser of [work, personal])
+      await saveFromBrowser(db, mine, bundle([cookie()]), { browser: browser.id });
+    const profiles = [
+      { profile_id: personal.publicId, browser: 'edge', platform: 'windows', default: true },
+      { profile_id: work.publicId, browser: 'chrome', platform: 'macos', default: false },
+    ].map(profile => ({ ...profile, last_synced_at: expect.any(String) }));
+    // Without one, the browser synced last.
+    const opened = (await tool(token, 'computer_open', {})).result.structuredContent;
+    expect(opened).toMatchObject({ profile: profiles[0], profiles });
+    expect((await tool(token, 'computer_list', {})).result.structuredContent.profiles).toEqual(profiles);
+    const named = (await tool(token, 'computer_open', { session_id: opened.session_id, profile: work.publicId })).result
+      .structuredContent;
+    expect(named).toMatchObject({ computer_id: opened.computer_id, profile: profiles[1] });
+    expect(fake.calls.profiles.map(call => call.profile)).toEqual(['default', work.publicId]);
+    // Once that browser no longer syncs here, naming it is an error the agent can act on, and the session goes on.
+    expect(await removeBrowser(db, mine, work.publicId)).toBe(true);
+    const gone = (await tool(token, 'computer_open', { session_id: named.session_id, profile: work.publicId })).result;
+    expect(gone).toMatchObject({ isError: true, structuredContent: { error: 'profile_not_found' } });
+    expect(gone.structuredContent.message).toContain('Omit profile');
+    expect(
+      (await tool(token, 'computer_screenshot', { session_id: named.session_id })).result.structuredContent,
+    ).toMatchObject({ session_id: named.session_id });
   });
   it('tells an agent the user took control, shows it waiting, and says so once after the hand-back', async () => {
     const fake = fakeComputerProvider();
@@ -1026,7 +1058,11 @@ describe('main computer tools', () => {
           .result.structuredContent.url;
         expect(await (await passthrough(link)).text()).toBe('ok');
         // A host sign-in mid-session is announced, not applied; reopening with the session_id applies it.
-        await saveCapture(db, await member(a.id), bundle([cookie({ domain: 'example.com', value: 'host-signed-in' })]));
+        await saveFromBrowser(
+          db,
+          await member(a.id),
+          bundle([cookie({ domain: 'example.com', value: 'host-signed-in' })]),
+        );
         const noticed = await tool(token, 'computer_screenshot', { session_id: id });
         expect(noticed.result.structuredContent.pending_sync).toMatchObject({ sites: ['example.com'] });
         const reopened = (await tool(token, 'computer_open', { session_id: id })).result.structuredContent;

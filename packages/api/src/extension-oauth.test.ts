@@ -233,7 +233,7 @@ describe('extension routes over OAuth', () => {
     expect(uploaded.headers.get('access-control-allow-origin')).toBe(extension);
     const [row] = await db.select().from(schema.connectedBrowsers);
     expect(row!.lastSyncedAt).toBeInstanceOf(Date);
-    const [stored] = await db.select().from(schema.captures);
+    const [stored] = await db.select().from(schema.browserCaptures);
     expect(stored!.connectedBrowserId).toBe(row!.id);
     const refused = await request('GET', '/me', { token: 'not-a-live-token' });
     expect(refused.status).toBe(401);
@@ -279,7 +279,7 @@ describe('extension routes over OAuth', () => {
       expect((await request('POST', '/captures', { token: tokens, from, body: capture })).status, String(from)).toBe(
         403,
       );
-    expect(await db.select().from(schema.captures)).toEqual([]);
+    expect(await db.select().from(schema.browserCaptures)).toEqual([]);
   });
 
   it('let only a sync token upload, delete, add sites, and adopt settings, and not our web app', async () => {
@@ -334,7 +334,7 @@ describe('extension routes over OAuth', () => {
       });
       expect(refused.headers.get('access-control-allow-origin'), path).toBe(extension);
     }
-    expect(await db.select().from(schema.captures)).toEqual([]);
+    expect(await db.select().from(schema.browserCaptures)).toEqual([]);
   });
 
   it('sign the browser out with DELETE /captures, deleting what it sent everywhere, leaving other browsers', async () => {
@@ -356,7 +356,12 @@ describe('extension routes over OAuth', () => {
     expect((await request('GET', '/me', { token: one })).status).toBe(401);
     expect((await request('GET', '/me', { token: two })).status).toBe(200);
     expect(await browsers(a)).toMatchObject([{ browser: 'edge' }]);
-    expect(await db.select().from(schema.captures)).toEqual([]);
+    // Its captures go in both organizations; the other browser's stays.
+    const [edge] = await db
+      .select({ id: schema.connectedBrowsers.id })
+      .from(schema.connectedBrowsers)
+      .where(eq(schema.connectedBrowsers.browser, 'edge'));
+    expect((await db.select().from(schema.browserCaptures)).map(row => row.connectedBrowserId)).toEqual([edge!.id]);
   });
 
   it("list and remove browsers on one organization's Browser sync page only, leaving them signed in", async () => {
@@ -387,6 +392,17 @@ describe('extension routes over OAuth', () => {
       expect(Object.keys(browser).sort()).toEqual(['browser', 'connectedAt', 'id', 'lastSyncedAt', 'platform']);
     const [first, second_] = listed.body.browsers as { id: string; lastSyncedAt: string | null }[];
     expect(first!.lastSyncedAt).toEqual(expect.any(String));
+    // Each is a profile on the computer, the one synced last the default; only the web app lists them.
+    const profiles = async () =>
+      (await json(await request('GET', '/profiles', { cookie: a, from: origin }))).body.profiles as {
+        id: string;
+        default: boolean;
+      }[];
+    expect(await profiles()).toEqual([
+      { id: second_!.id, browser: 'chrome', platform: 'macos', lastSyncedAt: expect.any(String), default: true },
+      { id: first!.id, browser: 'chrome', platform: 'macos', lastSyncedAt: first!.lastSyncedAt, default: false },
+    ]);
+    expect((await request('GET', '/profiles', { token: one })).status).toBe(401);
     const remove = (body: unknown, cookie = a, from: string = origin) =>
       request('POST', '/browsers/disconnect', { cookie, from, body });
     for (const body of [{}, { id: 'cmp_00000000000000000000000000' }, { id: first!.id, extra: 1 }, { id: 'brw_x' }])
@@ -395,10 +411,11 @@ describe('extension routes over OAuth', () => {
     const [foreign] = (await (await request('GET', '/browsers', { cookie: b, from: origin })).json()).browsers;
     expect((await remove({ id: foreign.id })).status).toBe(404);
     expect((await remove({ id: first!.id }, a, extension)).status).toBe(403);
-    // The first did not send the latest capture, so it stays; the second did.
+    // Its capture here goes, and with it its profile; the second's, and its own in the other organization, stay.
     expect(await json(await remove({ id: first!.id }))).toEqual({ status: 200, body: { disconnected: true } });
     expect((await remove({ id: first!.id })).status).toBe(404);
-    expect(await db.select().from(schema.captures)).toHaveLength(3);
+    expect(await db.select().from(schema.browserCaptures)).toHaveLength(3);
+    expect((await profiles()).map(profile => [profile.id, profile.default])).toEqual([[second_!.id, true]]);
     // Still signed in: refused here, told it was removed, and syncing to the other organization.
     expect((await request('GET', '/me', { token: one })).status).toBe(200);
     expect(await json(await upload(one))).toEqual({ status: 409, body: { error: 'sync_disconnected' } });

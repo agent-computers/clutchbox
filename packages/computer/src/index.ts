@@ -50,6 +50,11 @@ export const actionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('wait'), ms: z.int().min(1).max(5000) }).strict(),
 ]);
 export type ComputerAction = z.infer<typeof actionSchema>;
+// A Chrome profile on a computer: its own user data directory, so its cookies and storage stay apart from every other
+// profile's. Names are the caller's, in characters a shell passes through unquoted. FIRST_PROFILE is the directory a
+// computer's Chrome ran before profiles, which the first profile a computer gets keeps.
+export const PROFILE_PATTERN = /^[a-z0-9_]{1,64}$/;
+export const FIRST_PROFILE = 'default';
 export type ExecResult = {
   exitCode: number | null;
   stdout: string;
@@ -76,9 +81,15 @@ export interface ComputerSession {
   refresh(budgetMs: number): Promise<'current' | 'refreshed'>;
   // Sets the system time zone (a valid IANA name), which a running Chrome follows at once.
   setTimeZone(timeZone: string): Promise<void>;
+  // Runs Chrome on `profile` (PROFILE_PATTERN), the one Chrome every other method uses until the next call: a Chrome on
+  // another profile is stopped gracefully first, so its cookies reach disk, and its tabs close. A computer runs
+  // FIRST_PROFILE until told otherwise. Done, or failed, within budgetMs; a failure leaves no Chrome on the wrong profile.
+  useProfile(profile: string, budgetMs: number): Promise<void>;
   // Replaces every cookie of clearSites, then sets `cookies` (an expired one deletes its match); other
-  // sites' cookies are kept. Nothing may change cookies later than budgetMs after the call, even when it fails.
+  // sites' cookies are kept. Refused unless Chrome runs `profile`, so one profile's cookies never reach another. Nothing
+  // may change cookies later than budgetMs after the call, even when it fails.
   syncCookies(input: {
+    profile: string;
     clearSites: string[];
     cookies: CdpCookieParam[];
     budgetMs: number;

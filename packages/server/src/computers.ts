@@ -2,14 +2,16 @@ import 'server-only';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
 import { siteOfCookie } from '@agent-computers/capture';
-import type { ComputerProvider, ComputerSession } from '@agent-computers/computer';
+import { type ComputerProvider, type ComputerSession, FIRST_PROFILE } from '@agent-computers/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
 import { type AgentKind, agentOf, clientHost } from './agents';
 import {
   captureView,
   latestCaptureDigest,
+  listProfiles,
   loadLatestCapture,
   openAppliedCapture,
+  type Profile,
   sealAppliedCapture,
 } from './captures';
 import {
@@ -21,6 +23,7 @@ import {
   HOLD_EXTEND_STEP_MS,
   HOLD_LAPSE_MS,
   IDLE_PAUSE_MS,
+  PROFILE_SWITCH_BUDGET_MS,
   REFRESH_BUDGET_MS,
   RELEASED_LEASE_MS,
   SESSION_IDLE_END_MS,
@@ -66,13 +69,16 @@ export type ComputerFailure = {
     | 'allowance_exhausted'
     | 'access_revoked'
     | 'needs_reset'
-    | 'computer_not_found';
+    | 'computer_not_found'
+    | 'profile_not_found';
   message: string;
   busyUntil?: Date | undefined;
   resetsAt?: Date | undefined;
 };
 export type SyncSummary = {
-  // `cleared`: the member's capture was deleted, so the computer was signed out of the sites it had synced.
+  // `none`: the session has no profile, since no browser syncs to the member, and nothing needed signing out.
+  // `cleared`: a browser stopped syncing to the member, so the computer was signed out of the sites its profile had
+  // synced; with no profile left, the session's own summary.
   status: 'none' | 'unchanged' | 'applied' | 'cleared' | 'failed';
   captureCompletedAt?: string | undefined;
   sitesUpdated?: number | undefined;
@@ -504,10 +510,13 @@ async function startCall(
   return { session, done };
 }
 
-// What computer_open hands back: the session, the fork it runs on, and how the latest capture applied.
+// What computer_open hands back: the session, the fork it runs on, the profile it uses (null with none) among the
+// member's profiles, and how that profile's latest capture applied.
 export type OpenedSession = SessionHandle & {
   sync: SyncSummary;
   computer: { id: string; label: string | null; created: boolean };
+  profile: Profile | null;
+  profiles: Profile[];
 };
 type Started = {
   id: number;
@@ -517,13 +526,23 @@ type Started = {
   sandboxId: string | null;
   created: boolean;
   userHadControl: boolean;
+  profile: Profile | null;
+};
+// The profile a session asks for, and the member's profiles to choose from when it names none (pickProfile).
+type ProfileChoice = { named: Profile | undefined; profiles: Profile[] };
+
+const profileNotFound: ComputerFailure = {
+  error: 'profile_not_found',
+  message:
+    'No such browser profile for this account: its browser may have signed out of Clutchbox, or been removed from this organization. Omit profile for the default, or pick one from the profiles computer_open and computer_list return.',
 };
 
-// Starts a computer session for the caller on a fork, applying the latest capture first. Without computerId it creates
-// a new fork from the main computer's latest snapshot; with one of the member's forks' IDs it reopens that fork, as it
-// does the fork of the caller's own session when given only that session's ID. A session holding control of the fork
-// means `busy`, unless it is the caller's own live sessionId, which this replaces. Callers must already have verified
-// the live MCP grant and pass a guard that re-checks it.
+// Starts a computer session for the caller on a fork, on one of the member's profiles, applying its latest capture
+// first. Without computerId it creates a new fork from the main computer's latest snapshot; with one of the member's
+// forks' IDs it reopens that fork, as it does the fork of the caller's own session when given only that session's ID.
+// `profile` names a profile by its browser's public ID; without it, the fork keeps the profile its last session used
+// (pickProfile). A session holding control of the fork means `busy`, unless it is the caller's own live sessionId,
+// which this replaces. Callers must already have verified the live MCP grant and pass a guard that re-checks it.
 export async function openComputerSession(
   db: Database,
   computers: Computers,
@@ -532,13 +551,24 @@ export async function openComputerSession(
     sessionId,
     computerId,
     label,
-  }: { sessionId?: string | undefined; computerId?: string | undefined; label?: string | undefined } = {},
+    profile,
+  }: {
+    sessionId?: string | undefined;
+    computerId?: string | undefined;
+    label?: string | undefined;
+    profile?: string | undefined;
+  } = {},
 ): Promise<OpenedSession | ComputerFailure> {
   const deadline = Date.now() + SYNC_DEADLINE_MS;
   const exhausted = await allowanceFailure(computers.metering, db, caller);
   if (exhausted) return exhausted;
+  const profiles = await listProfiles(db, caller);
+  const choice = { named: profiles.find(each => each.id === profile), profiles };
+  if (profile !== undefined && !choice.named) return profileNotFound;
   const fork = computerId ?? (sessionId ? await forkOfSession(db, caller, sessionId) : null);
-  const started = fork ? await reopenFork(db, caller, fork, sessionId) : await createFork(db, computers, caller, label);
+  const started = fork
+    ? await reopenFork(db, caller, fork, sessionId, choice)
+    : await createFork(db, computers, caller, label, choice);
   if ('error' in started) return started;
   const { computer } = started;
   const call = { id: started.callId, sessionId: started.id, computerId: computer.id, member: caller };
@@ -551,7 +581,7 @@ export async function openComputerSession(
     // Before the apply, which needs the browser this may restart.
     await refreshComputer(db, computers.provider, computer, handle.session);
     const [sync] = await Promise.all([
-      applyLatestCapture(db, caller, computer.id, handle.session, deadline),
+      applyProfiles(db, caller, computer, handle.session, started.profile, profiles, deadline),
       applyTimeZone(db, computer.id, handle.session),
     ]);
     return {
@@ -559,6 +589,8 @@ export async function openComputerSession(
       session: handle.session,
       sync,
       computer: { id: computer.publicId, label: computer.label, created: started.created },
+      profile: started.profile,
+      profiles,
       done,
       ...(started.userHadControl ? { userHadControl: true } : {}),
     };
@@ -582,15 +614,16 @@ async function forkOfSession(db: Database, caller: Caller, sessionId: string) {
   return row?.publicId ?? null;
 }
 
-// Starts the caller's computer session on a ready computer, under its row lock: ends a lapsed takeover, and refuses
-// while the user holds a takeover or another session holds control. The caller's own live session (sessionId) is
-// replaced instead.
+// Starts the caller's computer session on a ready computer, on its profile (pickProfile), under the computer's row lock:
+// ends a lapsed takeover, and refuses while the user holds a takeover or another session holds control. The caller's
+// own live session (sessionId) is replaced instead.
 async function startSession(
   tx: Transaction,
   caller: Caller,
   locked: ComputerRow,
   sessionId: string | undefined,
   now: Date,
+  choice: ProfileChoice,
 ): Promise<Omit<Started, 'computer' | 'sandboxId' | 'created'> | ComputerFailure> {
   let computer = locked;
   let live = await liveSession(tx, computer.id);
@@ -612,6 +645,7 @@ async function startSession(
     }
     await endSession(tx, live.id, expired(live, now) ? 'idle' : own ? 'replaced' : 'superseded', now);
   }
+  const profile = await pickProfile(tx, computer.id, choice);
   const publicId = newPublicId('computerSession', now.getTime());
   const [{ id }] = (await tx
     .insert(schema.computerSessions)
@@ -620,13 +654,14 @@ async function startSession(
       membershipId: caller.membershipId,
       ...(caller.apiKeyId !== undefined ? { apiKeyId: caller.apiKeyId } : { clientId: caller.clientId }),
       computerId: computer.id,
+      connectedBrowserId: profile?.browserId ?? null,
       createdAt: now,
       lastCallAt: now,
     })
     .returning({ id: schema.computerSessions.id })) as [{ id: number }];
   const callId = await beginCall(tx, computer, id, now);
   // Reopening its own session right after a hand-back: the new one's first result says the user had control.
-  return { id, publicId, callId, userHadControl: own && !!live?.handedBackAt };
+  return { id, publicId, callId, userHadControl: own && !!live?.handedBackAt, profile };
 }
 
 // One call within the caller's live computer session: resumes the fork without applying, and, once after a hand-back,
@@ -824,6 +859,7 @@ async function createFork(
   computers: Computers,
   caller: Caller,
   label: string | undefined,
+  choice: ProfileChoice,
 ): Promise<Started | ComputerFailure> {
   const main = await ensureComputer(db, computers, caller);
   if ('error' in main) return main;
@@ -860,16 +896,28 @@ async function createFork(
         snapshotId: snapshot.id,
         label: label ?? null,
         lastUsedAt: now,
-        // What main had applied, so the first apply on the fork sends only what changed since.
-        appliedCaptureDigest: snapshot.appliedCaptureDigest,
-        appliedCaptureAt: snapshot.appliedCaptureAt,
-        syncedSites: snapshot.syncedSites,
-        appliedCapture: resealBaseline(snapshot.appliedCapture, caller, current.mainPublicId, publicId),
         timeZone: snapshot.timeZone,
         revision: snapshot.revision,
       })
       .returning(computerColumns);
-    const started = await startSession(tx, caller, fork!, undefined, now);
+    // What main's profiles had applied, so the first apply on the fork sends only what changed since.
+    const inherited = await tx
+      .select()
+      .from(schema.computerProfiles)
+      .where(eq(schema.computerProfiles.snapshotId, snapshot.id));
+    if (inherited.length)
+      await tx.insert(schema.computerProfiles).values(
+        inherited.map(row => ({
+          computerId: fork!.id,
+          connectedBrowserId: row.connectedBrowserId,
+          chromeProfile: row.chromeProfile,
+          appliedCaptureDigest: row.appliedCaptureDigest,
+          appliedCaptureAt: row.appliedCaptureAt,
+          syncedSites: row.syncedSites,
+          appliedCapture: resealBaseline(row.appliedCapture, caller, current.mainPublicId, publicId),
+        })),
+      );
+    const started = await startSession(tx, caller, fork!, undefined, now, choice);
     if ('error' in started) return started;
     await meter(tx, computers.metering, fork!.id, caller, new Date(now.getTime() + CALL_HOLD_MS));
     return { ...started, computer: fork!, sandboxId: null, created: true };
@@ -925,6 +973,7 @@ async function reopenFork(
   caller: Caller,
   computerId: string,
   sessionId: string | undefined,
+  choice: ProfileChoice,
 ): Promise<Started | ComputerFailure> {
   if (!COMPUTER_ID_PATTERN.test(computerId)) return forkNotFound;
   return db.transaction(async (tx): Promise<Started | ComputerFailure> => {
@@ -945,7 +994,7 @@ async function reopenFork(
       const full = await capFailure(tx, caller, now, cap);
       if (full) return full;
     }
-    const started = await startSession(tx, caller, fork, sessionId, now);
+    const started = await startSession(tx, caller, fork, sessionId, now, choice);
     if ('error' in started) return started;
     return { ...started, computer: fork, sandboxId: fork.sandboxId, created: false };
   });
@@ -1034,17 +1083,20 @@ async function latestSnapshot(
     }
     const [snapshot] = await tx
       .insert(schema.computerSnapshots)
-      .values({
-        computerId: main.id,
-        providerSnapshotId,
-        appliedCaptureDigest: main.appliedCaptureDigest,
-        appliedCaptureAt: main.appliedCaptureAt,
-        syncedSites: main.syncedSites,
-        appliedCapture: main.appliedCapture,
-        timeZone: main.timeZone,
-        revision: main.revision,
-      })
+      .values({ computerId: main.id, providerSnapshotId, timeZone: main.timeZone, revision: main.revision })
       .returning({ id: schema.computerSnapshots.id });
+    // Main's profiles as it has them, baselines sealed for main as they are.
+    const profiles = await tx
+      .select()
+      .from(schema.computerProfiles)
+      .where(eq(schema.computerProfiles.computerId, main.id));
+    if (profiles.length)
+      await tx.insert(schema.computerProfiles).values(
+        profiles.map(({ id: _id, computerId: _main, createdAt: _created, updatedAt: _updated, ...row }) => ({
+          ...row,
+          snapshotId: snapshot!.id,
+        })),
+      );
     await tx
       .update(schema.computers)
       .set({ snapshotId: snapshot!.id, snapshotDueAt: null })
@@ -1270,6 +1322,118 @@ export async function destroyProviderComputers(
     await provider.deleteSnapshot(snapshotId).catch(error => logError('snapshot delete', error));
 }
 
+// --- Profiles ---
+// Each profile (captures.ts, Profiles) has a Chrome profile of its own on every computer of the member's it was used on
+// (computer_profiles): the computer's first gets FIRST_PROFILE, the directory Chrome already ran, so a computer only one
+// browser syncs to never restarts Chrome for it, and each later one a directory named by its browser's public ID, which
+// no other browser ever gets. A computer runs one profile at a time, its session's; a fork starts with main's profiles
+// as its snapshot had them. A browser that stops syncing keeps its row: the next open on each computer signs its
+// profile out of the sites it synced (applyProfiles), and its directory stays its own.
+
+// The profile a new session on the computer uses: the one named, else the one the computer's last session used while
+// it is still a profile, so a fork reopens as it was left, else the default, the profile synced last; null with none.
+async function pickProfile(tx: Pick<Database, 'select'>, computerId: number, { named, profiles }: ProfileChoice) {
+  if (named) return named;
+  const [last] = await tx
+    .select({ browser: schema.computerSessions.connectedBrowserId })
+    .from(schema.computerSessions)
+    .where(eq(schema.computerSessions.computerId, computerId))
+    .orderBy(desc(schema.computerSessions.id))
+    .limit(1);
+  return profiles.find(each => each.browserId === last?.browser) ?? profiles[0] ?? null;
+}
+
+// Every computer_profiles column but the sealed baseline, which only an apply that needs it reads.
+const { appliedCapture: _profileBaseline, ...profileColumns } = getTableColumns(schema.computerProfiles);
+type ProfileRow = Omit<typeof schema.computerProfiles.$inferSelect, 'appliedCapture'>;
+
+// The computer's row for a profile, made when the profile first runs there: FIRST_PROFILE's directory while no profile
+// has it, else one named by the browser. Two opens racing for FIRST_PROFILE get one each.
+async function profileRow(db: Database, computerId: number, profile: Profile, rows: ProfileRow[]) {
+  const mine = () =>
+    db
+      .select(profileColumns)
+      .from(schema.computerProfiles)
+      .where(
+        and(
+          eq(schema.computerProfiles.computerId, computerId),
+          eq(schema.computerProfiles.connectedBrowserId, profile.browserId),
+        ),
+      );
+  const found = rows.find(row => row.connectedBrowserId === profile.browserId);
+  if (found) return found;
+  for (const chromeProfile of rows.some(row => row.chromeProfile === FIRST_PROFILE)
+    ? [profile.id]
+    : [FIRST_PROFILE, profile.id]) {
+    await db
+      .insert(schema.computerProfiles)
+      .values({ computerId, connectedBrowserId: profile.browserId, chromeProfile })
+      .onConflictDoNothing();
+    const [row] = await mine();
+    if (row) return row;
+  }
+  throw new Error('profile row missing');
+}
+
+// Runs the computer's Chrome on a profile, within what is left of the open's deadline. Throws when it could not: what
+// runs then is unknown, and a session must never get another profile's sign-ins.
+async function switchProfile(session: ComputerSession, chromeProfile: string, deadline: number) {
+  const budget = Math.min(PROFILE_SWITCH_BUDGET_MS, deadline - Date.now());
+  if (budget <= 0) throw new Error('no time left to switch profiles');
+  await withinBudget(session.useProfile(chromeProfile, budget), budget + SYNC_SLACK_MS);
+}
+
+// At a session's start, with the computer's Chrome on its profile (or FIRST_PROFILE without one): first each profile of a
+// browser that stopped syncing is signed out of what it synced, each in its own Chrome; then the session's profile gets
+// its browser's latest capture. The summary is that apply's, or without a profile, the sign-outs'.
+async function applyProfiles(
+  db: Database,
+  member: Owner,
+  computer: Pick<ComputerRow, 'id' | 'publicId'>,
+  session: ComputerSession,
+  profile: Profile | null,
+  profiles: Profile[],
+  deadline: number,
+): Promise<SyncSummary> {
+  const rows = await db
+    .select(profileColumns)
+    .from(schema.computerProfiles)
+    .where(eq(schema.computerProfiles.computerId, computer.id));
+  const current = new Set(profiles.map(each => each.browserId));
+  const signedOut: SyncSummary[] = [];
+  for (const row of rows.filter(each => !current.has(each.connectedBrowserId) && each.syncedSites.length)) {
+    try {
+      await switchProfile(session, row.chromeProfile, deadline);
+    } catch (error) {
+      logError('profile switch', error);
+      signedOut.push({ status: 'failed', sites: row.syncedSites });
+      continue;
+    }
+    signedOut.push(await clearSyncedSites(db, row, session, deadline));
+  }
+  if (!profile) {
+    await switchProfile(session, FIRST_PROFILE, deadline);
+    if (!signedOut.length) return { status: 'none' };
+    const sites = [...new Set(signedOut.flatMap(each => each.sites ?? []))].sort();
+    return { status: signedOut.some(each => each.status === 'failed') ? 'failed' : 'cleared', sites };
+  }
+  const row = await profileRow(db, computer.id, profile, rows);
+  await switchProfile(session, row.chromeProfile, deadline);
+  return applyLatestCapture(db, member, computer, row, profile.browserId, session, deadline);
+}
+// Live view's apply, on a computer no agent is working on: to the profile a session there would get (pickProfile).
+async function applyForLiveView(
+  db: Database,
+  member: Owner,
+  computer: Pick<ComputerRow, 'id' | 'publicId'>,
+  session: ComputerSession,
+  deadline: number,
+) {
+  const profiles = await listProfiles(db, member);
+  const profile = await pickProfile(db, computer.id, { named: undefined, profiles });
+  return applyProfiles(db, member, computer, session, profile, profiles, deadline);
+}
+
 // The last applied capture's cookies; null without one or when it cannot be opened (the next apply is wholesale).
 function baselineOf(sealed: string | null, member: Owner, computerId: string) {
   if (!sealed) return null;
@@ -1296,36 +1460,43 @@ const textArray = (values: string[]) =>
     sql`, `,
   )}]::text[]`;
 const unionSites = (sites: string[]) =>
-  sql`array(select distinct unnest(${schema.computers.syncedSites} || ${textArray(sites)}))`;
+  sql`array(select distinct unnest(${schema.computerProfiles.syncedSites} || ${textArray(sites)}))`;
+const sameBaseline = (row: Pick<ProfileRow, 'id' | 'appliedCaptureDigest'>) =>
+  and(
+    eq(schema.computerProfiles.id, row.id),
+    sql`${schema.computerProfiles.appliedCaptureDigest} IS NOT DISTINCT FROM ${row.appliedCaptureDigest}`,
+  );
 
-// Apply at a computer session's start: only cookies the host added, changed, or deleted since
-// the last applied capture (cookieChanges), so the host wins what it changed and the computer keeps the rest.
-// Without a baseline each target site is replaced wholesale. A failure never blocks the open or close.
+// Apply at a computer session's start, to the profile Chrome runs: only cookies the browser added, changed, or deleted
+// since the profile's last applied capture (cookieChanges), so the browser wins what it changed and the computer keeps
+// the rest. Without a baseline each target site is replaced wholesale. A failure never blocks the open or close.
 async function applyLatestCapture(
   db: Database,
   member: Owner,
-  computerId: number,
+  computer: Pick<ComputerRow, 'publicId'>,
+  profile: Pick<ProfileRow, 'id' | 'chromeProfile'>,
+  browser: number,
   session: ComputerSession,
   deadline: number,
 ): Promise<SyncSummary> {
-  const [[computer], latest] = await Promise.all([
-    db.select().from(schema.computers).where(eq(schema.computers.id, computerId)),
-    latestCaptureDigest(db, member),
+  const [[row], latest] = await Promise.all([
+    db.select().from(schema.computerProfiles).where(eq(schema.computerProfiles.id, profile.id)),
+    latestCaptureDigest(db, member, browser),
   ]);
-  if (!computer) return { status: 'none' };
-  if (!latest) return await clearSyncedSites(db, computer, session, deadline);
-  if (latest.digest === computer.appliedCaptureDigest)
+  if (!row) return { status: 'none' };
+  if (!latest) return await clearSyncedSites(db, row, session, deadline);
+  if (latest.digest === row.appliedCaptureDigest)
     return { status: 'unchanged', captureCompletedAt: latest.completedAt };
   let targetSites: string[] | undefined;
   try {
     const budget = Math.min(SYNC_BUDGET_MS, deadline - Date.now() - SYNC_SLACK_MS);
     if (budget < SYNC_MIN_MS) throw new Error('no time left');
-    const loaded = await loadLatestCapture(db, member);
-    if (!loaded) return await clearSyncedSites(db, computer, session, deadline);
+    const loaded = await loadLatestCapture(db, member, browser);
+    if (!loaded) return await clearSyncedSites(db, row, session, deadline);
     const changes = cookieChanges(
-      baselineOf(computer.appliedCapture, member, computer.publicId),
+      baselineOf(row.appliedCapture, member, computer.publicId),
       loaded.capture.cookies,
-      computer.syncedSites,
+      row.syncedSites,
       loaded.completedAt,
     );
     const sites = new Set([
@@ -1338,6 +1509,7 @@ async function applyLatestCapture(
       targetSites = next;
       await withinBudget(
         session.syncCookies({
+          profile: row.chromeProfile,
           clearSites: changes.clearSites,
           cookies: [...changes.set.map(toCdpCookie), ...changes.remove.map(expiredCdpCookie)],
           budgetMs: budget,
@@ -1347,7 +1519,7 @@ async function applyLatestCapture(
     }
     // Conditional on the state read above: a concurrent apply may have won.
     const [updated] = await db
-      .update(schema.computers)
+      .update(schema.computerProfiles)
       .set({
         appliedCaptureDigest: loaded.digest,
         appliedCaptureAt: new Date(loaded.completedAt),
@@ -1357,23 +1529,19 @@ async function applyLatestCapture(
           member,
           computer.publicId,
         ),
+        updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(schema.computers.id, computerId),
-          sql`${schema.computers.appliedCaptureDigest} IS NOT DISTINCT FROM ${computer.appliedCaptureDigest}`,
-        ),
-      )
-      .returning({ digest: schema.computers.appliedCaptureDigest });
+      .where(sameBaseline(row))
+      .returning({ id: schema.computerProfiles.id });
     if (!updated) {
       // Unless the winner applied this same capture, keep both site sets and re-apply wholesale next time.
       await db
-        .update(schema.computers)
+        .update(schema.computerProfiles)
         .set({ appliedCaptureDigest: null, appliedCapture: null, syncedSites: unionSites(next) })
         .where(
           and(
-            eq(schema.computers.id, computerId),
-            sql`${schema.computers.appliedCaptureDigest} IS DISTINCT FROM ${loaded.digest}`,
+            eq(schema.computerProfiles.id, row.id),
+            sql`${schema.computerProfiles.appliedCaptureDigest} IS DISTINCT FROM ${loaded.digest}`,
           ),
         );
     }
@@ -1383,50 +1551,46 @@ async function applyLatestCapture(
     // A cookie write may have been cut short: the computer no longer matches the baseline.
     if (targetSites)
       await db
-        .update(schema.computers)
+        .update(schema.computerProfiles)
         .set({ appliedCapture: null, syncedSites: unionSites(targetSites) })
-        .where(eq(schema.computers.id, computerId))
+        .where(eq(schema.computerProfiles.id, row.id))
         .catch(error => logError('sync baseline reset', error));
     return { status: 'failed', captureCompletedAt: latest.completedAt };
   }
 }
 
-// With no capture (the browser signed out, an organization removed it or turned sync off, or the uploads were deleted),
-// the computer is signed out of every site it had synced, which would otherwise stay signed in for as long as the
-// computer lives. Sites it never synced keep their sign-ins.
+// With no capture for the profile (its browser signed out, or was removed from the organization, the organization
+// turned sync off, or the uploads were deleted), the profile Chrome runs is signed out of every site it had synced,
+// which would otherwise stay signed in for as long as the computer lives. Sites it never synced keep their sign-ins.
 async function clearSyncedSites(
   db: Database,
-  computer: Pick<ComputerRow, 'id' | 'syncedSites' | 'appliedCaptureDigest'>,
+  profile: Pick<ProfileRow, 'id' | 'chromeProfile' | 'syncedSites' | 'appliedCaptureDigest'>,
   session: ComputerSession,
   deadline: number,
 ): Promise<SyncSummary> {
-  const sites = computer.syncedSites;
+  const sites = profile.syncedSites;
   if (!sites.length) return { status: 'none' };
   try {
     const budget = Math.min(SYNC_BUDGET_MS, deadline - Date.now() - SYNC_SLACK_MS);
     if (budget < SYNC_MIN_MS) throw new Error('no time left');
     await withinBudget(
-      session.syncCookies({ clearSites: sites, cookies: [], budgetMs: budget }),
+      session.syncCookies({ profile: profile.chromeProfile, clearSites: sites, cookies: [], budgetMs: budget }),
       budget + SYNC_SLACK_MS,
     );
     // Unless a concurrent apply of a new capture won, whose sites this may have cleared: it re-applies wholesale next.
     const [updated] = await db
-      .update(schema.computers)
+      .update(schema.computerProfiles)
       .set({
-        syncedSites: sql`array(select unnest(${schema.computers.syncedSites}) except select unnest(${textArray(sites)}))`,
+        syncedSites: sql`array(select unnest(${schema.computerProfiles.syncedSites}) except select unnest(${textArray(sites)}))`,
+        updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(schema.computers.id, computer.id),
-          sql`${schema.computers.appliedCaptureDigest} IS NOT DISTINCT FROM ${computer.appliedCaptureDigest}`,
-        ),
-      )
-      .returning({ id: schema.computers.id });
+      .where(sameBaseline(profile))
+      .returning({ id: schema.computerProfiles.id });
     if (!updated)
       await db
-        .update(schema.computers)
+        .update(schema.computerProfiles)
         .set({ appliedCaptureDigest: null, appliedCapture: null })
-        .where(eq(schema.computers.id, computer.id));
+        .where(eq(schema.computerProfiles.id, profile.id));
     return { status: 'cleared', sites };
   } catch {
     console.error('Synced sites could not be signed out on the computer; the next open retries.');
@@ -1491,6 +1655,7 @@ export type LiveViewStatus = {
 type LiveViewComputer = Pick<
   ComputerRow,
   | 'id'
+  | 'publicId'
   | 'forkOf'
   | 'status'
   | 'sandboxId'
@@ -1503,6 +1668,7 @@ type LiveViewComputer = Pick<
 >;
 const liveViewColumns = {
   id: schema.computers.id,
+  publicId: schema.computers.publicId,
   forkOf: schema.computers.forkOf,
   status: schema.computers.status,
   sandboxId: schema.computers.sandboxId,
@@ -1742,7 +1908,7 @@ async function extendHolds(
   if (!woken) return;
   try {
     await Promise.all([
-      applyLatestCapture(db, member, woken.row.id, woken.session, deadline),
+      applyForLiveView(db, member, woken.row, woken.session, deadline),
       applyTimeZone(db, woken.row.id, woken.session),
     ]);
   } catch (error) {
@@ -1824,7 +1990,7 @@ export async function takeOverComputer(
       // As computer_open does: before the apply, which needs the browser this may restart.
       await refreshComputer(db, provider, row, started.session);
       await Promise.all([
-        applyLatestCapture(db, member, row.id, started.session, deadline),
+        applyForLiveView(db, member, row, started.session, deadline),
         applyTimeZone(db, row.id, started.session),
       ]);
     } catch (error) {
@@ -1955,7 +2121,11 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       .select({
         id: schema.computers.id,
         status: schema.computers.status,
-        appliedCaptureAt: schema.computers.appliedCaptureAt,
+        // When main last applied any of its profiles' captures.
+        appliedCaptureAt:
+          sql<Date | null>`(select max(${schema.computerProfiles.appliedCaptureAt}) from ${schema.computerProfiles} where ${schema.computerProfiles.computerId} = ${schema.computers.id})`.mapWith(
+            schema.computerProfiles.appliedCaptureAt,
+          ),
         takeoverUntil: schema.computers.takeoverUntil,
       })
       .from(schema.computers)
