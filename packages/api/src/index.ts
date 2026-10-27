@@ -5,6 +5,7 @@ import {
   compareVersions,
   defaultExtensionConfig,
   extensionVersionHeader,
+  organizationHeader,
   siteOfHost,
   syncChangeSchema,
   syncSettingsSchema,
@@ -20,10 +21,12 @@ import {
 import { type Auth, getPrincipal, signedOAuthClient } from '@agent-computers/server/auth';
 import {
   BROWSER_ID_PATTERN,
-  disconnectAllBrowsers,
-  disconnectBrowser,
+  browserRemoved,
   listBrowsers,
+  removeAllBrowsers,
+  removeBrowser,
   type SyncPrincipal,
+  signOutBrowser,
   syncPrincipal,
 } from '@agent-computers/server/browsers';
 import {
@@ -146,11 +149,17 @@ export function createApi({
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
   const { metering, operatorAdmin, tenancy } = hooks;
   const running = { provider: computers, metering };
-  // The member a request acts as: a sync token's browser's, or for app auth the person's current one (organizations.ts).
-  // A person in no organization here yet gets not_a_member, which our web app answers with its join page.
+  // The member a request acts as: for a sync token, in the organization it names (or the browser's, for a build that
+  // names none), or for app auth the person's current one (organizations.ts). A person in no organization here yet
+  // gets not_a_member, which our web app answers with its join page, and which tells the extension the person has left
+  // the organization it named.
   const memberOf = async (c: Context<Env>) => {
     const principal = c.get('principal');
-    const member = principal.member ?? (await currentMember(db, principal.id));
+    const member = principal.browser ? principal.member : await currentMember(db, principal.id);
+    // A build from before accounts names no organization; once it has left the one it connected in, it reconnects
+    // rather than sync anywhere else.
+    if (!member && principal.browser && c.req.header(organizationHeader) === undefined)
+      throw new HTTPException(401, { res: Response.json({ error: 'unauthenticated' }, { status: 401 }) });
     if (!member) throw new HTTPException(403, { res: Response.json({ error: 'not_a_member' }, { status: 403 }) });
     return member;
   };
@@ -167,7 +176,7 @@ export function createApi({
   const extensionCors = cors({
     origin: from => (isPinnedExtension(from, process.env.EXTENSION_ORIGINS) ? from : null),
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE'],
-    allowHeaders: ['authorization', 'content-type', extensionVersionHeader],
+    allowHeaders: ['authorization', 'content-type', extensionVersionHeader, organizationHeader],
     maxAge: 600,
   });
   for (const path of SYNC_PATHS) app.use(path.slice('/api/v1'.length), extensionCors);
@@ -197,7 +206,11 @@ export function createApi({
     }
     if (authorization !== undefined) {
       if (!SYNC_PATHS.includes(c.req.path)) return c.json({ error: 'unauthenticated' }, 401);
-      principal = await syncPrincipal(db, { authorization, userAgent: c.req.header('user-agent') });
+      principal = await syncPrincipal(db, {
+        authorization,
+        organization: c.req.header(organizationHeader),
+        userAgent: c.req.header('user-agent'),
+      });
       if (!principal)
         return c.json({ error: 'unauthenticated' }, 401, { 'WWW-Authenticate': 'Bearer error="invalid_token"' });
     } else if (
@@ -224,12 +237,20 @@ export function createApi({
     // The dashboard and the sync client keep an active web session alive through these calls.
     for (const cookie of refreshed.getSetCookie()) c.res.headers.append('Set-Cookie', cookie);
   });
-  // The person, and the organization they act in: a sync token's, which the extension names its connection by, or
-  // the current one for app auth. Null for a person in no organization here yet.
+  // The person, the organization they act in (a sync token's, or the current one for app auth; null for a person in
+  // no organization here yet), and every organization they belong to, with the one the extension shows first: their
+  // personal one, else the one they act in on our web app.
   app.get('/me', async c => {
     const principal = c.get('principal');
-    const member = principal.member ?? (await currentMember(db, principal.id));
-    return c.json({ user: person(c), organization: member ? await organizationOf(db, member) : null });
+    const member = principal.browser ? principal.member : await currentMember(db, principal.id);
+    const all = await organizationsOf(db, principal.id);
+    const first = all.find(each => each.personal) ?? all.find(each => each.current) ?? all[0];
+    return c.json({
+      user: person(c),
+      organization: member ? await organizationOf(db, member) : null,
+      organizations: all.map(({ id, name }) => ({ id, name })),
+      defaultOrganization: first?.id ?? null,
+    });
   });
   app.get('/mcp/grants', async c => c.json({ grants: await listMcpGrants(db, await memberOf(c)) }));
   app.post('/mcp/revoke', async c => {
@@ -365,8 +386,9 @@ export function createApi({
   });
   // Main computer (validation prototype).
   app.get('/computer', async c => c.json(await computerView(db, metering, await memberOf(c))));
-  // Connected browsers, for the account page. Disconnecting one revokes its tokens and deletes the capture if it
-  // sent it. Neither path takes a sync token or the extension's origin.
+  // The browsers syncing to this organization, for the Browser sync page. Removing one stops it syncing here and deletes
+  // the capture if it sent it; it keeps syncing to the person's other organizations. Neither path takes a sync token or
+  // the extension's origin.
   app.get('/browsers', async c => c.json({ browsers: await listBrowsers(db, await memberOf(c)) }));
   app.post('/browsers/disconnect', async c => {
     const parsed = z
@@ -374,15 +396,15 @@ export function createApi({
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return (await disconnectBrowser(db, await memberOf(c), { publicId: parsed.data.id }))
+    return (await removeBrowser(db, await memberOf(c), parsed.data.id))
       ? c.json({ disconnected: true })
       : c.json({ error: 'not_found' }, 404);
   });
   // Delete everything: synced browser data first, then the computer and its sign-ins.
   app.delete('/computer', async c => {
     const member = await memberOf(c);
-    // Every browser disconnects, and sync turns off. Agents stay connected.
-    await disconnectAllBrowsers(db, member);
+    // Every browser is removed from this organization, and sync turns off here. Agents stay connected.
+    await removeAllBrowsers(db, member);
     await deleteCaptures(db, member, { disconnect: true, forget: true });
     // Before the provider, so a provider failure cannot skip it. Agents stay connected.
     await resetSetup(db, member);
@@ -480,9 +502,13 @@ export function createApi({
   // them. A sync token marks a request as the extension's; the middleware has already required the
   // extension's origin for it.
   const fromExtension = (c: Context<Env>) => c.get('principal').browser !== undefined;
-  app.get('/sync', async c =>
-    c.json({ ...(await syncView(db, await memberOf(c))), config: defaultExtensionConfig, ...latest }),
-  );
+  // `removed`: the organization removed this browser, so the extension drops its sites there.
+  app.get('/sync', async c => {
+    const member = await memberOf(c);
+    const { browser } = c.get('principal');
+    const removed = browser && (await browserRemoved(db, browser.id, member)) ? { removed: true } : {};
+    return c.json({ ...(await syncView(db, member)), ...removed, config: defaultExtensionConfig, ...latest });
+  });
   // The account page may only narrow what is captured; adding sites and resuming need the extension. Exclusions are
   // the user's to edit from either.
   app.patch('/sync', async c => {
@@ -508,19 +534,20 @@ export function createApi({
     if ('error' in settings) return c.json({ error: settings.error }, 503);
     return c.json({ settings });
   });
-  // Turns sync off and deletes the uploaded copy, keeping the settings for when the extension reconnects. Every
-  // connected browser disconnects first, so none can lift it with `connect`.
+  // Turns sync off here and deletes the uploaded copy, keeping the settings for when the extension reconnects. Every
+  // browser is removed from this organization first; one syncs here again only once the person adds a site here in
+  // the extension (`connect`).
   app.post('/sync/disconnect', async c => {
     const member = await memberOf(c);
-    await disconnectAllBrowsers(db, member);
+    await removeAllBrowsers(db, member);
     await deleteCaptures(db, member, { disconnect: true });
     return c.json({ disconnected: true });
   });
-  // The extension's Disconnect: that browser's tokens, and the capture if it sent it.
+  // The extension's Sign out: that browser's tokens, and every capture it sent, in each of the person's organizations.
   app.delete('/captures', async c => {
-    const { browser } = c.get('principal');
+    const { browser, id } = c.get('principal');
     if (!browser) return c.json({ error: 'extension_only' }, 403);
-    await disconnectBrowser(db, await memberOf(c), { id: browser.id });
+    await signOutBrowser(db, id, browser.id);
     return c.json({ deleted: true });
   });
   // After the product's routes, so an extension cannot shadow one.

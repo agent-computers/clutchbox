@@ -13,14 +13,14 @@ const label = ({ browser, platform }: Browser) => {
 };
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-// Browsers connected with OAuth, apart from agents. Disconnecting one revokes its tokens and deletes the
-// synced copy if that browser sent it.
+// The browsers syncing to this organization, apart from agents. Removing one stops it syncing here and deletes the
+// synced copy if that browser sent it; it stays signed in to the person's other organizations.
 export function ConnectedBrowsers() {
   const queryClient = useQueryClient();
   const { data } = useQuery(browsersQuery);
   const browsers = data?.browsers ?? [];
-  // A browser already gone counts as disconnected.
-  const disconnect = useMutation({
+  // A browser already gone counts as removed.
+  const remove = useMutation({
     mutationFn: (id: string) =>
       api('/browsers/disconnect', 'POST', { id }).catch(error => {
         if (!(error instanceof ApiError && error.status === 404)) throw error;
@@ -39,7 +39,8 @@ export function ConnectedBrowsers() {
           <h2>Browsers</h2>
         </CardTitle>
         <CardDescription>
-          Browsers that sync to this account. Disconnecting one stops it and deletes what it uploaded.
+          Browsers that sync to this organization. Removing one stops it syncing here and deletes what it uploaded here.
+          To sign a browser out everywhere, use Sign out in its extension.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -60,23 +61,25 @@ export function ConnectedBrowsers() {
                 </span>
                 <Button
                   variant="ghost"
-                  aria-label={`Disconnect ${label(browser)} (connected ${when(browser.connectedAt)})`}
-                  disabled={disconnect.isPending}
-                  onClick={() => disconnect.mutate(browser.id)}
+                  aria-label={`Remove ${label(browser)} (connected ${when(browser.connectedAt)})`}
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate(browser.id)}
                 >
-                  Disconnect
+                  Remove
                 </Button>
               </li>
             ))}
           </ul>
         ) : (
           data && (
-            <p className="text-sm text-muted-foreground">No browser is connected. Connect one from the extension.</p>
+            <p className="text-sm text-muted-foreground">
+              No browser syncs here. Add a site for this organization in the extension.
+            </p>
           )
         )}
-        {disconnect.isError && (
+        {remove.isError && (
           <Alert variant="destructive">
-            <AlertDescription>{disconnect.error.message}</AlertDescription>
+            <AlertDescription>{remove.error.message}</AlertDescription>
           </Alert>
         )}
       </CardContent>

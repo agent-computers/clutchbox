@@ -11,6 +11,7 @@ import {
 } from '@agent-computers/capture';
 import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -123,7 +124,7 @@ describe('extension routes over OAuth', () => {
         from,
         headers: {
           'access-control-request-method': 'POST',
-          'access-control-request-headers': 'authorization,content-type,x-extension-version',
+          'access-control-request-headers': 'authorization,content-type,x-extension-version,x-organization',
         },
       });
     for (const path of ['/me', '/captures', '/sync', '/sync/adopt']) {
@@ -131,7 +132,7 @@ describe('extension routes over OAuth', () => {
       expect(allowed.status, path).toBe(204);
       expect(allowed.headers.get('access-control-allow-origin'), path).toBe(extension);
       expect(allowed.headers.get('access-control-allow-headers')?.split(','), path).toEqual(
-        expect.arrayContaining(['authorization', 'content-type', 'x-extension-version']),
+        expect.arrayContaining(['authorization', 'content-type', 'x-extension-version', 'x-organization']),
       );
       expect(allowed.headers.get('access-control-allow-credentials'), path).toBeNull();
       expect(allowed.headers.get('vary'), path).toContain('Origin');
@@ -145,24 +146,42 @@ describe('extension routes over OAuth', () => {
     }
   });
 
-  it("name each sync token's organization: the one the person acted in when the browser connected", async () => {
+  it("name the person's organizations with the one to show first, and act in the one each request names", async () => {
     const a = await identity('a');
     const first = await connect(a);
-    const second = {
-      id: (await db.transaction(tx =>
-        createOrganization(tx, { name: 'Second', owner: { id: 'a', name: 'Fixture a', email: 'a@example.test' } }),
-      ))!,
-    };
-    const me = async (options: Options) => (await json(await request('GET', '/me', options))).body.organization;
-    const deployment = await me({ token: first });
+    const owner = { id: 'a', name: 'Fixture a', email: 'a@example.test' };
+    const second = (await db.transaction(tx => createOrganization(tx, { name: 'Second', owner })))!;
+    const me = async (options: Options) => (await json(await request('GET', '/me', options))).body;
+    const deployment = (await me({ token: first })).organization;
     expect(deployment).toEqual({ id: expect.stringMatching(/^org_/), name: expect.any(String) });
-    expect(deployment.id).not.toBe(second.id);
-    // Switching on the website moves the web session, not the browser already connected.
-    await switchTo(db, 'a', second.id);
-    expect(await me({ cookie: a, from: origin })).toEqual({ id: second.id, name: 'Second' });
-    expect(await me({ token: first })).toEqual(deployment);
-    // A browser connected after switching acts in the new one.
-    expect(await me({ token: await connect(a) })).toEqual({ id: second.id, name: 'Second' });
+    expect(await me({ token: first })).toMatchObject({
+      organizations: [deployment, { id: second, name: 'Second' }],
+      defaultOrganization: deployment.id,
+    });
+    // Switching on the website moves the web session and the default, not where a request naming none acts.
+    await switchTo(db, 'a', second);
+    expect((await me({ cookie: a, from: origin })).organization).toEqual({ id: second, name: 'Second' });
+    expect(await me({ token: first })).toMatchObject({ organization: deployment, defaultOrganization: second });
+    // A personal organization comes first wherever the person acts.
+    const personal = (await db.transaction(tx => createOrganization(tx, { name: 'Mine', owner, personal: true })))!;
+    expect((await me({ token: first })).defaultOrganization).toBe(personal);
+    // Each request acts in the organization it names; one the person is not in is refused.
+    const named = (id: string) => ({ token: first, headers: { 'x-organization': id } });
+    expect(await json(await request('POST', '/sync/adopt', { ...named(second), body: { settings: local } }))).toEqual({
+      status: 200,
+      body: { settings: local },
+    });
+    expect((await json(await request('GET', '/sync', named(second)))).body.settings).toEqual(local);
+    expect((await json(await request('GET', '/sync', named(deployment.id)))).body.settings).toBeNull();
+    expect(await json(await request('GET', '/sync', named('org_00000000000000000000000000')))).toMatchObject({
+      status: 403,
+      body: { error: 'not_a_member' },
+    });
+    // A build naming none, once it has left the organization it connected in, is told to reconnect.
+    await db.delete(schema.memberships).where(eq(schema.memberships.organizationId, deployment.id));
+    expect((await request('GET', '/sync', { token: first })).status).toBe(401);
+    expect((await request('GET', '/me', { token: first })).status).toBe(200);
+    expect((await request('GET', '/sync', named(second))).status).toBe(200);
     // A person in no organization yet.
     await db.insert(schema.user).values({ id: 'n', name: 'N', email: 'n@example.test', emailVerified: true });
     const token = randomBytes(32).toString('base64url');
@@ -173,7 +192,12 @@ describe('extension routes over OAuth', () => {
     const cookie = `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
     expect(await json(await request('GET', '/me', { cookie, from: origin }))).toEqual({
       status: 200,
-      body: { user: { id: 'n', name: 'N', email: 'n@example.test' }, organization: null },
+      body: {
+        user: { id: 'n', name: 'N', email: 'n@example.test' },
+        organization: null,
+        organizations: [],
+        defaultOrganization: null,
+      },
     });
   });
 
@@ -186,6 +210,8 @@ describe('extension routes over OAuth', () => {
       body: {
         user: { id: 'a', name: 'Fixture a', email: 'a@example.test' },
         organization: { id: expect.stringMatching(/^org_/), name: expect.any(String) },
+        organizations: [{ id: expect.stringMatching(/^org_/), name: expect.any(String) }],
+        defaultOrganization: expect.stringMatching(/^org_/),
       },
     });
     expect(me.headers.get('access-control-allow-origin')).toBe(extension);
@@ -311,13 +337,17 @@ describe('extension routes over OAuth', () => {
     expect(await db.select().from(schema.captures)).toEqual([]);
   });
 
-  it('disconnect the browser itself with DELETE /captures, leaving other browsers', async () => {
+  it('sign the browser out with DELETE /captures, deleting what it sent everywhere, leaving other browsers', async () => {
     const a = await identity('a');
+    const owner = { id: 'a', name: 'Fixture a', email: 'a@example.test' };
+    const second = (await db.transaction(tx => createOrganization(tx, { name: 'Second', owner })))!;
     const one = await connect(a);
     const two = await connect(a, EDGE_ON_WINDOWS);
-    expect((await request('POST', '/captures', { token: one, body: { capture: bundle([cookie()]) } })).status).toBe(
-      200,
-    );
+    const upload = (token: Tokens, headers: Record<string, string> = {}) =>
+      request('POST', '/captures', { token, headers, body: { capture: bundle([cookie({ value: randomUUID() })]) } });
+    expect((await upload(two)).status).toBe(200);
+    expect((await upload(one)).status).toBe(200);
+    expect((await upload(one, { 'x-organization': second })).status).toBe(200);
     expect(await browsers(a)).toHaveLength(2);
     expect(await json(await request('DELETE', '/captures', { token: one }))).toEqual({
       status: 200,
@@ -329,44 +359,61 @@ describe('extension routes over OAuth', () => {
     expect(await db.select().from(schema.captures)).toEqual([]);
   });
 
-  it('list and disconnect browsers from the account page only, per account', async () => {
+  it("list and remove browsers on one organization's Browser sync page only, leaving them signed in", async () => {
     const a = await identity('a');
     const b = await identity('b');
+    const owner = { id: 'a', name: 'Fixture a', email: 'a@example.test' };
+    const second = (await db.transaction(tx => createOrganization(tx, { name: 'Second', owner })))!;
     const one = await connect(a);
     const two = await connect(a);
     const theirs = await connect(b);
-    for (const tokens of [one, two, theirs]) await request('GET', '/me', { token: tokens });
-    await request('POST', '/captures', { token: two, body: { capture: bundle([cookie()]) } });
+    const upload = (token: Tokens, options: { connect?: true; headers?: Record<string, string> } = {}) =>
+      request('POST', '/captures', {
+        token,
+        headers: options.headers ?? {},
+        body: { capture: bundle([cookie({ value: randomUUID() })]), ...(options.connect ? { connect: true } : {}) },
+      });
+    await upload(one);
+    await upload(one, { headers: { 'x-organization': second } });
+    await upload(theirs);
+    await request('PATCH', '/sync', { token: two, body: { addSites: ['notion.so'] } });
+    // The second has not uploaded here yet, so it is not listed.
+    expect(await browsers(a)).toHaveLength(1);
+    await upload(two);
     const listed = await json(await request('GET', '/browsers', { cookie: a, from: origin }));
     expect(listed.status).toBe(200);
     expect(listed.body.browsers).toHaveLength(2);
     for (const browser of listed.body.browsers)
       expect(Object.keys(browser).sort()).toEqual(['browser', 'connectedAt', 'id', 'lastSyncedAt', 'platform']);
-    const [first, second] = listed.body.browsers as { id: string; lastSyncedAt: string | null }[];
-    expect(first!.lastSyncedAt).toBeNull();
-    expect(second!.lastSyncedAt).toEqual(expect.any(String));
-    const disconnect = (body: unknown, cookie = a, from: string = origin) =>
+    const [first, second_] = listed.body.browsers as { id: string; lastSyncedAt: string | null }[];
+    expect(first!.lastSyncedAt).toEqual(expect.any(String));
+    const remove = (body: unknown, cookie = a, from: string = origin) =>
       request('POST', '/browsers/disconnect', { cookie, from, body });
     for (const body of [{}, { id: 'cmp_00000000000000000000000000' }, { id: first!.id, extra: 1 }, { id: 'brw_x' }])
-      expect((await disconnect(body)).status, JSON.stringify(body)).toBe(400);
-    expect((await disconnect({ id: 'brw_00000000000000000000000000' })).status).toBe(404);
+      expect((await remove(body)).status, JSON.stringify(body)).toBe(400);
+    expect((await remove({ id: 'brw_00000000000000000000000000' })).status).toBe(404);
     const [foreign] = (await (await request('GET', '/browsers', { cookie: b, from: origin })).json()).browsers;
-    expect((await disconnect({ id: foreign.id })).status).toBe(404);
-    expect((await disconnect({ id: first!.id }, a, extension)).status).toBe(403);
-    // The first sent nothing, so the capture stays; the second sent it.
-    expect(await json(await disconnect({ id: first!.id }))).toEqual({ status: 200, body: { disconnected: true } });
-    expect((await disconnect({ id: first!.id })).status).toBe(404);
-    expect(await db.select().from(schema.captures)).toHaveLength(1);
-    expect((await request('GET', '/me', { token: one })).status).toBe(401);
-    expect((await request('GET', '/me', { token: two })).status).toBe(200);
-    expect((await disconnect({ id: second!.id })).status).toBe(200);
-    expect(await db.select().from(schema.captures)).toEqual([]);
+    expect((await remove({ id: foreign.id })).status).toBe(404);
+    expect((await remove({ id: first!.id }, a, extension)).status).toBe(403);
+    // The first did not send the latest capture, so it stays; the second did.
+    expect(await json(await remove({ id: first!.id }))).toEqual({ status: 200, body: { disconnected: true } });
+    expect((await remove({ id: first!.id })).status).toBe(404);
+    expect(await db.select().from(schema.captures)).toHaveLength(3);
+    // Still signed in: refused here, told it was removed, and syncing to the other organization.
+    expect((await request('GET', '/me', { token: one })).status).toBe(200);
+    expect(await json(await upload(one))).toEqual({ status: 409, body: { error: 'sync_disconnected' } });
+    expect((await json(await request('GET', '/sync', { token: one }))).body.removed).toBe(true);
+    expect((await json(await request('GET', '/sync', { token: two }))).body.removed).toBeUndefined();
+    expect((await upload(one, { headers: { 'x-organization': second } })).status).toBe(200);
+    expect((await remove({ id: second_!.id })).status).toBe(200);
     expect(await browsers(a)).toEqual([]);
     expect(await browsers(b)).toHaveLength(1);
-    expect((await request('GET', '/me', { token: theirs })).status).toBe(200);
+    // Adding a site here again in the extension brings it back.
+    expect((await upload(one, { connect: true })).status).toBe(200);
+    expect(await browsers(a)).toHaveLength(1);
   });
 
-  it('disconnect every browser on Delete everything and Turn off sync, leaving agents connected', async () => {
+  it('remove every browser from the organization on Delete everything and Turn off sync, leaving agents connected', async () => {
     const a = await identity('a');
     await db.insert(schema.oauthClient).values({ id: 'agent', clientId: 'agent', redirectUris: [] });
     const now = new Date();
@@ -379,22 +426,29 @@ describe('extension routes over OAuth', () => {
       createdAt: now,
       updatedAt: now,
     });
+    const upload = (token: Tokens, connect?: true) =>
+      request('POST', '/captures', {
+        token,
+        body: { capture: bundle([cookie({ value: randomUUID() })]), ...(connect ? { connect } : {}) },
+      });
     for (const [method, path] of [
       ['DELETE', '/computer'],
       ['POST', '/sync/disconnect'],
     ] as const) {
-      const used = await connect(a);
-      const tokens = [used, await connect(a)];
-      await request('GET', '/me', { token: used });
-      expect(await browsers(a)).toHaveLength(2);
+      // The browser brought back after the first round is listed too.
+      const before = (await browsers(a)).length;
+      const tokens = [await connect(a), await connect(a)];
+      for (const token of tokens) await upload(token);
+      expect(await browsers(a), path).toHaveLength(before + 2);
       expect((await request(method, path, { cookie: a, from: origin })).status, path).toBe(200);
-      for (const token of tokens) expect((await request('GET', '/me', { token })).status, path).toBe(401);
       expect(await browsers(a), path).toEqual([]);
-      // A connected extension cannot lift Turn off sync with its old token.
-      expect(
-        (await request('POST', '/captures', { token: used, body: { capture: bundle([cookie()]), connect: true } }))
-          .status,
-      ).toBe(401);
+      for (const token of tokens) {
+        expect((await request('GET', '/me', { token })).status, path).toBe(200);
+        expect((await upload(token)).status, path).toBe(409);
+      }
+      // The person adding a site here again in the extension lifts it.
+      expect((await upload(tokens[0]!, true)).status, path).toBe(200);
+      expect(await browsers(a), path).toHaveLength(1);
     }
     expect(
       (await (await request('GET', '/mcp/grants', { cookie: a, from: origin })).json()).grants.map(

@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
-import { and, eq, isNotNull } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,11 +17,13 @@ import {
 } from './browser-fixtures';
 import {
   browserOf,
-  disconnectAllBrowsers,
-  disconnectBrowser,
+  browserRemoved,
   EXTENSION_CLIENT_ID,
   ensureExtensionClient,
   listBrowsers,
+  removeAllBrowsers,
+  removeBrowser,
+  signOutBrowser,
   syncPrincipal,
 } from './browsers';
 import { bundle, cookie } from './capture-fixtures';
@@ -30,7 +32,7 @@ import type { ServerConfig } from './config';
 import type { Database } from './database';
 import { databaseSchema } from './database-schema';
 import { inTheOrganization, membership } from './member-fixtures';
-import { createOrganization, currentMember } from './organizations';
+import { createOrganization, currentMember, type Member } from './organizations';
 import * as schema from './schema';
 
 const origin = 'http://localhost:3097';
@@ -61,8 +63,33 @@ async function identity(id: string) {
 // The member a person acts as, as the routes resolve it.
 const member = async (userId: string) => (await currentMember(db, userId))!;
 const hash = (token: string) => createHash('sha256').update(token).digest('base64url');
-const principal = (tokens: Pick<Tokens, 'access_token'>, userAgent = CHROME_ON_MAC, now?: Date) =>
-  syncPrincipal(db, { authorization: `Bearer ${tokens.access_token}`, userAgent, ...(now ? { now } : {}) });
+const principal = (
+  tokens: Pick<Tokens, 'access_token'>,
+  userAgent = CHROME_ON_MAC,
+  now?: Date,
+  organization?: string,
+) =>
+  syncPrincipal(db, {
+    authorization: `Bearer ${tokens.access_token}`,
+    userAgent,
+    ...(now ? { now } : {}),
+    ...(organization ? { organization } : {}),
+  });
+// An upload from a browser to a member, each with new cookies, which records the browser there.
+const upload = async (tokens: Pick<Tokens, 'access_token'>, to: Member, options: { connect?: boolean } = {}) =>
+  saveCapture(db, to, bundle([cookie({ value: randomUUID() })]), {
+    browser: (await principal(tokens))!.browser.id,
+    ...options,
+  });
+// The person in a second organization, which someone else owns.
+async function team(userId: string) {
+  const owner = { id: 'owner', name: 'owner', email: 'owner@example.test' };
+  await db
+    .insert(schema.user)
+    .values({ ...owner, emailVerified: true })
+    .onConflictDoNothing();
+  return membership(db, userId, (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner })))!);
+}
 const connect = (cookie: string, userAgent?: string) =>
   connectBrowser(auth, cookie, { extensionOrigin: extension, ...(userAgent ? { userAgent } : {}) });
 const refresh = (token: string, extra = {}) => refreshBrowser(auth, extension, token, extra);
@@ -275,7 +302,8 @@ describe('sync tokens', () => {
     const second = (await refreshed.json()) as Tokens;
     expect(second.refresh_token).not.toBe(first.refresh_token);
     expect(await principal(second)).toEqual(found);
-    expect(await db.select().from(schema.connectedBrowsers)).toHaveLength(1);
+    expect(await db.select().from(schema.connectedBrowsers)).toMatchObject([{ userId: 'a' }]);
+    expect(await upload(second, await member('a'))).toMatchObject({ status: 'stored' });
     const listed = await listBrowsers(db, await member('a'));
     expect(listed).toEqual([
       {
@@ -283,7 +311,7 @@ describe('sync tokens', () => {
         browser: 'chrome',
         platform: 'macos',
         connectedAt: expect.any(Date),
-        lastSyncedAt: null,
+        lastSyncedAt: expect.any(Date),
       },
     ]);
     expect(Math.abs(listed[0]!.connectedAt.getTime() - now.getTime())).toBeLessThan(5000);
@@ -355,7 +383,9 @@ describe('sync tokens', () => {
     await vi.waitFor(async () => expect(await principal(tokens)).toBeNull());
     const refreshed = await refresh(tokens.refresh_token);
     expect(refreshed.status).toBe(200);
-    expect(await principal((await refreshed.json()) as Tokens)).toMatchObject({ id: 'a' });
+    const again = (await refreshed.json()) as Tokens;
+    expect(await principal(again)).toMatchObject({ id: 'a' });
+    await upload(again, await member('a'));
     expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
   });
 
@@ -394,13 +424,18 @@ describe('sync tokens', () => {
 });
 
 describe('connected browsers', () => {
-  it('list only live, unrevoked browsers of the account', async () => {
+  it('list the browsers syncing to the member: recorded there by an upload, signed in, and live', async () => {
     const a = await identity('a');
     const b = await identity('b');
     const used = await connect(a);
-    await principal(used);
     const expiring = await connect(a, EDGE_ON_WINDOWS);
-    await connect(b);
+    const idle = await connect(a);
+    await principal(idle);
+    const theirs = await connect(b);
+    await upload(used, await member('a'));
+    await upload(expiring, await member('a'));
+    await upload(theirs, await member('b'));
+    // The idle one has uploaded nowhere, so no organization lists it.
     expect((await listBrowsers(db, await member('a'))).map(row => row.browser)).toEqual(['chrome', 'edge']);
     // The refresh token expired, or was deleted.
     await db
@@ -413,76 +448,121 @@ describe('connected browsers', () => {
     expect(await listBrowsers(db, await member('b'))).toHaveLength(1);
   });
 
-  it('are recorded at the code exchange, so one that never made a request can be disconnected', async () => {
+  it('act in the organization each request names, or for a build that names none, the one it connected in', async () => {
     const a = await identity('a');
-    const tokens = await connect(a, EDGE_ON_WINDOWS);
-    const [listed] = await listBrowsers(db, await member('a'));
-    expect(listed).toMatchObject({ browser: 'edge', platform: 'windows', lastSyncedAt: null });
-    // Its first request finds the same browser.
-    expect((await principal(tokens))!.browser.publicId).toBe(listed!.id);
-    expect(await db.select().from(schema.connectedBrowsers)).toHaveLength(1);
-    expect(await disconnectBrowser(db, await member('a'), { publicId: listed!.id })).toBe(true);
-    expect(await principal(tokens)).toBeNull();
-    expect((await refresh(tokens.refresh_token)).status).toBe(400);
-    expect(await listBrowsers(db, await member('a'))).toEqual([]);
+    const tokens = await connect(a);
+    const mine = await member('a');
+    const work = await team('a');
+    expect((await principal(tokens))!.member).toEqual(mine);
+    expect((await principal(tokens, CHROME_ON_MAC, undefined, work.organizationId))!.member).toEqual(work);
+    expect((await principal(tokens, CHROME_ON_MAC, undefined, mine.organizationId))!.member).toEqual(mine);
+    // One the person is not in names no member, but the token still names the person.
+    const elsewhere = await principal(tokens, CHROME_ON_MAC, undefined, 'org_00000000000000000000000000');
+    expect(elsewhere).toMatchObject({ id: 'a', member: null });
+    // Leaving the organization it connected in signs it out of nothing.
+    await db.delete(schema.memberships).where(eq(schema.memberships.id, mine.membershipId));
+    expect((await principal(tokens))!.member).toBeNull();
+    expect((await principal(tokens, CHROME_ON_MAC, undefined, work.organizationId))!.member).toEqual(work);
+    expect((await refresh(tokens.refresh_token)).status).toBe(200);
   });
 
-  it('disconnect one at a time, deleting the capture only when that browser sent it', async () => {
+  it('are removed from one organization at a time, deleting the capture only when that browser sent it', async () => {
     const a = await identity('a');
     await identity('b');
     const one = await connect(a);
     const two = await connect(a, EDGE_ON_WINDOWS);
     const first = (await principal(one))!;
     const second = (await principal(two))!;
+    const mine = await member('a');
+    const work = await team('a');
     const agent = await agentGrant('a');
-    expect(await saveCapture(db, await member('a'), bundle([cookie()]), { browser: second.browser.id })).toMatchObject({
-      status: 'stored',
-    });
+    await upload(one, mine);
+    await upload(one, work);
+    expect(await upload(two, mine)).toMatchObject({ status: 'stored' });
     // Another account, or an unknown ID: nothing happens.
-    expect(await disconnectBrowser(db, await member('b'), { publicId: first.browser.publicId })).toBe(false);
-    expect(await disconnectBrowser(db, await member('a'), { publicId: 'brw_00000000000000000000000000' })).toBe(false);
-    // The first did not send the capture, so it stays.
-    expect(await disconnectBrowser(db, await member('a'), { publicId: first.browser.publicId })).toBe(true);
-    expect(await disconnectBrowser(db, await member('a'), { publicId: first.browser.publicId })).toBe(false);
-    expect(await db.select().from(schema.captures)).toHaveLength(1);
-    expect(await db.select().from(schema.syncRevocations)).toEqual([]);
+    expect(await removeBrowser(db, await member('b'), first.browser.publicId)).toBe(false);
+    expect(await removeBrowser(db, mine, 'brw_00000000000000000000000000')).toBe(false);
+    // The first did not send the capture here, so it stays, and the first keeps syncing to the other organization.
+    expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(true);
+    expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(false);
+    expect(await browserRemoved(db, first.browser.id, mine)).toBe(true);
+    expect(await browserRemoved(db, first.browser.id, work)).toBe(false);
+    expect(
+      await db.select().from(schema.captures).where(eq(schema.captures.membershipId, mine.membershipId)),
+    ).toHaveLength(1);
+    expect(await principal(one)).not.toBeNull();
+    expect((await refresh(one.refresh_token)).status).toBe(200);
+    expect((await listBrowsers(db, mine)).map(row => row.id)).toEqual([second.browser.publicId]);
+    expect((await listBrowsers(db, work)).map(row => row.id)).toEqual([first.browser.publicId]);
+    // Its uploads here are refused, until the person adds a site here again in the extension.
+    expect(await upload(one, mine)).toEqual({ error: 'sync_disconnected' });
+    expect(await upload(one, mine, { connect: true })).toMatchObject({ status: 'stored' });
+    expect((await listBrowsers(db, mine)).map(row => row.id).sort()).toEqual(
+      [first.browser.publicId, second.browser.publicId].sort(),
+    );
+    // The first sent it now: its capture goes, behind a deletion tombstone.
+    expect(await removeBrowser(db, mine, first.browser.publicId)).toBe(true);
+    expect(await db.select().from(schema.captures).where(eq(schema.captures.membershipId, mine.membershipId))).toEqual(
+      [],
+    );
+    expect(await db.select().from(schema.syncRevocations)).toMatchObject([
+      { membershipId: mine.membershipId, disconnected: false },
+    ]);
+    expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
+    // Another client's token is never a sync token, even with the scope.
+    expect(await syncPrincipal(db, { authorization: `Bearer ${agent}` })).toBeNull();
+  });
+
+  it("are all removed from one organization at once, still syncing to the person's others", async () => {
+    const a = await identity('a');
+    const one = await connect(a);
+    const two = await connect(a, EDGE_ON_WINDOWS);
+    const mine = await member('a');
+    const work = await team('a');
+    for (const tokens of [one, two]) {
+      await upload(tokens, mine);
+      await upload(tokens, work);
+    }
+    await agentGrant('a');
+    await removeAllBrowsers(db, work);
+    expect(await listBrowsers(db, work)).toEqual([]);
+    expect(await listBrowsers(db, mine)).toHaveLength(2);
+    for (const tokens of [one, two]) {
+      expect(await principal(tokens)).not.toBeNull();
+      expect(await upload(tokens, work)).toEqual({ error: 'sync_disconnected' });
+      expect(await upload(tokens, mine)).toMatchObject({ status: 'stored' });
+    }
+    expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
+  });
+
+  it('sign out everywhere, deleting what they sent in each organization, and leave other browsers and agents', async () => {
+    const a = await identity('a');
+    const one = await connect(a);
+    const two = await connect(a, EDGE_ON_WINDOWS);
+    const found = (await principal(one))!;
+    const mine = await member('a');
+    const work = await team('a');
+    await upload(two, mine);
+    await upload(one, mine);
+    await upload(one, work);
+    await agentGrant('a');
+    await signOutBrowser(db, 'a', found.browser.id);
     expect(await principal(one)).toBeNull();
     expect((await refresh(one.refresh_token)).status).toBe(400);
-    expect(await principal(two)).not.toBeNull();
-    expect((await listBrowsers(db, await member('a'))).map(row => row.id)).toEqual([second.browser.publicId]);
+    expect(await db.select().from(schema.captures)).toEqual([]);
     const [tombstone] = await db
       .select()
       .from(schema.connectedBrowsers)
-      .where(eq(schema.connectedBrowsers.id, first.browser.id));
+      .where(eq(schema.connectedBrowsers.id, found.browser.id));
     expect(tombstone).toMatchObject({
       browser: null,
       platform: null,
       lastSyncedAt: null,
       disconnectedAt: expect.any(Date),
     });
-    // The second did: its capture goes, behind a deletion tombstone.
-    expect(await disconnectBrowser(db, await member('a'), { id: second.browser.id })).toBe(true);
-    expect(await db.select().from(schema.captures)).toEqual([]);
-    expect(await db.select().from(schema.syncRevocations)).toMatchObject([
-      { membershipId: (await member('a')).membershipId, disconnected: false },
-    ]);
-    expect((await refresh(two.refresh_token)).status).toBe(400);
-    expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
-    // Another client's token is never a sync token, even with the scope.
-    expect(await syncPrincipal(db, { authorization: `Bearer ${agent}` })).toBeNull();
-  });
-
-  it('disconnect all at once, used or not, leaving agents alone', async () => {
-    const a = await identity('a');
-    const b = await identity('b');
-    const used = await connect(a);
-    await principal(used);
-    const unused = await connect(a);
-    const theirs = await connect(b);
-    await principal(theirs);
-    await agentGrant('a');
-    await disconnectAllBrowsers(db, await member('a'));
-    expect(await listBrowsers(db, await member('a'))).toEqual([]);
+    expect(await listBrowsers(db, mine)).toHaveLength(1);
+    expect(await listBrowsers(db, work)).toEqual([]);
+    expect(await principal(two)).not.toBeNull();
     expect(
       await db
         .select()
@@ -490,82 +570,12 @@ describe('connected browsers', () => {
         .where(
           and(eq(schema.oauthRefreshToken.userId, 'a'), eq(schema.oauthRefreshToken.clientId, EXTENSION_CLIENT_ID)),
         ),
-    ).toEqual([]);
-    expect(
-      await db
-        .select()
-        .from(schema.connectedBrowsers)
-        .where(
-          and(
-            eq(schema.connectedBrowsers.membershipId, (await member('a')).membershipId),
-            isNotNull(schema.connectedBrowsers.disconnectedAt),
-          ),
-        ),
-    ).toHaveLength(2);
-    for (const tokens of [used, unused]) {
-      expect(await principal(tokens)).toBeNull();
-      expect((await refresh(tokens.refresh_token)).status).toBe(400);
-    }
-    expect(await principal(theirs)).not.toBeNull();
+    ).toHaveLength(1);
     expect(await agentRows()).toEqual({ consents: 1, access: 1, refresh: 1 });
-  });
-
-  it('disconnect all at once, including a browser mid-connect whose code is not yet exchanged', async () => {
-    const a = await identity('a');
-    const b = await identity('b');
-    const pending = async (cookie: string) => {
-      const { response, verifier } = await authorizeBrowser(auth, cookie, { extensionOrigin: extension });
-      const code = new URL(response.headers.get('location')!).searchParams.get('code')!;
-      return () =>
-        tokenRequest(auth, extension, {
-          grant_type: 'authorization_code',
-          code,
-          code_verifier: verifier,
-          redirect_uri: `${extension}/connected.html`,
-        });
-    };
-    const mine = await pending(a);
-    const theirs = await pending(b);
-    await disconnectAllBrowsers(db, await member('a'));
-    const refused = await mine();
-    expect(refused.status).toBe(400);
-    expect((await refused.json()).error).toBe('invalid_grant');
-    expect(await listBrowsers(db, await member('a'))).toEqual([]);
-    expect((await theirs()).status).toBe(200);
-    expect(await listBrowsers(db, await member('b'))).toHaveLength(1);
-  });
-
-  it("keep one person's browsers apart in each of their memberships", async () => {
-    const a = await identity('a');
+    // Another person's browser ID signs nothing out.
     await identity('b');
-    const personal = await connect(a);
-    const work = await connect(a, EDGE_ON_WINDOWS);
-    // The person in a second organization, where the second browser connected.
-    const owner = { id: 'b', name: 'b', email: 'b@example.test' };
-    const team = await membership(
-      db,
-      'a',
-      (await db.transaction(tx => createOrganization(tx, { name: 'Team', owner })))!,
-    );
-    const workBrowser = (await principal(work, EDGE_ON_WINDOWS))!.browser;
-    await db
-      .update(schema.connectedBrowsers)
-      .set({ membershipId: team.membershipId })
-      .where(eq(schema.connectedBrowsers.id, workBrowser.id));
-    const mine = await member('a');
-    // A sync token acts for its browser's membership.
-    expect((await principal(personal))!.member).toEqual(mine);
-    expect((await principal(work, EDGE_ON_WINDOWS))!.member).toEqual(team);
-    expect((await listBrowsers(db, mine)).map(row => row.browser)).toEqual(['chrome']);
-    expect((await listBrowsers(db, team)).map(row => row.browser)).toEqual(['edge']);
-    expect(await disconnectBrowser(db, mine, { publicId: workBrowser.publicId })).toBe(false);
-    // Disconnecting every browser in one membership leaves the other's connected.
-    await disconnectAllBrowsers(db, team);
-    expect(await principal(work, EDGE_ON_WINDOWS)).toBeNull();
-    expect((await refresh(work.refresh_token)).status).toBe(400);
-    expect(await principal(personal)).not.toBeNull();
-    expect(await listBrowsers(db, mine)).toHaveLength(1);
-    expect((await refresh(personal.refresh_token)).status).toBe(200);
+    await signOutBrowser(db, 'b', (await principal(two))!.browser.id);
+    expect(await principal(two)).not.toBeNull();
   });
 
   it('stay disconnected when a racing rotation recreates their tokens', async () => {
@@ -573,8 +583,8 @@ describe('connected browsers', () => {
     const tokens = await connect(a);
     const found = (await principal(tokens))!;
     const family = await familyOf(tokens.access_token);
-    await disconnectBrowser(db, await member('a'), { id: found.browser.id });
-    // A rotation that read the old row before the disconnect writes its new tokens after it.
+    await signOutBrowser(db, 'a', found.browser.id);
+    // A rotation that read the old row before the sign-out writes its new tokens after it.
     const refreshToken = randomBytes(24).toString('base64url');
     const accessToken = randomBytes(24).toString('base64url');
     const refreshId = randomUUID();
@@ -602,13 +612,12 @@ describe('connected browsers', () => {
       scopes: ['offline_access', 'sync'],
     });
     expect(await principal({ access_token: accessToken })).toBeNull();
-    expect(await listBrowsers(db, await member('a'))).toEqual([]);
     const refused = await refresh(refreshToken);
     expect(refused.status).toBe(400);
     expect((await refused.json()).error).toBe('invalid_grant');
   });
 
-  it('disconnect only the browser whose rotated refresh token is replayed after the reuse window', async () => {
+  it('sign out only the browser whose rotated refresh token is replayed after the reuse window', async () => {
     const a = await identity('a');
     const one = await connect(a);
     const two = await connect(a);
@@ -619,7 +628,7 @@ describe('connected browsers', () => {
     const retried = await refresh(one.refresh_token);
     expect(retried.status).toBe(200);
     expect(((await retried.json()) as Tokens).refresh_token).toBe(rotated.refresh_token);
-    // Past it, the replay disconnects that browser only.
+    // Past it, the replay signs that browser out only.
     await db
       .update(schema.oauthRefreshToken)
       .set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) })
@@ -629,11 +638,11 @@ describe('connected browsers', () => {
     expect((await replayed.json()).error).toBe('invalid_grant');
     expect(await principal(rotated)).toBeNull();
     expect((await refresh(rotated.refresh_token)).status).toBe(400);
-    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
+    expect(await principal(two)).not.toBeNull();
     expect((await refresh(two.refresh_token)).status).toBe(200);
   });
 
-  it("cannot be revoked through /oauth2/revoke, nor disconnected by another client's stale token", async () => {
+  it("cannot be revoked through /oauth2/revoke, nor signed out by another client's stale token", async () => {
     const a = await identity('a');
     const tokens = await connect(a);
     await principal(tokens);
@@ -687,7 +696,6 @@ describe('connected browsers', () => {
       await db.select().from(schema.oauthRefreshToken).where(eq(schema.oauthRefreshToken.clientId, 'other')),
     ).toHaveLength(1);
     expect(await principal(tokens)).not.toBeNull();
-    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
     expect((await refresh(tokens.refresh_token)).status).toBe(200);
   });
 

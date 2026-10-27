@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { WebSocket } from 'ws';
 import { createAuth } from '../../server/src/auth';
 import { connectBrowser } from '../../server/src/browser-fixtures';
-import { EXTENSION_CLIENT_ID, ensureExtensionClient, listBrowsers } from '../../server/src/browsers';
+import { EXTENSION_CLIENT_ID, ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie } from '../../server/src/capture-fixtures';
 import { saveCapture } from '../../server/src/captures';
 import {
@@ -496,7 +496,7 @@ describe('remote MCP OAuth boundary', () => {
     expect((await call(agent.access_token)).status).toBe(401);
     expect((await (await v1('GET', '/mcp/grants', page)).json()).grants).toEqual([]);
     expect((await v1('GET', '/me', as(browser.access_token))).status).toBe(200);
-    expect(await listBrowsers(db, await member('a'))).toHaveLength(1);
+    expect((await v1('GET', '/sync', as(browser.access_token))).status).toBe(200);
     // Even with a consent row, which it never writes, the extension is no agent.
     const now = new Date();
     await db.insert(schema.oauthConsent).values({

@@ -84,7 +84,9 @@ export function SyncSettingsPanel({
           Sync
         </h2>
         {view.disconnected ? (
-          <p className="text-sm text-foreground">Browser sync is off. Connect again from the extension.</p>
+          <p className="text-sm text-foreground">
+            Browser sync is off here. Add a site for this organization in the extension to turn it back on.
+          </p>
         ) : (
           <>
             {settings.paused ? (
@@ -102,8 +104,8 @@ export function SyncSettingsPanel({
                 Turn off sync
               </Button>
               <p className="text-sm text-foreground">
-                Deletes the synced copy and disconnects every browser; connect again from the extension. Your sites and
-                exclusions are kept.
+                Deletes the synced copy and removes every browser from this organization; add a site in the extension to
+                sync here again. Your sites and exclusions are kept.
               </p>
             </div>
           </>

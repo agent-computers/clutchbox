@@ -364,28 +364,54 @@ export const toolCalls = pgTable(
 
 export const BROWSER_NAMES = ['chrome', 'edge', 'opera'] as const;
 export const BROWSER_PLATFORMS = ['macos', 'windows', 'linux', 'chromeos'] as const;
-// A browser connected with OAuth: one Better Auth refresh-token family (browsers.ts). created_at is when
-// it connected.
+// A browser connected with OAuth: one Better Auth refresh-token family (browsers.ts), signed in to one person's
+// account, which syncs to each of their organizations it has sites for (browser_memberships). created_at is when it
+// connected.
 export const connectedBrowsers = pgTable(
   'connected_browsers',
   {
     id: id(),
     publicId: text('public_id').notNull().unique(),
-    membershipId: membershipId().notNull(),
+    // Null only on rows written before browsers belonged to the person; the migration fills those.
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    // The membership the person acted in when it connected: where builds that name no organization sync. Leaving it
+    // clears it rather than signing the browser out of the person's other organizations.
+    membershipId: key('membership_id').references(() => memberships.id, { onDelete: 'set null' }),
     // oauth_refresh_token.authorization_code_id: stable across rotation, but not a key there, so no foreign key.
     authorizationCodeId: text('authorization_code_id').notNull().unique(),
-    // From the User-Agent at first use; null when unknown, and cleared on disconnect.
+    // From the User-Agent at first use; null when unknown, and cleared on sign-out.
     browser: text('browser', { enum: BROWSER_NAMES }),
     platform: text('platform', { enum: BROWSER_PLATFORMS }),
     lastSyncedAt: time('last_synced_at'),
-    // Tombstone: a disconnected family never syncs again, even when a racing rotation recreates its tokens.
+    // Tombstone of signing out: the family never syncs again, even when a racing rotation recreates its tokens.
     disconnectedAt: time('disconnected_at'),
     ...timestamps(),
   },
   table => [
+    index('connected_browsers_user_idx').on(table.userId),
     index('connected_browsers_membership_idx').on(table.membershipId),
     check('connected_browsers_browser', oneOf(table.browser, BROWSER_NAMES)),
     check('connected_browsers_platform', oneOf(table.platform, BROWSER_PLATFORMS)),
+  ],
+);
+// A connected browser in one of the person's organizations: recorded at its first upload there, and listed on that
+// organization's Browser sync page. removed_at: removed there (one browser, or Delete everything), so its uploads
+// are refused until the person adds a site there again in the extension.
+export const browserMemberships = pgTable(
+  'browser_memberships',
+  {
+    id: id(),
+    connectedBrowserId: key('connected_browser_id')
+      .notNull()
+      .references(() => connectedBrowsers.id, { onDelete: 'cascade' }),
+    membershipId: membershipId().notNull(),
+    lastSyncedAt: time('last_synced_at'),
+    removedAt: time('removed_at'),
+    ...timestamps(),
+  },
+  table => [
+    unique('browser_memberships_browser_membership_unique').on(table.connectedBrowserId, table.membershipId),
+    index('browser_memberships_membership_idx').on(table.membershipId),
   ],
 );
 

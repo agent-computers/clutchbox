@@ -169,6 +169,13 @@
       "when": 1793051356910,
       "tag": "0023_drop_pre_better_auth_organizations",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793064314738,
+      "tag": "0024_browsers_belong_to_people",
+      "breakpoints": true
     }
   ]
 }

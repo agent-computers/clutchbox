@@ -50,7 +50,8 @@ type Saved = {
   cookieCount: number;
   settings?: SyncSettings | undefined;
 };
-// sync_disconnected: Delete everything turned sync off until the extension reconnects, or this browser was disconnected.
+// sync_disconnected: Delete everything turned sync off until the extension reconnects, or this browser signed out or was
+// removed from the member.
 // superseded: a deletion or a later upload was received after this upload.
 // sync_paused: the account's settings are paused; the error carries them so the extension catches up.
 export type SaveError = 'sync_unavailable' | 'sync_disconnected' | 'superseded' | 'sync_paused';
@@ -63,6 +64,37 @@ export const lockMember = (tx: Pick<Database, 'execute'>, member: Pick<Owner, 'm
 const ownRow = (table: { membershipId: AnyPgColumn }, member: Pick<Owner, 'membershipId'>) =>
   eq(table.membershipId, member.membershipId);
 
+// Whether a browser may upload to a member, under lockMember: signed in, and not removed there unless `connect` (the
+// person added a site or chose all sites there in the extension) lifts the removal.
+async function browserAdmitted(tx: Transaction, browser: number, member: Owner, connect: boolean) {
+  const [row] = await tx
+    .select({ disconnectedAt: schema.connectedBrowsers.disconnectedAt, removedAt: schema.browserMemberships.removedAt })
+    .from(schema.connectedBrowsers)
+    .leftJoin(
+      schema.browserMemberships,
+      and(
+        eq(schema.browserMemberships.connectedBrowserId, schema.connectedBrowsers.id),
+        eq(schema.browserMemberships.membershipId, member.membershipId),
+      ),
+    )
+    .where(eq(schema.connectedBrowsers.id, browser));
+  return !!row && !row.disconnectedAt && (!row.removedAt || connect);
+}
+// After an upload a browser was admitted for: records it in the member, lifting a removal, with when it synced.
+async function browserSynced(tx: Transaction, browser: number, member: Owner, at: Date) {
+  const rows = schema.browserMemberships;
+  await tx
+    .insert(rows)
+    .values({ connectedBrowserId: browser, membershipId: member.membershipId, lastSyncedAt: at })
+    .onConflictDoUpdate({
+      target: [rows.connectedBrowserId, rows.membershipId],
+      set: { removedAt: null, lastSyncedAt: sql`greatest(${rows.lastSyncedAt}, ${at})`, updatedAt: at },
+    });
+  await tx
+    .update(schema.connectedBrowsers)
+    .set({ lastSyncedAt: sql`greatest(${schema.connectedBrowsers.lastSyncedAt}, ${at})` })
+    .where(eq(schema.connectedBrowsers.id, browser));
+}
 // Callers validate the capture with captureSchema and verify the sync token for the member.
 // Ordering uses server receive time only; the client clock never decides which upload wins.
 // With settings on the server, only the sites and exclusions they allow are stored.
@@ -82,15 +114,10 @@ export async function saveCapture(
   const fields = { completedAt: schema.captures.completedAt, cookieCount: schema.captures.cookieCount };
   return db.transaction(async (tx): Promise<Saved | { error: SaveError; settings?: SyncSettings | undefined }> => {
     await lockMember(tx, member);
-    // Under the lock and before `connect` can lift a disconnect, so a browser disconnected while this upload was in
-    // flight never stores it.
-    if (browser !== undefined) {
-      const [row] = await tx
-        .select({ disconnectedAt: schema.connectedBrowsers.disconnectedAt })
-        .from(schema.connectedBrowsers)
-        .where(eq(schema.connectedBrowsers.id, browser));
-      if (!row || row.disconnectedAt) return { error: 'sync_disconnected' };
-    }
+    // Under the lock and before `connect` can lift a disconnect, so a browser signed out or removed while this upload
+    // was in flight never stores it.
+    if (browser !== undefined && !(await browserAdmitted(tx, browser, member, connect)))
+      return { error: 'sync_disconnected' };
     const [revoked] = await tx.select().from(schema.syncRevocations).where(ownRow(schema.syncRevocations, member));
     if (revoked?.disconnected && !connect) return { error: 'sync_disconnected' };
     if (revoked && revoked.deletedAt > receivedAt) return { error: 'superseded' };
@@ -112,11 +139,7 @@ export async function saveCapture(
       ...(settings ? { settings } : {}),
     });
     const synced = async (saved: Saved) => {
-      if (browser !== undefined)
-        await tx
-          .update(schema.connectedBrowsers)
-          .set({ lastSyncedAt: sql`greatest(${schema.connectedBrowsers.lastSyncedAt}, ${receivedAt})` })
-          .where(eq(schema.connectedBrowsers.id, browser));
+      if (browser !== undefined) await browserSynced(tx, browser, member, receivedAt);
       return saved;
     };
     const sender = browser ?? null;

@@ -1,6 +1,6 @@
 import 'server-only';
 import { and, asc, count, eq, sql } from 'drizzle-orm';
-import { disconnectAllBrowsers } from './browsers';
+import { removeAllBrowsers } from './browsers';
 import type { ComputerProvider } from './computers';
 import type { Database } from './database';
 import { newPublicId, publicIdPattern } from './ids';
@@ -175,8 +175,9 @@ type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 // Refuses a removal or leave, checked under the organization's lock.
 type Check = (tx: Transaction) => Promise<MembersFailure | null>;
 
-// Ends a membership and everything it had in the organization: its browsers' and agents' tokens first, so nothing can
-// sync to it or act as it, then the membership, whose rows (captures, settings, setup, browsers, computer, sessions,
+// Ends a membership and everything it had in the organization: its browsers are removed and its agents' tokens
+// revoked first, so nothing can sync to it or act as it (the browsers stay signed in to the person's other
+// organizations), then the membership, whose rows (captures, settings, setup, browsers, computer, sessions,
 // tool calls, usage) go with it, then its computer at the provider. `check` runs under the organization's lock before
 // anything changes, and again in the transaction that deletes the membership, so two owners leaving at once cannot
 // leave it without one; a refusal only that second time (a race) leaves the member in, with tokens to reconnect. The
@@ -188,7 +189,7 @@ async function endMembership(db: Database, provider: ComputerProvider, member: M
     return check(tx);
   });
   if (refused) return refused;
-  await disconnectAllBrowsers(db, member);
+  await removeAllBrowsers(db, member);
   await revokeMcpGrants(db, member);
   const ended = await db.transaction(async tx => {
     await lockOrganization(tx, member.organizationId);

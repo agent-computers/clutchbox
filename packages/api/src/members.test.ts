@@ -332,7 +332,7 @@ describe('members and roles', () => {
     expect((await update(admin.cookie, otherMember, 'member')).ok).toBe(false);
   });
 
-  it("remove a member, deleting what they had there and ending their browsers' and agents' access", async () => {
+  it("remove a member, deleting what they had there and ending their agents' and browsers' access there", async () => {
     const admin = await inOrganization('admin', 'admin');
     const leaver = await inOrganization('leaver', 'member');
     // The same person in another organization keeps everything there.
@@ -364,11 +364,15 @@ describe('members and roles', () => {
         updatedAt: new Date(),
       });
     }
-    const asBrowser = () =>
-      api().request(`${origin}/api/v1/me`, {
-        headers: { authorization: `Bearer ${browserTokens.access_token}`, origin: extension },
+    const asBrowser = (path = '/me', organization?: string) =>
+      api().request(`${origin}/api/v1${path}`, {
+        headers: {
+          authorization: `Bearer ${browserTokens.access_token}`,
+          origin: extension,
+          ...(organization ? { 'x-organization': organization } : {}),
+        },
       });
-    expect((await asBrowser()).status).toBe(200);
+    expect((await asBrowser('/sync')).status).toBe(200);
 
     const id = await publicIdOf(leaver.member);
     expect(
@@ -381,7 +385,11 @@ describe('members and roles', () => {
     expect((await request(admin.cookie, 'DELETE', `/organization/members/${id}`)).status).toBe(404);
 
     expect(fake.calls.kill).toBe(1);
-    expect((await asBrowser()).status).toBe(401);
+    // The browser stays signed in to the person's other organizations, and a build naming none reconnects.
+    expect((await asBrowser()).status).toBe(200);
+    expect((await asBrowser('/sync')).status).toBe(401);
+    expect((await asBrowser('/sync', leaver.member.organizationId)).status).toBe(403);
+    expect((await asBrowser('/sync', elsewhere.organizationId)).status).toBe(200);
     const owners = (rows: { membershipId: number }[]) => rows.map(row => row.membershipId);
     expect(owners(await db.select({ membershipId: schema.captures.membershipId }).from(schema.captures))).toEqual([
       elsewhere.membershipId,

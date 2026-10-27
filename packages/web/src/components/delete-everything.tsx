@@ -34,9 +34,9 @@ export function DeleteEverything() {
           <div className="grid gap-3 rounded-lg bg-muted p-4">
             <p className="text-sm">
               This deletes everything: your computer, its files, every sign-in on it, and your synced browser data.
-              Every browser disconnects and browser sync turns off; connect again from the extension. Agents stay
-              connected and get a fresh computer next time. You'll be set up again the next time an agent opens your
-              computer.
+              Every browser is removed from this organization and browser sync turns off here; add a site in the
+              extension to sync here again. Agents stay connected and get a fresh computer next time. You'll be set up
+              again the next time an agent opens your computer.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>

@@ -140,18 +140,12 @@ export async function connectStatus(db: Database, userId: string, clientId: stri
     .select({ id: schema.memberships.id })
     .from(schema.memberships)
     .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.organizationId, app.organizationId)));
-  const [browser] = membership
-    ? await db
-        .select({ id: schema.connectedBrowsers.id })
-        .from(schema.connectedBrowsers)
-        .where(
-          and(
-            eq(schema.connectedBrowsers.membershipId, membership.id),
-            isNull(schema.connectedBrowsers.disconnectedAt),
-          ),
-        )
-        .limit(1)
-    : [];
+  // Signed in anywhere on this server: the browser then syncs here once the person adds a site here.
+  const [browser] = await db
+    .select({ id: schema.connectedBrowsers.id })
+    .from(schema.connectedBrowsers)
+    .where(and(eq(schema.connectedBrowsers.userId, userId), isNull(schema.connectedBrowsers.disconnectedAt)))
+    .limit(1);
   return {
     app: { id: app.clientId, name: app.name ?? 'An app' },
     organization: app.organization,

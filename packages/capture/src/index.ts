@@ -415,13 +415,20 @@ export function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
-// GET /api/v1/me success body, as the extension reads it. `organization` is the one the token acts in, which servers
-// from before organizations leave out; the extension names a connection by it.
+// The organization a sync request acts in, by its public ID. A request without it acts in the one the browser connected
+// in, as builds from before accounts expect.
+export const organizationHeader = 'x-organization';
+// GET /api/v1/me success body, as the extension reads it. `organization` is the one a request without
+// organizationHeader acts in, which servers from before organizations leave out. `organizations` is every one the
+// person belongs to, and `defaultOrganization` the one the extension shows first (their personal one, where the
+// server has them); servers from before accounts leave both out, and the extension then syncs to `organization` alone.
 export const organizationSchema = z.object({ id: z.string().min(1).max(64), name: z.string().max(100) });
 export type Organization = z.infer<typeof organizationSchema>;
 export const meSchema = z.object({
   user: z.object({ id: z.string().min(1), email: z.string() }),
   organization: organizationSchema.nullish().catch(undefined),
+  organizations: z.array(organizationSchema).max(100).optional().catch(undefined),
+  defaultOrganization: z.string().min(1).max(64).nullish().catch(undefined),
 });
 // The account this browser syncs to. `reconnect`: connected, but its tokens ended (disconnected, unused for 30 days,
 // or updated from a build that synced with the web sign-in), so sync waits for Reconnect.
