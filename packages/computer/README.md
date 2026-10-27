@@ -6,4 +6,4 @@ The interface a computer provider implements, so agents and sync work the same o
 - **`ComputerSession`:** `screenshot`, `act` (click, drag, scroll, type, key chords), `exec`, `cdp`, `closeTabs`, `setTimeZone`, `syncCookies`, live view's `stream` and `setClipboard`, `cdpEndpoint` for the server's CDP proxy, and `refresh`.
 - **`actionSchema`:** the zod schema for mouse and keyboard actions, for validating what an agent sends.
 
-[`@agent-computers/e2b`](../e2b) is the first implementation. Daytona, Browserbase, and Kernel are planned; contributions are welcome.
+[`@agent-computers/e2b`](../e2b) is the implementation. To use a member's capture in another provider's sandbox or browser, use a runtime adapter instead, such as [`@agent-computers/playwright`](../playwright), which applies it to any Chrome over CDP.
