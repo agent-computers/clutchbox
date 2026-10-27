@@ -159,6 +159,15 @@ export const ACT_MAX_WAIT_MS = 30_000;
 // computer_act's run-time estimate for any action but `type` and `wait`. Rough: an xdotool round trip to
 // E2B takes well under a second.
 export const ACT_ACTION_ESTIMATE_MS = 1_000;
+// After the browser tool clicks, types, or selects, how long it lets the page react before reading it: long enough for
+// most client-side updates and for a navigation to start, short enough that a call stays quick.
+export const BROWSER_SETTLE_MS = 500;
+// How long the browser tool waits for a page it opened, or one an action navigated, to finish loading before it reads
+// the page anyway: most pages load well within it, and a partial snapshot of a slow page is still useful.
+export const BROWSER_LOAD_MS = 10_000;
+// How often the browser tool checks whether the page has loaded. Each check is one CDP command, which takes a few
+// hundred milliseconds on a computer, so checking more often gains little.
+export const BROWSER_LOAD_POLL_MS = 250;
 
 // --- Refresh on open (computers.ts, refreshComputer) ---
 

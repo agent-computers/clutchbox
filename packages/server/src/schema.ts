@@ -274,7 +274,7 @@ export const computers = pgTable(
     snapshotId: key('snapshot_id').references((): AnyPgColumn => computerSnapshots.id, { onDelete: 'set null' }),
     // Main: when a takeover ended after its latest snapshot, so the next fork needs a new one first.
     snapshotDueAt: time('snapshot_due_at'),
-    // A fork's name from the agent that made it, for computer_list.
+    // A fork's name from the agent that made it, listed in computer_open's results.
     label: text('label'),
     // A fork's latest open or call; one unused for FORK_UNUSED_MS is deleted.
     lastUsedAt: time('last_used_at'),

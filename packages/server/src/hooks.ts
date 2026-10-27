@@ -46,6 +46,8 @@ export type Metering = {
     size: ComputerSize,
     pauses: number,
   ): Promise<void>;
+  // A size's price per minute, worded by the deployment, such as "$0.0028", where it prices computer time.
+  minutePrice?(size: ComputerSize): string;
 };
 export const noMetering: Metering = {
   usage: async () => null,

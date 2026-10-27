@@ -124,6 +124,8 @@ export interface ComputerSession {
   readonly isPrivate: boolean;
 }
 export interface ComputerProvider {
+  // Who runs the computers, as agents are told, such as "e2b".
+  name: string;
   // The helpers and browser setup a computer should run; changes when the provider's do (refresh).
   revision: string;
   // Reconciles a create whose response was lost: provider metadata carries the computer's public ID.

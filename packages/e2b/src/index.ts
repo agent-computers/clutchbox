@@ -705,6 +705,7 @@ const createOptions = (computerId: string, timeoutMs: number) => ({
 
 export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE || TEMPLATE): ComputerProvider {
   return {
+    name: 'e2b',
     revision: REVISION,
     async find(computerId) {
       const [found] = await Sandbox.list({ query: { metadata: { computerId } } }).nextItems();

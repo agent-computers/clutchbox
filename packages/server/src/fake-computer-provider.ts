@@ -94,6 +94,7 @@ export function fakeComputerProvider() {
     }
   };
   const provider: ComputerProvider = {
+    name: 'fake',
     get revision() {
       return revision;
     },

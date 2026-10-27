@@ -65,6 +65,7 @@ export {
   type ComputerSize,
   DISPLAY,
   type ExecResult,
+  sizeName,
 } from '@agent-computers/computer';
 
 export type ComputerFailure = {
@@ -533,7 +534,7 @@ async function startCall(
 // member's profiles, and how that profile's latest capture applied.
 export type OpenedSession = SessionHandle & {
   sync: SyncSummary;
-  computer: { id: string; label: string | null; created: boolean };
+  computer: { id: string; label: string | null; created: boolean; size: ComputerSize };
   profile: Profile | null;
   profiles: Profile[];
 };
@@ -541,7 +542,7 @@ type Started = {
   id: number;
   publicId: string;
   callId: string;
-  computer: Pick<ComputerRow, 'id' | 'publicId' | 'label' | 'revision'>;
+  computer: Pick<ComputerRow, 'id' | 'publicId' | 'label' | 'revision' | 'size'>;
   sandboxId: string | null;
   created: boolean;
   userHadControl: boolean;
@@ -553,7 +554,7 @@ type ProfileChoice = { named: Profile | undefined; profiles: Profile[] };
 const profileNotFound: ComputerFailure = {
   error: 'profile_not_found',
   message:
-    'No such browser profile for this account: its browser may have signed out of Clutchbox, or been removed from this organization. Omit profile for the default, or pick one from the profiles computer_open and computer_list return.',
+    'No such browser profile for this account: its browser may have signed out of Clutchbox, or been removed from this organization. Omit profile for the default, or pick one from the profiles computer_open returns.',
 };
 
 // Starts a computer session for the caller on a fork, on one of the member's profiles, applying its latest capture
@@ -607,7 +608,7 @@ export async function openComputerSession(
       sessionId: started.publicId,
       session: handle.session,
       sync,
-      computer: { id: computer.publicId, label: computer.label, created: started.created },
+      computer: { id: computer.publicId, label: computer.label, created: started.created, size: computer.size },
       profile: started.profile,
       profiles,
       done,
@@ -861,7 +862,7 @@ const SWEEP_BATCH = 3;
 const forkNotFound: ComputerFailure = {
   error: 'computer_not_found',
   message:
-    'No such computer for this account. Call computer_list for your computers, or computer_open without computer_id for a new one.',
+    'No such computer for this account. Pick one from the computers computer_open returns, or call computer_open without computer_id for a new one.',
 };
 // One of the member's forks by its public ID.
 const forkOfMember = (member: Pick<Member, 'membershipId'>, computerId: string) =>
@@ -1299,7 +1300,7 @@ const killFork = async (provider: ComputerProvider, fork: Pick<ComputerRow, 'pub
 
 // Deletes, across the deployment, forks unused for FORK_UNUSED_MS and paused, and forks whose create was abandoned
 // (CREATE_STALE_MS), then snapshots nothing uses, SWEEP_BATCH of each per run. The open core has no scheduler, so this
-// runs on the calls that can afford it, computer_close and computer_delete, as tool call retention runs on each call.
+// runs on the calls that can afford it, computer_close and deleting a fork, as tool call retention runs on each call.
 export async function sweepForks(db: Database, provider: ComputerProvider, now = new Date()) {
   const due = and(
     isNotNull(schema.computers.forkOf),

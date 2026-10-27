@@ -358,6 +358,7 @@ describe('forks', () => {
       id: expect.stringMatching(/^cmp_/),
       label: 'Order history',
       created: true,
+      size: '1x',
     });
     expect(chatgpt.computer).toMatchObject({ label: null, created: true });
     expect(chatgpt.computer.id).not.toBe(claude.computer.id);
@@ -388,7 +389,7 @@ describe('forks', () => {
     (await sandboxOf(id)).tabs = ['https://example.com/work'];
     await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })], new Date('2026-10-20T11:00:00Z')));
     const reopened = await open(a, 'chatgpt', undefined, id);
-    expect(reopened.computer).toEqual({ id, label: null, created: false });
+    expect(reopened.computer).toEqual({ id, label: null, created: false, size: '1x' });
     expect(reopened.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     // The same fork, resumed with its work, and the newest sign-in.
     expect(fake.calls.fork).toBe(1);
