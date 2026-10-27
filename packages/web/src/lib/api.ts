@@ -2,7 +2,7 @@ import type { SyncChange, SyncSettings } from '@agent-computers/capture';
 import type { AgentKind } from '@agent-computers/server/agents';
 import type { ConnectedBrowser } from '@agent-computers/server/browsers';
 import { HEARTBEAT_MS } from '@agent-computers/server/computer-timing';
-import type { LiveViewStatus } from '@agent-computers/server/computers';
+import type { ForkView, LiveViewStatus } from '@agent-computers/server/computers';
 import type { Role } from '@agent-computers/server/members';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
@@ -12,6 +12,8 @@ export type ComputerView = {
   usage: { usedMinutes: number; allowanceMinutes: number; resetsAt: string } | null;
   capture: { completedAt: string; uploadedAt: string; cookieCount: number } | null;
   computer: { status: string; busy: boolean; inLiveView: boolean; appliedCaptureAt: string | null } | null;
+  // Agents' forks of it that are not paused.
+  forks: ForkView[];
 };
 // One connected client. `agent` is known only from its client_id URL; `host` is where that URL points.
 export type Grant = {
@@ -154,13 +156,14 @@ export type { LiveViewStatus };
 
 type HeartbeatStatuses = { 'live-view': LiveViewStatus };
 export type HeartbeatKind = keyof HeartbeatStatuses;
-export type HeartbeatLease = { kind: HeartbeatKind; id: string };
+// computer: one of the member's forks by ID; without it, the main computer.
+export type HeartbeatLease = { kind: HeartbeatKind; id: string; computer?: string | undefined };
 type HeartbeatState = 'visible' | 'hidden' | 'released';
 type HeartbeatResponse = { leases: { kind: HeartbeatKind; id: string; status: unknown }[] };
 
 const heartbeatKey = (leases: HeartbeatLease[]) => ['heartbeat', ...leases.map(({ kind, id }) => `${kind}:${id}`)];
 const heartbeatBody = (leases: HeartbeatLease[], state: HeartbeatState) => ({
-  leases: leases.map(({ kind, id }) => ({ kind, id, state })),
+  leases: leases.map(({ kind, id, computer }) => ({ kind, id, state, ...(computer ? { computer } : {}) })),
 });
 
 // Keeps the page's leases alive: a beat every HEARTBEAT_MS while the page is visible (TanStack Query pauses the
@@ -234,33 +237,36 @@ const setHeartbeatStatus =
     }));
   };
 
+// The body naming a live view lease, and the fork it is on (without one, the main computer).
+const leaseOn = (lease: string, computer: string | undefined) => ({ lease, ...(computer ? { computer } : {}) });
+
 // Take control for this page load's lease, or hand back. Each answers with the lease's live view status.
-export function useLiveViewControl(lease: string, setStatus: SetStatus) {
+export function useLiveViewControl(lease: string, computer: string | undefined, setStatus: SetStatus) {
   return {
-    takeOver: useLeaseMutation('/computer/takeover', lease, setStatus),
-    handBack: useLeaseMutation('/computer/hand-back', lease, setStatus),
+    takeOver: useLeaseMutation('/computer/takeover', lease, computer, setStatus),
+    handBack: useLeaseMutation('/computer/hand-back', lease, computer, setStatus),
   };
 }
-function useLeaseMutation(path: string, lease: string, setStatus: SetStatus) {
+function useLeaseMutation(path: string, lease: string, computer: string | undefined, setStatus: SetStatus) {
   return useMutation({
-    mutationFn: () => api<LiveViewStatus>(path, 'POST', { lease }),
+    mutationFn: () => api<LiveViewStatus>(path, 'POST', leaseOn(lease, computer)),
     onSuccess: status => setStatus('live-view', lease, status),
   });
 }
 
 // Sets the computer's clipboard to text, for pasting there, while this lease holds the takeover (POST
 // /computer/clipboard). Its errors carry a message to show.
-export function useLiveViewClipboard(lease: string) {
+export function useLiveViewClipboard(lease: string, computer: string | undefined) {
   return useMutation({
     mutationFn: (text: string) =>
-      api<Record<string, never>>('/computer/clipboard', 'POST', { lease, text }).catch(error => {
+      api<Record<string, never>>('/computer/clipboard', 'POST', { ...leaseOn(lease, computer), text }).catch(error => {
         const status = error instanceof ApiError ? error.status : 0;
         throw new Error(
           status === 413
             ? 'Your clipboard holds more text than live view can paste (1 MB).'
             : status === 409
-              ? 'Switch to Control to paste on your computer.'
-              : 'Your clipboard could not reach your computer. Try again.',
+              ? 'Switch to Control to paste on the computer.'
+              : 'Your clipboard could not reach the computer. Try again.',
         );
       }),
   });

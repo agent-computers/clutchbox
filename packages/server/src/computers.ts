@@ -1018,6 +1018,8 @@ export type ForkView = {
   lastUsedAt: string;
   // in_use: a computer session holds control, or the user took it over in live view.
   status: 'starting' | 'in_use' | 'running' | 'paused';
+  // The agent whose computer session is open on it, suspended by a takeover or not; null with none.
+  agent: { agent: AgentKind | null; host: string } | null;
 };
 // The member's forks, most recently used first.
 export async function listForks(db: Database, member: Member, now = new Date()): Promise<ForkView[]> {
@@ -1039,6 +1041,7 @@ export async function listForks(db: Database, member: Member, now = new Date()):
     ? await db
         .select({
           computerId: schema.computerSessions.computerId,
+          clientId: schema.computerSessions.clientId,
           lastCallAt: schema.computerSessions.lastCallAt,
           suspendedAt: schema.computerSessions.suspendedAt,
         })
@@ -1054,6 +1057,14 @@ export async function listForks(db: Database, member: Member, now = new Date()):
         )
     : [];
   const controlled = new Set(live.filter(session => holdsControl(session, now)).map(session => session.computerId));
+  const agents = new Map(
+    live
+      .filter(session => !expired(session, now))
+      .map(({ computerId, clientId }) => [
+        computerId,
+        { agent: agentOf(clientId), host: clientHost(clientId) ?? clientId },
+      ]),
+  );
   return forks.map(fork => ({
     computerId: fork.publicId,
     label: fork.label,
@@ -1067,6 +1078,7 @@ export async function listForks(db: Database, member: Member, now = new Date()):
           : running(fork, now)
             ? 'running'
             : 'paused',
+    agent: agents.get(fork.id) ?? null,
   }));
 }
 
@@ -1821,7 +1833,9 @@ export async function computerView(db: Database, metering: Metering, member: Mem
     captureView(db, member),
     metering.usage(db, member, new Date()),
   ]);
-  // Agents work in forks: busy while one of them holds a fork.
+  const now = new Date();
+  // Agents work in forks: busy while one of them holds a fork. Live view lists the forks that are not paused.
+  const forks = row ? (await listForks(db, member, now)).filter(fork => fork.status !== 'paused') : [];
   const live = row
     ? await db
         .select({ lastCallAt: schema.computerSessions.lastCallAt, suspendedAt: schema.computerSessions.suspendedAt })
@@ -1829,7 +1843,6 @@ export async function computerView(db: Database, metering: Metering, member: Mem
         .innerJoin(schema.computers, eq(schema.computers.id, schema.computerSessions.computerId))
         .where(and(eq(schema.computers.forkOf, row.id), isNull(schema.computerSessions.endedAt)))
     : [];
-  const now = new Date();
   return {
     capture,
     // Without an allowance (hooks.ts), null.
@@ -1843,10 +1856,11 @@ export async function computerView(db: Database, metering: Metering, member: Mem
           status: row.status,
           appliedCaptureAt: row.appliedCaptureAt?.toISOString() ?? null,
           busy: live.some(session => holdsControl(session, now)),
-          // The user holds a takeover in live view; agents get busy meanwhile.
+          // The user holds a takeover of the main computer in live view.
           inLiveView: takenOver(row, now),
         }
       : null,
+    forks,
   };
 }
 

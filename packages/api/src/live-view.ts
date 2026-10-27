@@ -7,6 +7,7 @@ import {
   STREAM_START_MS,
 } from '@agent-computers/server/computer-timing';
 import {
+  COMPUTER_ID_PATTERN,
   type ComputerProvider,
   connectLiveView,
   LEASE_PATTERN,
@@ -21,7 +22,7 @@ import { MAX_FRAME } from '@agent-computers/server/rfb-filter';
 import { upgradeWebSocket } from '@vercel/functions';
 import { WebSocket } from 'ws';
 
-// The live-view relay route: GET /api/v1/live-view?lease=<uuid>, a WebSocket from the /computer page's
+// The live-view relay route: GET /api/v1/live-view?lease=<uuid>[&computer=<fork ID>], a WebSocket from the /computer page's
 // noVNC. Everything that can refuse the connection runs before the upgrade and answers JSON: the browser does not
 // apply CORS to a WebSocket handshake, so the exact web origin is checked here (cross-site WebSocket hijacking), with
 // app auth and the lease's live watch or takeover. Then the computer is woken, its stream started, and the relay
@@ -57,23 +58,30 @@ export function liveViewHandler({
     const principal = await getPrincipal(auth, request.headers);
     if (!principal) return refuse('unauthenticated', 401);
     if (request.headers.get('origin') !== origin) return refuse('forbidden_origin', 403);
-    const lease = new URL(request.url).searchParams.get('lease');
+    const params = new URL(request.url).searchParams;
+    const lease = params.get('lease');
     if (!lease || !LEASE_PATTERN.test(lease)) return refuse('invalid_request', 400);
+    // One of the member's forks; without it, the main computer.
+    const computerId = params.get('computer') ?? undefined;
+    if (computerId !== undefined && !COMPUTER_ID_PATTERN.test(computerId)) return refuse('invalid_request', 400);
+    const target = { computerId };
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return refuse('upgrade_required', 426);
     await hooks.operatorAdmin.recordActivity(db, principal.id);
     const userId = principal.id;
     let upstream: WebSocket;
     let access: () => Promise<'control' | 'view' | 'none'>;
     try {
-      // The computer of the member the page acts as; the lease names a hold on it.
+      // The member's computer the page names, as the member it acts as; the lease names a hold on it.
       const member = await currentMember(db, userId);
       if (!member) throw new Error('account has no membership');
       // The relay's periodic read: the same sign-in (not signed out, revoked, or banned since), then the lease.
       const headers = new Headers(request.headers);
       access = async () =>
-        (await getPrincipal(auth, headers))?.id === userId ? liveViewAccess(db, member, lease) : ('none' as const);
+        (await getPrincipal(auth, headers))?.id === userId
+          ? liveViewAccess(db, member, lease, new Date(), target)
+          : ('none' as const);
       // Wakes a paused computer until the holds let it pause, as the heartbeat that charged them asked.
-      const session = await connectLiveView(db, computers, member, lease);
+      const session = await connectLiveView(db, computers, member, lease, target);
       // No computer yet, or this page load holds no live watch or takeover on it (its heartbeat comes first).
       if (session === 'not_found') return refuse('not_found', 404);
       if (session === 'not_watching') return refuse('not_watching', 409);

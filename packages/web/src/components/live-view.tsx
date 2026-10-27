@@ -12,13 +12,23 @@ import {
   AlertDialogTitle,
 } from '@agent-computers/ui/components/alert-dialog';
 import { Button, buttonVariants } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemSeparator,
+  ItemTitle,
+} from '@agent-computers/ui/components/item';
 import { Spinner } from '@agent-computers/ui/components/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
 import type RFB from '@novnc/novnc';
 import { Eye, Maximize, Monitor, MousePointer2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type ComputerView,
   type HeartbeatLease,
   type LiveViewStatus,
   useHeartbeat,
@@ -49,16 +59,140 @@ const LOST = Symbol('lost');
 // waiting: stopped retrying until a heartbeat finds the page watching while visible.
 type Viewer = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'waiting' | 'needsReset' | 'refused' | 'failed';
 
-// Live view on the Computer page: noVNC, through our relay, on the user's computer. It
-// starts only when the user chooses Watch or Take control, so opening the page neither wakes the computer nor uses
-// its time. A session's lease keeps a watch while the page is visible (useHeartbeat), and holds the takeover once the
-// user takes control; the relay passes input only while it does, so noVNC's viewOnly only spares the user dead input.
-// Stopping, or leaving the page, releases the lease, which ends the watch and hands back.
+type Fork = ComputerView['forks'][number];
+type Intent = 'watch' | 'control';
+// What live view is on: the user's main computer, or an agent's fork of it (computer, its ID), with the name shown.
+type Target = { computer?: string | undefined; name: string };
+const MAIN: Target = { name: 'Your computer' };
+const forkName = (fork: Fork) => fork.label ?? (fork.agent ? `${agentOf(fork.agent)}'s computer` : 'Agent computer');
+const agentOf = ({ agent, host }: NonNullable<Fork['agent']>) => (agent ? agentName(agent) : host);
+
+// Live view on the Computer page: noVNC, through our relay, on the user's main computer or one of their agents' forks
+// of it. It starts only when the user chooses Watch or Take control, so opening the page neither wakes a computer nor
+// uses its time. A session's lease keeps a watch while the page is visible (useHeartbeat), and holds the takeover once
+// the user takes control; the relay passes input only while it does, so noVNC's viewOnly only spares the user dead
+// input. Stopping, switching computers, or leaving the page releases the lease, which ends the watch and hands back.
 // metered: there is a free allowance (the metering hook); exhausted: it is used up (as LiveViewStatus says), until it
-// resets.
-export function LiveViewPanel({ metered, exhausted }: { metered: boolean; exhausted: { resetsAt: string } | null }) {
-  const [intent, setIntent] = useState<'watch' | 'control' | null>(null);
-  if (intent) return <LiveSession intent={intent} onStop={() => setIntent(null)} />;
+// resets. forks: the agents' forks that are not paused.
+export function LiveViewPanel({
+  metered,
+  exhausted,
+  forks,
+}: {
+  metered: boolean;
+  exhausted: { resetsAt: string } | null;
+  forks: Fork[];
+}) {
+  const [session, setSession] = useState<{ intent: Intent; target: Target } | null>(null);
+  const start = (intent: Intent, target: Target) => setSession({ intent, target });
+  return (
+    <>
+      {forks.length > 0 && (
+        <AgentComputers
+          forks={forks}
+          viewing={session ? (session.target.computer ?? null) : undefined}
+          exhausted={!!exhausted}
+          onStart={start}
+        />
+      )}
+      {session ? (
+        <LiveSession
+          key={session.target.computer ?? 'main'}
+          intent={session.intent}
+          target={session.target}
+          onStop={() => setSession(null)}
+        />
+      ) : (
+        <LiveViewOff metered={metered} exhausted={exhausted} onStart={intent => start(intent, MAIN)} />
+      )}
+    </>
+  );
+}
+
+// The main computer and the agents' running forks of it, each with the agent using it; Watch or Take control moves
+// live view to one. viewing: the computer live view is on (null for the main computer), undefined when it is off.
+function AgentComputers({
+  forks,
+  viewing,
+  exhausted,
+  onStart,
+}: {
+  forks: Fork[];
+  viewing: string | null | undefined;
+  exhausted: boolean;
+  onStart: (intent: Intent, target: Target) => void;
+}) {
+  const rows = [
+    { target: MAIN, note: "Agents' new computers are copies of it, made when they start.", starting: false },
+    ...forks.map(fork => ({
+      target: { computer: fork.computerId, name: forkName(fork) },
+      note: [
+        fork.agent ? agentOf(fork.agent) : 'No agent',
+        fork.status === 'starting' ? 'Starting' : fork.status === 'in_use' ? 'Working now' : 'Idle',
+      ].join(' · '),
+      starting: fork.status === 'starting',
+    })),
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <h2>Computers</h2>
+        </CardTitle>
+        <CardDescription>
+          Your agents each work on their own copy of your computer. Watch one, or take control to help it past a sign-in
+          or a check; the agent waits until you hand back.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ItemGroup className="gap-0">
+          {rows.map(({ target, note, starting }, index) => (
+            <div key={target.computer ?? 'main'}>
+              {index > 0 && <ItemSeparator />}
+              <Item className="px-0">
+                <ItemContent>
+                  <ItemTitle>{target.name}</ItemTitle>
+                  <ItemDescription>{note}</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  {viewing === (target.computer ?? null) ? (
+                    <span className="text-sm text-muted-foreground">In live view</span>
+                  ) : (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={exhausted || starting}
+                        onClick={() => onStart('watch', target)}
+                      >
+                        <Eye aria-hidden />
+                        Watch
+                      </Button>
+                      <Button size="sm" disabled={exhausted || starting} onClick={() => onStart('control', target)}>
+                        <MousePointer2 aria-hidden />
+                        Take control
+                      </Button>
+                    </>
+                  )}
+                </ItemActions>
+              </Item>
+            </div>
+          ))}
+        </ItemGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LiveViewOff({
+  metered,
+  exhausted,
+  onStart,
+}: {
+  metered: boolean;
+  exhausted: { resetsAt: string } | null;
+  onStart: (intent: Intent) => void;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -74,22 +208,21 @@ export function LiveViewPanel({ metered, exhausted }: { metered: boolean; exhaus
             <p className="max-w-sm text-sm text-foreground">
               {exhausted
                 ? `This month's free computer minutes are used up, so live view is off until they reset on ${resetsOn(exhausted.resetsAt)}.`
-                : 'Watch what your agents do, or take control to use your computer yourself.'}
+                : 'Take control to sign in to sites on your computer. Your agents work on copies of it, made with its sign-ins.'}
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-3">
-            <Button variant="outline" disabled={!!exhausted} onClick={() => setIntent('watch')}>
+            <Button variant="outline" disabled={!!exhausted} onClick={() => onStart('watch')}>
               <Eye aria-hidden />
               Watch
             </Button>
-            <Button disabled={!!exhausted} onClick={() => setIntent('control')}>
+            <Button disabled={!!exhausted} onClick={() => onStart('control')}>
               <MousePointer2 aria-hidden />
               Take control
             </Button>
           </div>
           <p className="max-w-sm text-xs text-muted-foreground">
             Live view wakes your computer, or starts it{metered ? ", and uses free minutes while it's open" : ''}.
-            Taking control pauses any agent until you hand back.
           </p>
         </div>
       </CardContent>
@@ -97,17 +230,19 @@ export function LiveViewPanel({ metered, exhausted }: { metered: boolean; exhaus
   );
 }
 
-function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: () => void }) {
+function LiveSession({ intent, target, onStop }: { intent: Intent; target: Target; onStop: () => void }) {
+  const { computer } = target;
+  const fork = !!computer;
   const [lease] = useState(() => crypto.randomUUID());
-  const leases = useMemo<HeartbeatLease[]>(() => [{ kind: 'live-view', id: lease }], [lease]);
+  const leases = useMemo<HeartbeatLease[]>(() => [{ kind: 'live-view', id: lease, computer }], [lease, computer]);
   const { statusOf, isError, setStatus, updatedAt } = useHeartbeat(leases);
   const status = statusOf('live-view', lease);
-  const { takeOver, handBack } = useLiveViewControl(lease, setStatus);
-  const clipboard = useLiveViewClipboard(lease);
+  const { takeOver, handBack } = useLiveViewControl(lease, computer, setStatus);
+  const clipboard = useLiveViewClipboard(lease, computer);
   const inControl = !!status?.takeover?.mine;
   // The relay accepts this lease only while it holds a live watch or the takeover.
   const connectable = !!status && (status.watching || inControl);
-  const viewer = useViewer(lease, connectable, inControl, updatedAt, clipboard.mutateAsync);
+  const viewer = useViewer(lease, computer, connectable, inControl, updatedAt, clipboard.mutateAsync);
   const lapsed = useLapsed(status, handBack.isPending);
   const exhausted = status?.allowanceExhausted;
   // Take control as soon as the first beat answers, when that is what the user chose.
@@ -132,7 +267,7 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
       >
         <CardHeader className="flex flex-wrap items-center gap-3">
           <CardTitle className="flex-1">
-            <h2>Live view</h2>
+            <h2>Live view: {target.name}</h2>
           </CardTitle>
           {inControl && (
             <p className="text-sm text-muted-foreground">
@@ -180,7 +315,7 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
         </CardHeader>
         <CardContent className="grid gap-4">
           <p className="text-sm text-foreground" role="status" aria-live="polite">
-            {describe({ status, isError, viewer: viewer.state, takingOver: takeOver.isPending })}
+            {describe({ status, isError, viewer: viewer.state, takingOver: takeOver.isPending, fork })}
           </p>
           {waiting && (
             <Alert>
@@ -238,9 +373,9 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
             <Alert>
               <AlertTitle>Signing in here</AlertTitle>
               <AlertDescription>
-                A sign-in you make here to a site your browser syncs lasts until that site's sign-in changes in your own
-                browser, or you sign out of it there: the next sync then replaces it. Sign-ins to sites you don't sync
-                stay.
+                {fork
+                  ? "A sign-in you make here stays on this agent's computer only. To sign in for every agent, take control of your computer instead."
+                  : "A sign-in you make here reaches agents' computers made after you hand back. One to a site your browser syncs lasts until that site's sign-in changes in your own browser, or you sign out of it there: the next sync then replaces it. Sign-ins to sites you don't sync stay."}
               </AlertDescription>
             </Alert>
           )}
@@ -251,7 +386,9 @@ function LiveSession({ intent, onStop }: { intent: 'watch' | 'control'; onStop: 
           <AlertDialogHeader>
             <AlertDialogTitle>Hand back and leave?</AlertDialogTitle>
             <AlertDialogDescription>
-              You're in control of your computer. Leaving this page hands it back, so a waiting agent carries on.
+              {fork
+                ? "You're in control of this agent's computer. Leaving this page hands it back, so the agent carries on."
+                : "You're in control of your computer. Leaving this page hands it back, and agents' new computers get what you signed in to."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -293,18 +430,23 @@ function useLeaveConfirm(inControl: boolean, handBack: () => Promise<unknown>) {
   };
 }
 
+// fork: live view is on an agent's fork rather than the main computer.
 function describe({
   status,
   isError,
   viewer,
   takingOver,
+  fork,
 }: {
   status: LiveViewStatus | undefined;
   isError: boolean;
   viewer: Viewer;
   takingOver: boolean;
+  fork: boolean;
 }) {
   if (!status) return isError ? 'Live view could not load. Reload to try again.' : 'Loading…';
+  // A fork is never created here: one that is gone was deleted, or expired.
+  if (status.computer === 'none' && fork) return "This agent's computer was deleted.";
   if (status.computer === 'none')
     return status.allowanceExhausted && !takingOver
       ? "You have no computer yet, and this month's free minutes are used up."
@@ -316,10 +458,13 @@ function describe({
     return isError
       ? 'Live view lost touch with the server. Reload the page to try again.'
       : 'Live view is paused. It resumes while this page is visible.';
-  if (status.allowanceExhausted && !status.watching) return 'Your computer is asleep.';
-  if (viewer === 'connecting') return status.computer === 'paused' ? 'Waking your computer…' : 'Connecting…';
+  if (status.allowanceExhausted && !status.watching) return 'The computer is asleep.';
+  if (viewer === 'connecting') return status.computer === 'paused' ? 'Waking the computer…' : 'Connecting…';
   if (viewer === 'reconnecting') return 'Reconnecting…';
-  if (status.takeover?.mine) return "You're in control. Agents wait until you switch to Watch or stop.";
+  if (status.takeover?.mine)
+    return fork
+      ? "You're in control. The agent waits until you switch to Watch or stop."
+      : "You're in control. Agents keep working on their own computers.";
   if (status.takeover) return "You're in control in another tab. Switch to Control here to move it to this one.";
   if (viewer === 'connected') return 'Watching. Switch to Control to use the mouse and keyboard.';
   return 'Connecting…';
@@ -329,12 +474,13 @@ const mac = () => typeof navigator !== 'undefined' && isMac(navigator.platform);
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
-// noVNC on this lease's relay connection while it is connectable, reconnecting after drops while the page is
-// visible. viewOnly follows the takeover without reconnecting; the computer's desktop size is fixed for agents, so
+// noVNC on this lease's relay connection, to the computer named (a fork's ID; without one, the main computer), while
+// it is connectable, reconnecting after drops while the page is visible. viewOnly follows the takeover without reconnecting; the computer's desktop size is fixed for agents, so
 // the page never resizes it. beatAt is when the heartbeat last answered. setClipboard sets the computer's clipboard
 // for a paste (useLiveViewClipboard); problem is why the last paste failed.
 function useViewer(
   lease: string,
+  computer: string | undefined,
   connectable: boolean,
   inControl: boolean,
   beatAt: number,
@@ -386,6 +532,7 @@ function useViewer(
       const url = new URL('/api/v1/live-view', window.location.href);
       url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
       url.searchParams.set('lease', lease);
+      if (computer) url.searchParams.set('computer', computer);
       // Opened here rather than by noVNC, to read the close code it does not report.
       const socket = new WebSocket(url, 'binary');
       let code = 0;
@@ -434,7 +581,7 @@ function useViewer(
       client.current = null;
       setState('idle');
     };
-  }, [connectable, lease, generation]);
+  }, [connectable, lease, computer, generation]);
   return { screen, state, problem };
 }
 

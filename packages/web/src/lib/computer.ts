@@ -10,10 +10,15 @@ export function computerStatus({ computer }: ComputerView) {
   if (!computer)
     return { short: 'Not started', note: 'It starts the first time an agent opens it.', dot: 'bg-muted-foreground' };
   if (computer.inLiveView)
-    return { short: 'In live view', note: "You're in control. Agents wait until you hand back.", dot: 'bg-brand' };
-  if (computer.busy) return { short: 'In use', note: 'An agent is using your computer right now.', dot: 'bg-brand' };
+    return {
+      short: 'In live view',
+      note: "You're in control. Agents keep working on their own computers.",
+      dot: 'bg-brand',
+    };
+  if (computer.busy)
+    return { short: 'In use', note: 'An agent is working on a copy of your computer right now.', dot: 'bg-brand' };
   if (computer.status === 'ready')
-    return { short: 'Ready', note: 'Your agents open it when they need it.', dot: 'bg-foreground' };
+    return { short: 'Ready', note: 'Your agents work on copies of it when they need it.', dot: 'bg-foreground' };
   return { short: 'Starting', note: 'Your computer is starting.', dot: 'bg-muted-foreground' };
 }
 

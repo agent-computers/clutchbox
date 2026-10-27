@@ -24,6 +24,7 @@ export function YourComputer() {
         <>
           <ComputerStats view={view} />
           <LiveViewPanel
+            forks={view.forks}
             metered={!!view.usage}
             exhausted={
               view.usage && view.usage.usedMinutes >= view.usage.allowanceMinutes

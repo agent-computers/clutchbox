@@ -601,6 +601,8 @@ describe('forks', () => {
         createdAt: '2026-10-20T12:00:10.000Z',
         lastUsedAt: '2026-10-20T12:00:10.000Z',
         status: 'paused',
+        // Its session closed.
+        agent: null,
       },
       {
         computerId: first.computer.id,
@@ -608,6 +610,7 @@ describe('forks', () => {
         createdAt: '2026-10-20T12:00:00.000Z',
         lastUsedAt: '2026-10-20T12:00:00.000Z',
         status: 'in_use',
+        agent: { agent: null, host: 'claude' },
       },
     ]);
     // Another agent's session holding it means busy; the agent's own just ends.

@@ -4,6 +4,7 @@ import { type AddressInfo, connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,17 +51,28 @@ async function identity(id: string) {
   const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
   return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
 }
-// A visible heartbeat: the page load's live watch, which the relay needs.
-const watch = async (userId: string, lease: string) =>
+// A visible heartbeat: the page load's live watch, which the relay needs, on the main computer or a fork.
+const watch = async (userId: string, lease: string, computer?: string) =>
   heartbeat(db, { provider: fake.provider, metering: noMetering }, await member(userId), {
-    leases: [{ kind: 'live-view', id: lease, state: 'visible' }],
+    leases: [{ kind: 'live-view', id: lease, state: 'visible', ...(computer ? { computer } : {}) }],
   });
-const open = async (userId: string) =>
-  openComputerSession(
+// An agent's computer session, on a new fork of the person's main computer; returns the fork's ID.
+const open = async (userId: string) => {
+  const opened = await openComputerSession(
     db,
     { provider: fake.provider, metering: noMetering },
     { ...(await member(userId)), clientId: 'agent-client' },
   );
+  if ('error' in opened) throw new Error(opened.error);
+  return opened.computer.id;
+};
+const sandboxOf = async (computerId: string) =>
+  (
+    await db
+      .select({ sandboxId: schema.computers.sandboxId })
+      .from(schema.computers)
+      .where(eq(schema.computers.publicId, computerId))
+  )[0]?.sandboxId;
 
 // The member a person acts as, which the routes resolve from the session.
 const member = async (userId: string) => (await currentMember(db, userId))!;
@@ -96,11 +108,19 @@ describe('live view relay route', () => {
     const page = randomUUID();
     const connect = async (
       lease: string | null,
-      { cookie, from = origin, websocket = true }: { cookie?: string; from?: string | null; websocket?: boolean },
+      {
+        cookie,
+        from = origin,
+        websocket = true,
+        computer,
+      }: { cookie?: string; from?: string | null; websocket?: boolean; computer?: string },
       computers?: ComputerProvider,
     ) => {
+      const query = [lease === null ? null : `lease=${lease}`, computer === undefined ? null : `computer=${computer}`]
+        .filter(Boolean)
+        .join('&');
       const response = await handler(computers)(
-        new Request(`${origin}/api/v1/live-view${lease === null ? '' : `?lease=${lease}`}`, {
+        new Request(`${origin}/api/v1/live-view${query ? `?${query}` : ''}`, {
           headers: {
             ...(cookie ? { cookie } : {}),
             ...(from ? { origin: from } : {}),
@@ -122,10 +142,20 @@ describe('live view relay route', () => {
     // No computer yet.
     expect(await connect(page, { cookie: a })).toEqual({ status: 404, json: { error: 'not_found' } });
     // A computer, but this page load holds no watch on it; another user's watch on the same lease ID does not count.
-    await open('a');
-    await open('b');
+    const forkA = await open('a');
+    const forkB = await open('b');
     await watch('b', page);
     expect(await connect(page, { cookie: a })).toEqual({ status: 409, json: { error: 'not_watching' } });
+    // A fork: a malformed ID, another member's fork, and one of the user's own that this lease watches only on the
+    // main computer.
+    for (const computer of ['', 'cmp_x', `${forkA}x`])
+      expect((await connect(page, { cookie: a, computer })).status, computer).toBe(400);
+    expect(await connect(page, { cookie: a, computer: forkB })).toEqual({ status: 404, json: { error: 'not_found' } });
+    await watch('b', page, forkB);
+    expect(await connect(page, { cookie: a, computer: forkA })).toEqual({
+      status: 409,
+      json: { error: 'not_watching' },
+    });
     expect(upgrade).not.toHaveBeenCalled();
     // Watched, but the computer cannot be reached: logged by class only, never the stream's URL or token.
     await watch('a', page);
@@ -260,6 +290,40 @@ describe('live view relay route', () => {
       expect(responses[0]?.status).toBe(204);
       expect(sent().subarray(relayed)).toEqual(Buffer.from([4, 0, 0, 0, 0, 0, 0, 0x61]));
       expect(computer.clients.size).toBe(0);
+    });
+
+    it("relays a fork's screen to a watcher of that fork, with input during the user's takeover of it", async () => {
+      const a = await identity('a');
+      const page = randomUUID();
+      const fork = await open('a');
+      await watch('a', page, fork);
+      const port = (server.address() as AddressInfo).port;
+      const browser = new WebSocket(
+        `ws://127.0.0.1:${port}/api/v1/live-view?lease=${page}&computer=${fork}`,
+        'binary',
+        {
+          headers: { cookie: a },
+          origin,
+        },
+      );
+      await new Promise((resolve, reject) => {
+        browser.once('message', resolve);
+        browser.once('error', reject);
+      });
+      // The fork's stream, not the main computer's.
+      expect(upstreamRequests[0]?.headers['e2b-traffic-access-token']).toBe(`token-${await sandboxOf(fork)}`);
+      for (const message of [Buffer.from('RFB 003.008\n'), Buffer.from([1]), Buffer.from([1])]) browser.send(message);
+      const keyDown = Buffer.from([4, 1, 0, 0, 0, 0, 0, 0x61]);
+      const computers = { provider: fake.provider, metering: noMetering };
+      expect(await takeOverComputer(db, computers, await member('a'), page, { computerId: fork })).toMatchObject({
+        takeover: { mine: true },
+      });
+      await until(
+        () => sent().includes(keyDown),
+        () => browser.send(keyDown),
+      );
+      browser.close();
+      await until(() => responses.length === 1);
     });
 
     const closeOf = (browser: WebSocket) =>

@@ -13,7 +13,7 @@ import { ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie, siteBundle } from '../../server/src/capture-fixtures';
 import { adoptSyncSettings, captureView, saveCapture, syncView } from '../../server/src/captures';
 import type { ComputerProvider } from '../../server/src/computers';
-import { openComputerSession } from '../../server/src/computers';
+import { openComputerSession, useComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
@@ -694,6 +694,84 @@ describe('API routes', () => {
     fake.failClipboard(false);
     await request('POST', '/computer/hand-back', { cookie: a, body: { lease: page } });
     expect((await paste(a, { lease: page, text })).status).toBe(409);
+  });
+
+  it("list agents' running forks, and watch, take over, paste on, and hand back one by its ID", async () => {
+    const request = client();
+    const a = await identity('a');
+    const b = await identity('b');
+    const page = randomUUID();
+    const computers = { provider: fake.provider, metering: noMetering };
+    const agent = { ...(await member('a')), clientId: 'agent-client' };
+    const opened = await openComputerSession(db, computers, agent, { label: 'Book a table' });
+    if ('error' in opened) throw new Error(opened.error);
+    const fork = opened.computer.id;
+    const other = await openComputerSession(db, computers, { ...(await member('b')), clientId: 'agent-client' });
+    if ('error' in other) throw new Error(other.error);
+    const post = async (user: string, path: string, body: unknown) => {
+      const response = await request('POST', path, { cookie: user, body });
+      return { status: response.status, json: await response.json() };
+    };
+    // The page lists the running fork with the agent using it, and only the user's own.
+    expect((await (await request('GET', '/computer', { cookie: a })).json()).forks).toEqual([
+      {
+        computerId: fork,
+        label: 'Book a table',
+        createdAt: expect.any(String),
+        lastUsedAt: expect.any(String),
+        status: 'in_use',
+        agent: { agent: null, host: 'agent-client' },
+      },
+    ]);
+    // A malformed ID is refused; another member's fork does not exist for this user.
+    for (const computer of ['cmp_x', `${fork}x`]) {
+      expect((await post(a, '/computer/takeover', { lease: page, computer })).status).toBe(400);
+      expect((await post(a, '/computer/clipboard', { lease: page, computer, text: 'x' })).status).toBe(400);
+      expect(
+        (await post(a, '/heartbeat', { leases: [{ kind: 'live-view', id: page, state: 'visible', computer }] })).status,
+      ).toBe(400);
+    }
+    expect(await post(a, '/computer/takeover', { lease: page, computer: other.computer.id })).toMatchObject({
+      status: 404,
+      json: { error: 'computer_not_found' },
+    });
+    const beat = await post(a, '/heartbeat', {
+      leases: [{ kind: 'live-view', id: page, state: 'visible', computer: other.computer.id }],
+    });
+    expect(beat.json.leases[0].status).toMatchObject({ computer: 'none', watching: false });
+    // Watching the fork, then taking it over: the agent's calls wait, and the page shows it waiting.
+    expect(
+      (await post(a, '/heartbeat', { leases: [{ kind: 'live-view', id: page, state: 'visible', computer: fork }] }))
+        .json.leases[0].status,
+    ).toMatchObject({ computer: 'running', watching: true });
+    await opened.done();
+    expect(await post(a, '/computer/takeover', { lease: page, computer: fork })).toMatchObject({
+      status: 200,
+      json: { takeover: { mine: true } },
+    });
+    expect(await useComputerSession(db, computers, agent, opened.sessionId)).toMatchObject({
+      error: 'user_in_control',
+    });
+    // The main computer is not taken over, and another user cannot hand the fork back.
+    expect((await post(a, '/computer/hand-back', { lease: page })).json.takeover).toBeNull();
+    expect((await post(b, '/computer/hand-back', { lease: page, computer: fork })).json).toMatchObject({
+      computer: 'none',
+    });
+    expect(await post(a, '/computer/clipboard', { lease: page, computer: fork, text: 'on the fork' })).toEqual({
+      status: 200,
+      json: {},
+    });
+    const [row] = await db
+      .select({ sandboxId: schema.computers.sandboxId })
+      .from(schema.computers)
+      .where(eq(schema.computers.publicId, fork));
+    expect(fake.sandboxes.get(row!.sandboxId!)?.clipboard).toBe('on the fork');
+    // Handing back resumes the agent's session.
+    expect((await post(a, '/computer/hand-back', { lease: page, computer: fork })).json.takeover).toBeNull();
+    expect(await useComputerSession(db, computers, agent, opened.sessionId)).toMatchObject({
+      sessionId: opened.sessionId,
+      userHadControl: true,
+    });
   });
 
   it('answer a takeover with starting while another request creates the computer, and 503 when it is unreachable', async () => {

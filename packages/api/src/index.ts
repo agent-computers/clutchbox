@@ -37,6 +37,7 @@ import {
   syncView,
 } from '@agent-computers/server/captures';
 import {
+  COMPUTER_ID_PATTERN,
   type ComputerFailure,
   type ComputerProvider,
   computerView,
@@ -106,11 +107,11 @@ export const MAX_CAPTURE_BYTES = 4_000_000;
 export const MIN_EXTENSION_VERSION = '0.0.0';
 
 // A computer service's refusal: the free allowance used up is the user's to wait out (403, with when it resets); a
-// computer starting or being reset elsewhere is worth retrying (409).
+// fork that is gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
 function computerFailure(c: Context<Env>, { error, message, resetsAt }: ComputerFailure) {
   return c.json(
     { error, message, ...(resetsAt ? { resetsAt: resetsAt.toISOString() } : {}) },
-    error === 'allowance_exhausted' ? 403 : 409,
+    error === 'allowance_exhausted' ? 403 : error === 'computer_not_found' ? 404 : 409,
   );
 }
 
@@ -426,19 +427,23 @@ export function createApi({
     return c.json(await heartbeat(db, running, await memberOf(c), parsed.data));
   });
   // Take control for this page load (lease), or move the user's takeover to it; hand back ends it. Both
-  // answer with the lease's live view status, which shows whether it holds the takeover.
-  const leaseBody = z.object({ lease: z.uuid() }).strict();
+  // answer with the lease's live view status, which shows whether it holds the takeover. `computer` names one of the
+  // member's forks; without it, the main computer.
+  const computer = z.string().regex(COMPUTER_ID_PATTERN).optional();
+  const leaseBody = z.object({ lease: z.uuid(), computer }).strict();
   app.post('/computer/takeover', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const result = await takeOverComputer(db, running, await memberOf(c), parsed.data.lease);
+    const { lease, computer: computerId } = parsed.data;
+    const result = await takeOverComputer(db, running, await memberOf(c), lease, { computerId });
     if ('error' in result) return computerFailure(c, result);
     return c.json(result);
   });
   app.post('/computer/hand-back', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    return c.json(await handBackComputer(db, running, await memberOf(c), parsed.data.lease));
+    const { lease, computer: computerId } = parsed.data;
+    return c.json(await handBackComputer(db, running, await memberOf(c), lease, { computerId }));
   });
   // Live view's paste: the page sends the user's clipboard text here, then Ctrl+V through the relay, while this page load
   // holds the takeover. The body limit is the uploads' (JSON escapes can grow text);
@@ -448,11 +453,12 @@ export function createApi({
     bodyLimit({ maxSize: MAX_CAPTURE_BYTES, onError: c => c.json({ error: 'too_large' }, 413) }),
     async c => {
       const parsed = z
-        .object({ lease: z.uuid(), text: z.string() })
+        .object({ lease: z.uuid(), computer, text: z.string() })
         .strict()
         .safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-      const result = await setLiveViewClipboard(db, computers, await memberOf(c), parsed.data.lease, parsed.data.text);
+      const { lease, computer: computerId, text } = parsed.data;
+      const result = await setLiveViewClipboard(db, computers, await memberOf(c), lease, text, { computerId });
       if (result === 'too_large') return c.json({ error: 'too_large' }, 413);
       if (result === 'not_in_control') return c.json({ error: 'not_in_control' }, 409);
       return c.json({});
