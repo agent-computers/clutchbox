@@ -31,6 +31,9 @@ export const user = pgTable('auth_user', {
   banReason: text('ban_reason'),
   banExpires: time('ban_expires'),
   lastActiveAt: time('last_active_at'),
+  // Better Auth's Stripe plugin, for a deployment that bills with it (hooks.ts, AuthPlugins); the product never reads
+  // it. The plugin defines it on users even when organizations are its customers.
+  stripeCustomerId: text('stripe_customer_id'),
 });
 // SQL condition: the user is not under a current ban. Bans with a past expiry no longer apply.
 export const notBanned = sql`(coalesce(${user.banned}, false) = false or ${user.banExpires} < now())`;
@@ -158,6 +161,8 @@ export const organizations = pgTable(
     // deployment keeps after.
     plan: text('plan', { enum: ORGANIZATION_PLANS }),
     planEndedAt: time('plan_ended_at'),
+    // The organization's customer in Better Auth's Stripe plugin, for a deployment that bills with it.
+    stripeCustomerId: text('stripe_customer_id'),
     ...timestamps(),
   },
   table => [
@@ -639,5 +644,49 @@ export const userSettings = pgTable(
   table => [
     check('user_settings_time_zone', timeZoneName(table.timeZone)),
     index('user_settings_current_membership_idx').on(table.currentMembershipId),
+  ],
+);
+
+// Better Auth's Stripe plugin's subscriptions (its `subscription` model), for a deployment that bills organizations
+// with it (hooks.ts, AuthPlugins): the plugin writes them from Stripe's webhooks, and only the deployment's hooks read
+// them. Its own text IDs, like the other Better Auth tables.
+export const BILLING_SUBSCRIPTION_STATUSES = [
+  'incomplete',
+  'incomplete_expired',
+  'trialing',
+  'active',
+  'past_due',
+  'canceled',
+  'unpaid',
+  'paused',
+] as const;
+export const billingSubscriptions = pgTable(
+  'billing_subscriptions',
+  {
+    id: text('id').primaryKey(),
+    plan: text('plan').notNull(),
+    referenceId: text('reference_id')
+      .notNull()
+      .references(() => organizations.publicId, { onDelete: 'cascade' }),
+    stripeCustomerId: text('stripe_customer_id'),
+    stripeSubscriptionId: text('stripe_subscription_id'),
+    status: text('status').notNull().default('incomplete'),
+    periodStart: time('period_start'),
+    periodEnd: time('period_end'),
+    trialStart: time('trial_start'),
+    trialEnd: time('trial_end'),
+    cancelAtPeriodEnd: boolean('cancel_at_period_end').default(false),
+    cancelAt: time('cancel_at'),
+    canceledAt: time('canceled_at'),
+    endedAt: time('ended_at'),
+    seats: integer('seats'),
+    billingInterval: text('billing_interval'),
+    stripeScheduleId: text('stripe_schedule_id'),
+    ...timestamps(),
+  },
+  table => [
+    index('billing_subscriptions_reference_id_idx').on(table.referenceId),
+    index('billing_subscriptions_stripe_subscription_id_idx').on(table.stripeSubscriptionId),
+    check('billing_subscriptions_status', oneOf(table.status, BILLING_SUBSCRIPTION_STATUSES)),
   ],
 );

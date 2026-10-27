@@ -16,6 +16,8 @@ export const authOrganization = pgTable('organizations', {
   logo: text('logo'),
   metadata: text('metadata'),
   createdAt: time('created_at').notNull(),
+  // Better Auth's Stripe plugin's field, for a deployment that bills with it.
+  stripeCustomerId: text('stripe_customer_id'),
 });
 export const authMember = pgTable('memberships', {
   id: text('public_id').primaryKey(),

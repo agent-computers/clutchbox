@@ -1,6 +1,8 @@
 import { createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import type { BetterAuthPlugin } from 'better-auth';
+import { createAuthEndpoint } from 'better-auth/api';
 import { eq, like } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -12,6 +14,7 @@ import type { ServerConfig } from './config';
 import type { Database } from './database';
 import { databaseSchema } from './database-schema';
 import type { Email } from './mail';
+import { createOrganization } from './organizations';
 import * as schema from './schema';
 
 // Sign-in with each configured method, through Better Auth's real endpoints: OIDC against a stub issuer, GitHub against
@@ -463,5 +466,70 @@ describe('a sign-in mid-connect', () => {
     // A forged session cookie is no session either.
     const forged = createHmac('sha256', 'not-the-secret').update('token').digest('base64');
     expect(await resume(`better-auth.session_token=token.${forged}`, search)).toBeNull();
+  });
+});
+
+describe("a deployment's own Better Auth plugins", () => {
+  it('are mounted with the paths they turn off, and reach the Stripe plugin tables through the adapter', async () => {
+    await db
+      .insert(schema.user)
+      .values({ id: 'founder', name: 'F', email: 'founder@example.test', emailVerified: true });
+    const organizationId = (await db.transaction(tx =>
+      createOrganization(tx, { name: 'Acme', owner: { id: 'founder', name: 'F', email: 'founder@example.test' } }),
+    ))!;
+    // The Stripe plugin's models, as it declares them (@better-auth/stripe), for the fields this writes.
+    const optional = { type: 'string', required: false } as const;
+    const plugin = {
+      id: 'deployment-test',
+      schema: {
+        user: { fields: { stripeCustomerId: optional } },
+        organization: { fields: { stripeCustomerId: optional } },
+        subscription: {
+          fields: {
+            plan: { type: 'string', required: true },
+            referenceId: { type: 'string', required: true },
+            stripeCustomerId: optional,
+            status: { type: 'string', defaultValue: 'incomplete' },
+          },
+        },
+      },
+      endpoints: {
+        subscribe: createAuthEndpoint('/deployment-test/subscribe', { method: 'POST' }, async ctx => {
+          const { adapter } = ctx.context;
+          await adapter.update({
+            model: 'organization',
+            where: [{ field: 'id', value: organizationId }],
+            update: { stripeCustomerId: 'cus_test' },
+          });
+          await adapter.update({
+            model: 'user',
+            where: [{ field: 'id', value: 'founder' }],
+            update: { stripeCustomerId: 'cus_user' },
+          });
+          return ctx.json(
+            await adapter.create({
+              model: 'subscription',
+              data: { plan: 'paid', referenceId: organizationId, status: 'active', stripeCustomerId: 'cus_test' },
+            }),
+          );
+        }),
+        off: createAuthEndpoint('/deployment-test/off', { method: 'POST' }, async ctx => ctx.json({ on: true })),
+      },
+    } satisfies BetterAuthPlugin;
+    const withPlugin = createAuth(db, config, {
+      authPlugins: () => ({ plugins: [plugin], disabledPaths: ['/deployment-test/off'] }),
+    }).handler;
+    expect((await post('/deployment-test/off', {}, undefined, '', withPlugin)).status).toBe(404);
+    const created = await post('/deployment-test/subscribe', {}, undefined, '', withPlugin);
+    expect(created.status).toBe(200);
+    expect(await db.select().from(schema.billingSubscriptions)).toEqual([
+      expect.objectContaining({ plan: 'paid', referenceId: organizationId, status: 'active' }),
+    ]);
+    const [organization] = await db
+      .select({ stripeCustomerId: schema.organizations.stripeCustomerId })
+      .from(schema.organizations);
+    expect(organization).toEqual({ stripeCustomerId: 'cus_test' });
+    // Without the hook, none of it is mounted.
+    expect((await post('/deployment-test/subscribe', {})).status).toBe(404);
   });
 });

@@ -19,6 +19,7 @@ function buildServices(hooks: ServerHooks, { extendApi }: ServicesOptions) {
   const { db, pool } = createDatabase(config.DATABASE_URL);
   const auth = createAuth(db, config, {
     operatorAdmin: hooks.operatorAdmin,
+    authPlugins: hooks.authPlugins,
     tenancy: hooks.tenancy,
     limits: hooks.limits,
   });

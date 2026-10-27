@@ -24,7 +24,7 @@ import {
 import { OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
-import { type Limits, noLimits, noOperatorAdmin, type OperatorAdmin } from './hooks';
+import { type AuthPlugins, type Limits, noAuthPlugins, noLimits, noOperatorAdmin, type OperatorAdmin } from './hooks';
 import { newPublicId } from './ids';
 import { type SendEmail, smtpSender } from './mail';
 import { consentMembership, MCP_SCOPES, MEMBERSHIP_CLAIM } from './mcp';
@@ -36,7 +36,7 @@ import {
   organizationPlugins,
 } from './organization-auth';
 import { activeOrganizationOf, singleOrganization, type Tenancy } from './organizations';
-import { account, apikey, rateLimit, session, user, verification } from './schema';
+import { account, apikey, billingSubscriptions, rateLimit, session, user, verification } from './schema';
 
 // The auth adapter (and so an operator dashboard's generic adapter endpoint) reaches only auth tables, and the
 // organization plugin's fields of ours (auth-schema.ts), never captures, computers, or operations.
@@ -48,6 +48,8 @@ const authSchema = {
   rateLimit,
   ...oauthSchema,
   apikey,
+  // The Stripe plugin's, for a deployment that bills with it (hooks.ts, AuthPlugins).
+  subscription: billingSubscriptions,
   organization: authOrganization,
   member: authMember,
   invitation: authInvitation,
@@ -191,7 +193,8 @@ const discoveryUrl = (issuer: string) =>
     : `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
 
 // Tests inject a fetcher for client metadata documents and a fake mail sender; production uses the DNS-pinning
-// fetcher and SMTP. Operator admin is a hook (hooks.ts): its plugins, and the paths of theirs that stay off. So are
+// fetcher and SMTP. Operator admin is a hook (hooks.ts): its plugins, and the paths of theirs that stay off; so are a
+// deployment's other Better Auth plugins. So are
 // tenancy, which organization a new account joins, and limits, how many members an invitation may bring.
 export function createAuth(
   db: Database,
@@ -199,18 +202,21 @@ export function createAuth(
   {
     fetchClientMetadata = fetchClientMetadataResource,
     operatorAdmin = noOperatorAdmin,
+    authPlugins = noAuthPlugins,
     tenancy = singleOrganization,
     limits = noLimits,
     sendEmail,
   }: {
     fetchClientMetadata?: typeof fetchClientMetadataResource;
     operatorAdmin?: OperatorAdmin;
+    authPlugins?: (db: Database) => AuthPlugins;
     tenancy?: Tenancy;
     limits?: Limits;
     sendEmail?: SendEmail;
   } = {},
 ) {
   const { SMTP_URL, SMTP_FROM } = config;
+  const deployment = authPlugins(db);
   const emailLinks = SMTP_URL && SMTP_FROM ? (sendEmail ?? smtpSender(SMTP_URL, SMTP_FROM)) : undefined;
   // Every provider asks which account every time: each account has its own computer, so a silently reused session at
   // the provider can connect an agent to the wrong one.
@@ -309,6 +315,7 @@ export function createAuth(
       '/oauth2/delete-consent',
       ...organizationDisabledPaths,
       ...operatorAdmin.disabledPaths,
+      ...deployment.disabledPaths,
     ],
     plugins: [
       // The organization's identity provider over OIDC. Its ID token is verified against the discovery document's
@@ -406,6 +413,7 @@ export function createAuth(
       cimd({ fetchClientMetadataResource: fetchClientMetadata, metadataProfile: 'mcp-2026-07-28' }),
       ...organizationPlugins(db, { baseURL: config.BETTER_AUTH_URL, tenancy, limits, sendEmail: emailLinks }),
       ...operatorAdmin.plugins,
+      ...deployment.plugins,
     ],
   });
 }
