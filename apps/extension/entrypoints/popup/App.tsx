@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { allSitesOffered, distribution } from '../../src/build';
 import { serverOrigin } from '../../src/server';
-import { Badge } from '../../src/ui/components/badge';
 import { Button } from '../../src/ui/components/button';
 import { Input } from '../../src/ui/components/input';
 import { Connections, connectionName, otherHost, receives } from '../../src/ui/connections';
@@ -107,11 +106,7 @@ export function App() {
             </span>
           )}
         </span>
-        {!signedIn ? (
-          <Badge variant="outline" className="text-muted-foreground">
-            Preview
-          </Badge>
-        ) : view === 'home' ? (
+        {!signedIn ? null : view === 'home' ? (
           <nav className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => openAccount(origin)}>
               Account
