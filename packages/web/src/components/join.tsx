@@ -1,9 +1,10 @@
 'use client';
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
+import { Button, buttonVariants } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
 import { useAcceptInvitation, useInvitation, useRejectInvitation } from '@better-auth-ui/react/plugins/organization';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ApiError, api, joinableQuery, type Role } from '../lib/api';
 import { authClient } from '../lib/auth-client';
@@ -145,19 +146,22 @@ export function JoinableOrganizations() {
   );
 }
 
-// /join: signed in but in no organization here. Offers those that allow your domain, or says how to get invited.
-export function JoinPage({ email }: { email: string }) {
+// /join: organizations that allow your email address's domain, for someone in none here yet or, from the switcher, in
+// one already. Without any, says how to get invited.
+export function JoinPage({ email, member }: { email: string; member: boolean }) {
   const { data, isPending, isError } = useQuery(joinableQuery);
   return (
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="text-3xl">
-          <h1>Join an organization</h1>
+          <h1>{member ? 'Join another organization' : 'Join an organization'}</h1>
         </CardTitle>
         <CardDescription>
           {isPending || data?.length
             ? `Signed in as ${email}.`
-            : `${email} is not in an organization here yet. Ask an owner or admin of yours to invite this address, or to allow your email address's domain.`}
+            : member
+              ? `No other organization here lets ${email} join. Ask an owner or admin to invite this address, or to allow your email address's domain.`
+              : `${email} is not in an organization here yet. Ask an owner or admin of yours to invite this address, or to allow your email address's domain.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -166,6 +170,13 @@ export function JoinPage({ email }: { email: string }) {
           <Alert variant="destructive">
             <AlertDescription>Organizations could not load. Reload to try again.</AlertDescription>
           </Alert>
+        )}
+        {member && (
+          <div>
+            <Link href="/app" className={buttonVariants({ variant: 'secondary' })}>
+              Back to the app
+            </Link>
+          </div>
         )}
       </CardContent>
     </Card>

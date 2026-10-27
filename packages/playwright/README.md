@@ -18,7 +18,7 @@ The first apply replaces every synced site's cookies; later ones, given the prev
 
 It works on any Chromium Playwright drives: a launched browser, a persistent context, or a running Chrome you attach to with `chromium.connectOverCDP(url)`. That last one is how to use it with agents that drive Chrome by its CDP URL, such as browser-use: start Chrome with remote debugging, apply the capture to its default context, then give the agent the same CDP URL.
 
-A capture is the [capture format](../capture)'s `Capture`. Read a member's latest one from a Clutchbox server with an organization API key, which an owner or admin creates on the Organization page:
+A capture is the [capture format](../capture)'s `Capture`. Read a member's latest one from a Clutchbox server with an organization API key, which an owner or admin creates on the Developers page:
 
 ```ts
 import { applyCapture, fetchCapture, listMembers } from '@agent-computers/playwright';

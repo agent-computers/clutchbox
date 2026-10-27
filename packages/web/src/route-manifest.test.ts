@@ -37,7 +37,7 @@ describe('generate-routes', () => {
   beforeEach(() => {
     app = mkdtempSync(join(tmpdir(), 'generate-routes-'));
     put('layout.tsx', 'export default function Root() {}\n');
-    put('app/developers/page.tsx', 'export default function Developers() {}\n');
+    put('app/billing/page.tsx', 'export default function Billing() {}\n');
   });
   afterEach(() => rmSync(app, { recursive: true, force: true }));
 
@@ -68,6 +68,6 @@ describe('generate-routes', () => {
     expect(checkApp(app, groups)).toEqual(['app/app/old/page.tsx is generated but no longer in the manifest']);
     expect(writeApp(app, groups)).toEqual(['removed app/app/old/page.tsx']);
     expect(checkApp(app, groups)).toEqual([]);
-    expect(readFileSync(join(app, 'app/app/developers/page.tsx'), 'utf8')).toContain('Developers');
+    expect(readFileSync(join(app, 'app/app/billing/page.tsx'), 'utf8')).toContain('Billing');
   });
 });

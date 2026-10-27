@@ -78,6 +78,13 @@ export const routeManifest: RouteEntry[] = [
     factory: { name: 'settingsPage', as: ['default'] },
   },
   {
+    id: 'developers',
+    dir: 'app/developers',
+    file: 'page.tsx',
+    module: 'developers',
+    reexport: ['default', 'metadata'],
+  },
+  {
     id: 'organization',
     dir: 'app/organization',
     file: 'page.tsx',

@@ -22,6 +22,7 @@ import {
   Bot,
   Circle,
   CircleCheck,
+  Code,
   LayoutDashboard,
   Monitor,
   RefreshCw,
@@ -38,6 +39,7 @@ import {
   browsersQuery,
   computerQuery,
   grantsQuery,
+  organizationsQuery,
   repoStarsQuery,
   type SetupView,
   setupQuery,
@@ -76,8 +78,10 @@ const pages: { href: string; label: string; icon: typeof Bot; step?: Step }[] = 
   { href: '/app/agents', label: 'Agents', icon: Bot, step: 'agents' },
   { href: '/app/computer', label: 'Computer', icon: Monitor, step: 'computer' },
 ];
+// Developers is for owners and admins, who are the only ones who can use it.
 const lowerPages = [
   { href: '/app/organization', label: 'Organization', icon: Users },
+  { href: '/app/developers', label: 'Developers', icon: Code, managers: true },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -147,12 +151,18 @@ function AppSidebar({
   const { data: computer } = useQuery(computerQuery);
   const { data: sync } = useQuery(syncQuery);
   const syncStopped = !!sync && (sync.disconnected || !!sync.settings?.paused);
+  const role = useQuery(organizationsQuery).data?.organizations.find(organization => organization.current)?.role;
+  const manager = role === 'owner' || role === 'admin';
   const status = computer && computerStatus(computer);
   // Every in-app link goes through the leave guard; the menu closes on mobile either way.
   const follow = (href: string) => (event: MouseEvent) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
     setOpenMobile(false);
     if (href !== pathname && guard.current?.(() => router.push(href))) event.preventDefault();
+  };
+  const go = (href: string) => {
+    setOpenMobile(false);
+    if (!guard.current?.(() => router.push(href))) router.push(href);
   };
   const item = ({ href, label, icon: Icon }: { href: string; label: string; icon: typeof Bot }, badge?: ReactNode) => (
     <SidebarMenuItem key={href}>
@@ -198,13 +208,7 @@ function AppSidebar({
           </Link>
           {shell.githubRepo && <StarLink repo={shell.githubRepo} />}
         </div>
-        <OrganizationSwitcher
-          onCreate={() => {
-            setOpenMobile(false);
-            const href = '/app/organization#new';
-            if (!guard.current?.(() => router.push(href))) router.push(href);
-          }}
-        />
+        <OrganizationSwitcher onCreated={() => go('/app/organization')} onJoin={() => go('/join')} />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -221,7 +225,7 @@ function AppSidebar({
                   badge && <span className="rounded-full px-1.5 text-xs font-normal ring-1 ring-border">{badge}</span>,
                 ),
               )}
-              {lowerPages.map(page => item(page))}
+              {lowerPages.filter(page => !page.managers || manager).map(page => item(page))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

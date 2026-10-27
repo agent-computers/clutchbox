@@ -48,7 +48,7 @@ afterEach(async () => {
 const installed = () => db.insert(schema.installation).values({ dataClass: 'nonproduction' });
 
 describe('services', () => {
-  it('build from the open defaults: no metering, no operator admin, and no deployment routes', async () => {
+  it('build from the open defaults: no metering and no operator admin', async () => {
     await installed();
     const { hooks, auth, api } = await createServices(defaultServerHooks)();
     expect(hooks.metering).toBe(noMetering);
@@ -63,7 +63,6 @@ describe('services', () => {
     const request = (path: string) =>
       api.fetch(new Request(`${origin}/api/v1/${path}`, { headers: { origin, cookie } }));
     expect((await request('me')).status).toBe(200);
-    expect((await request('developer-updates')).status).toBe(404);
   });
 
   it('retry the environment check after it fails, and then keep the same services', async () => {
