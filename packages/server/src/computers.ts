@@ -72,9 +72,12 @@ export type ComputerFailure = {
   resetsAt?: Date | undefined;
 };
 export type SyncSummary = {
-  status: 'none' | 'unchanged' | 'applied' | 'failed';
+  // `cleared`: the member's capture was deleted, so the computer was signed out of the sites it had synced.
+  status: 'none' | 'unchanged' | 'applied' | 'cleared' | 'failed';
   captureCompletedAt?: string | undefined;
   sitesUpdated?: number | undefined;
+  // For `cleared`, the sites signed out; for a `failed` sign-out, the sites still signed in.
+  sites?: string[] | undefined;
 };
 export type SessionHandle = {
   sessionId: string;
@@ -1227,7 +1230,8 @@ async function applyLatestCapture(
     db.select().from(schema.computers).where(eq(schema.computers.id, computerId)),
     latestCaptureDigest(db, member),
   ]);
-  if (!latest || !computer) return { status: 'none' };
+  if (!computer) return { status: 'none' };
+  if (!latest) return await clearSyncedSites(db, computer, session, deadline);
   if (latest.digest === computer.appliedCaptureDigest)
     return { status: 'unchanged', captureCompletedAt: latest.completedAt };
   let targetSites: string[] | undefined;
@@ -1235,7 +1239,7 @@ async function applyLatestCapture(
     const budget = Math.min(SYNC_BUDGET_MS, deadline - Date.now() - SYNC_SLACK_MS);
     if (budget < SYNC_MIN_MS) throw new Error('no time left');
     const loaded = await loadLatestCapture(db, member);
-    if (!loaded) return { status: 'none' };
+    if (!loaded) return await clearSyncedSites(db, computer, session, deadline);
     const changes = cookieChanges(
       baselineOf(computer.appliedCapture, member, computer.publicId),
       loaded.capture.cookies,
@@ -1302,6 +1306,49 @@ async function applyLatestCapture(
         .where(eq(schema.computers.id, computerId))
         .catch(error => logError('sync baseline reset', error));
     return { status: 'failed', captureCompletedAt: latest.completedAt };
+  }
+}
+
+// With no capture (the browser signed out, an organization removed it or turned sync off, or the uploads were deleted),
+// the computer is signed out of every site it had synced, which would otherwise stay signed in for as long as the
+// computer lives. Sites it never synced keep their sign-ins.
+async function clearSyncedSites(
+  db: Database,
+  computer: Pick<ComputerRow, 'id' | 'syncedSites' | 'appliedCaptureDigest'>,
+  session: ComputerSession,
+  deadline: number,
+): Promise<SyncSummary> {
+  const sites = computer.syncedSites;
+  if (!sites.length) return { status: 'none' };
+  try {
+    const budget = Math.min(SYNC_BUDGET_MS, deadline - Date.now() - SYNC_SLACK_MS);
+    if (budget < SYNC_MIN_MS) throw new Error('no time left');
+    await withinBudget(
+      session.syncCookies({ clearSites: sites, cookies: [], budgetMs: budget }),
+      budget + SYNC_SLACK_MS,
+    );
+    // Unless a concurrent apply of a new capture won, whose sites this may have cleared: it re-applies wholesale next.
+    const [updated] = await db
+      .update(schema.computers)
+      .set({
+        syncedSites: sql`array(select unnest(${schema.computers.syncedSites}) except select unnest(${textArray(sites)}))`,
+      })
+      .where(
+        and(
+          eq(schema.computers.id, computer.id),
+          sql`${schema.computers.appliedCaptureDigest} IS NOT DISTINCT FROM ${computer.appliedCaptureDigest}`,
+        ),
+      )
+      .returning({ id: schema.computers.id });
+    if (!updated)
+      await db
+        .update(schema.computers)
+        .set({ appliedCaptureDigest: null, appliedCapture: null })
+        .where(eq(schema.computers.id, computer.id));
+    return { status: 'cleared', sites };
+  } catch {
+    console.error('Synced sites could not be signed out on the computer; the next open retries.');
+    return { status: 'failed', sites };
   }
 }
 

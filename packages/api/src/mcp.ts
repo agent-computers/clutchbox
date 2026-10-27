@@ -121,6 +121,7 @@ const actCost = (action: ComputerAction) =>
       ? action.ms
       : ACT_ACTION_ESTIMATE_MS;
 const plural = (count = 0, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+const sites = (sync: SyncSummary) => sync.sites?.join(', ') ?? '';
 // email is the connected account: with no sync, the user's extension may sync a different one of their accounts.
 function syncNote(sync: SyncSummary, email: string) {
   switch (sync.status) {
@@ -130,8 +131,12 @@ function syncNote(sync: SyncSummary, email: string) {
       return `Browser sign-ins are current with the user's browser as of ${sync.captureCompletedAt}.`;
     case 'applied':
       return `Synced the user's browser from ${sync.captureCompletedAt}: ${plural(sync.sitesUpdated, 'site')} updated.`;
+    case 'cleared':
+      return `The user stopped syncing their browser to ${email}, so this computer was signed out of the sites it had synced: ${sites(sync)}. If the user expected signed-in sites, tell them to sync their browser again with the Clutchbox extension.`;
     case 'failed':
-      return 'Browser sync failed this time; sites keep their previous sign-ins on the computer. The next computer_open retries.';
+      return sync.sites
+        ? `The user stopped syncing their browser to ${email}, but signing this computer out of the sites it had synced failed this time, so these may still be signed in: ${sites(sync)}. The next computer_open retries.`
+        : 'Browser sync failed this time; sites keep their previous sign-ins on the computer. The next computer_open retries.';
   }
 }
 // Without an allowance (hooks.ts), nothing.

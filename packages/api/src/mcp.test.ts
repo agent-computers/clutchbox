@@ -12,7 +12,7 @@ import { createAuth } from '../../server/src/auth';
 import { connectBrowser } from '../../server/src/browser-fixtures';
 import { EXTENSION_CLIENT_ID, ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie } from '../../server/src/capture-fixtures';
-import { saveCapture } from '../../server/src/captures';
+import { deleteCaptures, saveCapture } from '../../server/src/captures';
 import {
   COMPUTER_ID_PATTERN,
   deleteMainComputer,
@@ -635,6 +635,12 @@ describe('main computer tools', () => {
     ]);
     const taken = (await tool(chatgpt.access_token, 'computer_open', { computer_id: computerId })).result;
     expect(taken.structuredContent).toMatchObject({ computer_id: computerId, new_computer: false });
+    // Once the user stops syncing, the next open signs the computer out of the sites it had synced, naming them.
+    await deleteCaptures(db, await member(a.id));
+    const signedOut = (
+      await tool(chatgpt.access_token, 'computer_open', { session_id: taken.structuredContent.session_id })
+    ).result;
+    expect(signedOut.structuredContent.browser_sync).toContain('signed out of the sites it had synced: example.com.');
     // Deleting: another agent's active session means busy; then it is gone.
     expect(
       (await tool(claude.access_token, 'computer_delete', { computer_id: computerId })).result.structuredContent,

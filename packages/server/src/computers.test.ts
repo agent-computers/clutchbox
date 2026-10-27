@@ -1195,17 +1195,28 @@ describe('apply on open', () => {
     await closeComputerSession(db, computers, caller(a), last!);
     expect(fake.calls.steps).toEqual(['refresh', 'sync', 'refresh', 'sync', 'refresh']);
   });
-  it('re-applies a re-upload wholesale after captures are deleted', async () => {
+  it('signs the computer out of its synced sites once captures are deleted, retrying a failure, and keeps the rest', async () => {
     const a = await user('a');
-    const capture = bundle([cookie()]);
+    const capture = bundle([cookie(), cookie({ name: 'new', domain: 'notion.so' })]);
     await saveCapture(db, a, capture);
     await reopen(a);
+    // A site the computer signed in to on its own.
+    sandbox().cookies.push(computerCookie('sid', 'own', 'own.test'));
     await deleteCaptures(db, a);
     expect(await computerRow()).toMatchObject({ appliedCaptureDigest: null, appliedCapture: null });
+    fake.failSync();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect((await reopen(a)).sync).toEqual({ status: 'failed', sites: ['example.com', 'notion.so'] });
+    expect(error).toHaveBeenCalled();
+    expect((await computerRow()).syncedSites).toEqual(['example.com', 'notion.so']);
+    fake.failSync(false);
+    expect((await reopen(a)).sync).toEqual({ status: 'cleared', sites: ['example.com', 'notion.so'] });
+    expect(jar()).toEqual(['own.test:sid=own']);
+    expect((await computerRow()).syncedSites).toEqual([]);
+    // Nothing more to sign out.
     expect((await reopen(a)).sync).toEqual({ status: 'none' });
     await saveCapture(db, a, capture);
-    expect((await reopen(a)).sync).toMatchObject({ status: 'applied' });
-    expect(fake.calls.sync).toBe(2);
+    expect((await reopen(a)).sync).toMatchObject({ status: 'applied', sitesUpdated: 2 });
   });
   it('does not overwrite a concurrent apply of another capture, and re-applies wholesale next time', async () => {
     const a = await user('a');
