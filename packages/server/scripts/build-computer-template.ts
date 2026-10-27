@@ -1,4 +1,4 @@
-// Builds the E2B template for main computers from the E2B adapter's recipe (packages/e2b/src/template.ts).
+// Builds the E2B templates for main computers, one per size, from the E2B adapter's recipe (packages/e2b/src/template.ts).
 // Requires E2B_API_KEY (or the E2B CLI login).
 // Usage: bun run computer:template
 import { readFile } from 'node:fs/promises';

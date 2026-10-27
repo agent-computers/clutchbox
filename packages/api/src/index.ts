@@ -43,6 +43,7 @@ import {
 import { CALL_BUDGET_MS, EXEC_MAX_SECONDS, IDLE_PAUSE_MS } from '@agent-computers/server/computer-timing';
 import {
   COMPUTER_ID_PATTERN,
+  COMPUTER_SIZE_NAMES,
   type ComputerFailure,
   type ComputerProvider,
   closeComputerSession,
@@ -54,6 +55,7 @@ import {
   openComputerSession,
   SESSION_ID_PATTERN,
   type SessionHandle,
+  setComputerSize,
   setLiveViewClipboard,
   takeOverComputer,
   useComputerSession,
@@ -567,6 +569,16 @@ export function createApi({
       ? c.json({ reset: true })
       : c.json({ error: 'not_found' }, 404),
   );
+  // The main computer's size. Choosing another resets the computer onto it; synced data and setup stay.
+  app.put('/computer/size', async c => {
+    const parsed = z
+      .object({ size: z.enum(COMPUTER_SIZE_NAMES) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const reset = await setComputerSize(db, computers, await memberOf(c), parsed.data.size);
+    return c.json({ size: parsed.data.size, reset });
+  });
   // Live view. The page's heartbeat: each lease it holds goes to its kind's handler
   // (heartbeat.ts), which answers with the lease's status.
   app.post('/heartbeat', async c => {

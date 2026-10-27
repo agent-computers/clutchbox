@@ -2,7 +2,12 @@ import 'server-only';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
 import { siteOfCookie } from '@agent-computers/capture';
-import { type ComputerProvider, type ComputerSession, FIRST_PROFILE } from '@agent-computers/computer';
+import {
+  type ComputerProvider,
+  type ComputerSession,
+  type ComputerSize,
+  FIRST_PROFILE,
+} from '@agent-computers/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
 import { type AgentKind, agentOf, clientHost } from './agents';
 import {
@@ -52,9 +57,12 @@ export const COMPUTER_ID_PATTERN = publicIdPattern('computer');
 // The provider interfaces live in @agent-computers/computer; re-exported for this service's callers.
 export {
   actionSchema,
+  COMPUTER_SIZE_NAMES,
+  COMPUTER_SIZES,
   type ComputerAction,
   type ComputerProvider,
   type ComputerSession,
+  type ComputerSize,
   DISPLAY,
   type ExecResult,
 } from '@agent-computers/computer';
@@ -133,7 +141,11 @@ async function allowanceFailure(metering: Metering, db: Database, member: Member
 // it runs out, and time since the last meter (at most the idle minute after the last call) is booked at the next one.
 async function meter(tx: Transaction, metering: Metering, computerId: number, member: Member, runsUntil: Date) {
   const [row] = await tx
-    .select({ billedUntil: schema.computers.billedUntil, runsUntil: schema.computers.runsUntil })
+    .select({
+      billedUntil: schema.computers.billedUntil,
+      runsUntil: schema.computers.runsUntil,
+      size: schema.computers.size,
+    })
     .from(schema.computers)
     .where(eq(schema.computers.id, computerId))
     .for('update');
@@ -145,7 +157,7 @@ async function meter(tx: Transaction, metering: Metering, computerId: number, me
     .update(schema.computers)
     .set({ billedUntil: row.billedUntil && row.billedUntil > now ? row.billedUntil : now, runsUntil })
     .where(eq(schema.computers.id, computerId));
-  if (seconds > 0) await metering.charge(tx, member, seconds, now);
+  if (seconds > 0) await metering.charge(tx, member, seconds, now, row.size);
 }
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
@@ -161,7 +173,7 @@ const resetting: ComputerFailure = {
   error: 'starting',
   message: 'The computer is being reset. Try again in a few seconds.',
 };
-// Exactly one caller creates the member's main provider computer; others see `starting`.
+// Exactly one caller creates the member's main provider computer, at the size the member chose; others see `starting`.
 async function ensureComputer(
   db: Database,
   { provider, metering }: Computers,
@@ -169,7 +181,11 @@ async function ensureComputer(
 ): Promise<ComputerRow | ComputerFailure> {
   const [inserted] = await db
     .insert(schema.computers)
-    .values({ membershipId: member.membershipId, publicId: newPublicId('computer') })
+    .values({
+      membershipId: member.membershipId,
+      publicId: newPublicId('computer'),
+      size: sql`(select ${schema.memberships.computerSize} from ${schema.memberships} where ${schema.memberships.id} = ${member.membershipId})`,
+    })
     .onConflictDoNothing()
     .returning(computerColumns);
   let row = inserted;
@@ -195,7 +211,7 @@ async function ensureComputer(
   if (!sandboxId) {
     await meterRun(db, metering, row.id, member, IDLE_PAUSE_MS);
     markToolStep('create');
-    sandboxId = await provider.create(row.publicId, IDLE_PAUSE_MS);
+    sandboxId = await provider.create(row.publicId, IDLE_PAUSE_MS, row.size);
   }
   // Conditional: a delete (or a stale-create takeover that finished first) may have run meanwhile.
   const [ready] = await db
@@ -894,6 +910,8 @@ async function createFork(
         membershipId: caller.membershipId,
         createdAt: now,
         forkOf: main.id,
+        // The snapshot's memory needs main's CPUs and memory, so the fork runs at main's size.
+        size: main.size,
         snapshotId: snapshot.id,
         label: label ?? null,
         lastUsedAt: now,
@@ -2124,11 +2142,12 @@ export async function setLiveViewClipboard(
 }
 
 export async function computerView(db: Database, metering: Metering, member: Member) {
-  const [[row], capture, usage] = await Promise.all([
+  const [[row], [membership], capture, usage] = await Promise.all([
     db
       .select({
         id: schema.computers.id,
         status: schema.computers.status,
+        size: schema.computers.size,
         // When main last applied any of its profiles' captures.
         appliedCaptureAt:
           sql<Date | null>`(select max(${schema.computerProfiles.appliedCaptureAt}) from ${schema.computerProfiles} where ${schema.computerProfiles.computerId} = ${schema.computers.id})`.mapWith(
@@ -2138,6 +2157,10 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       })
       .from(schema.computers)
       .where(mainOf(member)),
+    db
+      .select({ computerSize: schema.memberships.computerSize })
+      .from(schema.memberships)
+      .where(eq(schema.memberships.id, member.membershipId)),
     captureView(db, member),
     metering.usage(db, member, new Date()),
   ]);
@@ -2153,6 +2176,8 @@ export async function computerView(db: Database, metering: Metering, member: Mem
     : [];
   return {
     capture,
+    // The size the member chose, which the main computer runs at once it is created.
+    size: membership?.computerSize ?? '1x',
     // Without an allowance (hooks.ts), null.
     usage: usage && {
       usedMinutes: Math.floor(usage.usedSeconds / 60),
@@ -2165,6 +2190,7 @@ export async function computerView(db: Database, metering: Metering, member: Mem
     computer: row
       ? {
           status: row.status,
+          size: row.size,
           appliedCaptureAt: row.appliedCaptureAt?.toISOString() ?? null,
           busy: live.some(session => holdsControl(session, now)),
           // The user holds a takeover of the main computer in live view.
@@ -2173,6 +2199,17 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       : null,
     forks,
   };
+}
+
+// Chooses the size of the member's main computer. A computer keeps its size, so a main computer of another size is
+// reset (deleteMainComputer) and the next computer_open creates one at the new size. Returns whether it reset one.
+export async function setComputerSize(db: Database, provider: ComputerProvider, member: Member, size: ComputerSize) {
+  await db
+    .update(schema.memberships)
+    .set({ computerSize: size, updatedAt: new Date() })
+    .where(eq(schema.memberships.id, member.membershipId));
+  const [main] = await db.select({ size: schema.computers.size }).from(schema.computers).where(mainOf(member));
+  return !!main && main.size !== size && (await deleteMainComputer(db, provider, member));
 }
 
 // Also resets the computer: deletes the main computer, its forks, and their snapshots, so the next computer_open creates

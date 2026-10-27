@@ -239,7 +239,7 @@ describe('E2B adapter', () => {
     const create = vi
       .spyOn(BaseSandbox, 'create')
       .mockResolvedValue({ sandboxId: 'sandbox', commands: { run } } as never);
-    expect(await e2bComputerProvider('template').create('cm_1', 60_000)).toBe('sandbox');
+    expect(await e2bComputerProvider('template').create('cm_1', 60_000, '1x')).toBe('sandbox');
     expect(create).toHaveBeenCalledWith(
       'template',
       expect.objectContaining({ network: { allowPublicTraffic: false }, timeoutMs: 60_000 }),
@@ -269,6 +269,9 @@ describe('E2B adapter', () => {
       expect.stringContaining('/opt/agent-computers/live-view-stream.sh'),
       expect.objectContaining({ user: 'user', timeoutMs: 15_000 }),
     );
+    // A larger size starts from its own template, since E2B fixes CPUs and memory at build.
+    await e2bComputerProvider('template').create('cm_2', 60_000, '4x');
+    expect(create).toHaveBeenLastCalledWith('template-4x', expect.anything());
   });
   it('sets the clipboard from a file the helper deletes, and removes it when the helper fails (E2B adapter)', async () => {
     const write = vi.fn(async () => ({}));

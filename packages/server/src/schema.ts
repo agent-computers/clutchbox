@@ -1,3 +1,4 @@
+import { COMPUTER_SIZE_NAMES } from '@agent-computers/computer';
 import { relations, sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -187,12 +188,16 @@ export const memberships = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     role: text('role', { enum: MEMBER_ROLES }).notNull(),
+    // The size the member's next main computer is created at (COMPUTER_SIZES). Changing it resets the main computer,
+    // since a computer keeps its size.
+    computerSize: text('computer_size', { enum: COMPUTER_SIZE_NAMES }).notNull().default('1x'),
     ...timestamps(),
   },
   table => [
     unique('memberships_organization_user_unique').on(table.organizationId, table.userId),
     index('memberships_user_idx').on(table.userId),
     check('memberships_role', oneOf(table.role, MEMBER_ROLES)),
+    check('memberships_computer_size', oneOf(table.computerSize, COMPUTER_SIZE_NAMES)),
   ],
 );
 export const INVITATION_STATUSES = ['pending', 'accepted', 'rejected', 'canceled'] as const;
@@ -274,6 +279,9 @@ export const computers = pgTable(
     // A fork's latest open or call; one unused for FORK_UNUSED_MS is deleted.
     lastUsedAt: time('last_used_at'),
     status: text('status', { enum: COMPUTER_STATUSES }).notNull().default('creating'),
+    // The size it was created at, which metering charges by: the member's choice for a main computer, and its main
+    // computer's for a fork.
+    size: text('size', { enum: COMPUTER_SIZE_NAMES }).notNull().default('1x'),
     sandboxId: text('sandbox_id'),
     // Before profiles, the one apply baseline (computer_profiles has one per profile). Read and written only by code
     // deployed before them; dropped in a later release.
@@ -321,6 +329,7 @@ export const computers = pgTable(
     index('computers_fork_of_idx').on(table.forkOf),
     index('computers_snapshot_idx').on(table.snapshotId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
+    check('computers_size', oneOf(table.size, COMPUTER_SIZE_NAMES)),
     check('computers_label', sql`char_length(${table.label}) BETWEEN 1 AND 100`),
     check(
       'computers_fork',

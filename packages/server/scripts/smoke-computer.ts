@@ -46,7 +46,7 @@ let sandboxId: string | undefined;
 let forkId: string | undefined;
 let snapshotId: string | undefined;
 try {
-  sandboxId = await timed('create', () => provider.create(computerId, CALL_HOLD_MS));
+  sandboxId = await timed('create', () => provider.create(computerId, CALL_HOLD_MS, '1x'));
   checks.findByMetadata = (await provider.find(computerId)) === sandboxId;
   let session = await timed('connect', () => provider.connect(sandboxId!, CALL_HOLD_MS));
   const tabUrls = async () =>

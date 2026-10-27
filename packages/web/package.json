@@ -29,6 +29,7 @@
   "dependencies": {
     "@agent-computers/api": "workspace:*",
     "@agent-computers/capture": "workspace:*",
+    "@agent-computers/computer": "workspace:*",
     "@agent-computers/server": "workspace:*",
     "@agent-computers/ui": "workspace:*",
     "@better-auth-ui/core": "1.7.30",

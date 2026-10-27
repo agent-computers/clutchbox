@@ -211,6 +211,13 @@
       "when": 1793087934548,
       "tag": "0029_billing_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793113425359,
+      "tag": "0030_computer_sizes",
+      "breakpoints": true
     }
   ]
 }

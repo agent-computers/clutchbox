@@ -1,5 +1,5 @@
 import 'server-only';
-import type { ComputerProvider } from '@agent-computers/computer';
+import type { ComputerProvider, ComputerSize } from '@agent-computers/computer';
 import type { BetterAuthPlugin } from 'better-auth';
 import type { ServerConfig } from './config';
 import type { Database } from './database';
@@ -34,9 +34,9 @@ export type Metering = {
   usage(db: Database, member: Member, now: Date): Promise<Usage | null>;
   // Checked before a computer is created, woken, or used, and before live view extends its holds.
   refusal(db: Database, member: Member, now: Date): Promise<MeteringRefusal | null>;
-  // Running time the computer service booked after the fact to the member's computer, inside the transaction that
-  // recorded it.
-  charge(tx: Transaction, member: Member, seconds: number, now: Date): Promise<void>;
+  // Running time the computer service booked after the fact to the member's computer, at the size the computer runs
+  // at (COMPUTER_SIZES), inside the transaction that recorded it.
+  charge(tx: Transaction, member: Member, seconds: number, now: Date, size: ComputerSize): Promise<void>;
 };
 export const noMetering: Metering = {
   usage: async () => null,

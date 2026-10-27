@@ -127,6 +127,7 @@ describe('API routes', () => {
       ['GET', '/computer'],
       ['DELETE', '/computer'],
       ['POST', '/computer/reset'],
+      ['PUT', '/computer/size'],
       ['POST', '/computer/takeover'],
       ['POST', '/computer/hand-back'],
       ['POST', '/computer/clipboard'],
@@ -529,6 +530,55 @@ describe('API routes', () => {
     });
     expect((await failing('POST', '/computer/reset', { cookie: b })).status).toBe(503);
     expect((await (await request('GET', '/computer', { cookie: b })).json()).computer).not.toBeNull();
+  });
+
+  it('Computer size chooses the main computer size, resetting one of another size, for the caller only', async () => {
+    const request = client();
+    const a = await identity('a');
+    const b = await identity('b');
+    for (const body of [null, {}, { size: '3x' }, { size: '2x', member: 'other' }])
+      expect((await request('PUT', '/computer/size', { cookie: a, body })).status).toBe(400);
+    // Before a computer exists, only the choice changes.
+    const chosen = await request('PUT', '/computer/size', { cookie: a, body: { size: '2x' } });
+    expect(chosen.status).toBe(200);
+    expect(await chosen.json()).toEqual({ size: '2x', reset: false });
+    for (const userId of ['a', 'b'])
+      await openComputerSession(
+        db,
+        { provider: fake.provider, metering: noMetering },
+        { ...(await member(userId)), clientId: 'agent-client' },
+      );
+    expect(fake.calls.sizes).toEqual(['2x', '1x']);
+    expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
+      size: '2x',
+      computer: { size: '2x' },
+    });
+    // Another size resets the caller's computer and its fork, never another user's.
+    const changed = await request('PUT', '/computer/size', { cookie: a, body: { size: '4x' } });
+    expect(await changed.json()).toEqual({ size: '4x', reset: true });
+    expect(fake.calls.kill).toBe(2);
+    expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
+      size: '4x',
+      computer: null,
+    });
+    expect(await (await request('GET', '/computer', { cookie: b })).json()).toMatchObject({
+      size: '1x',
+      computer: { status: 'ready', size: '1x' },
+    });
+    // A provider failure keeps the computer, and choosing the size again resets it.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failing = client({
+      ...fake.provider,
+      kill: async () => {
+        throw new Error('provider down');
+      },
+    });
+    expect((await failing('PUT', '/computer/size', { cookie: b, body: { size: '2x' } })).status).toBe(503);
+    expect((await (await request('GET', '/computer', { cookie: b })).json()).computer).not.toBeNull();
+    expect(await (await request('PUT', '/computer/size', { cookie: b, body: { size: '2x' } })).json()).toEqual({
+      size: '2x',
+      reset: true,
+    });
   });
 
   it('report the computer, busy only while an agent holds one of its forks', async () => {

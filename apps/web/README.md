@@ -54,14 +54,14 @@ Set at least one sign-in method; the app refuses to start without one, or with o
 
 ## Your own computer template
 
-The published template, `agent-computers-desktop`, is built from this repository's main branch and rebuilt weekly for current Chrome; computers bring its helper scripts to your checkout's version when they open. To run your own instead, build it into your E2B team. E2B finds a template by name in your own team first, so new computers then start from yours:
+The published template, `agent-computers-desktop`, is built from this repository's main branch and rebuilt weekly for current Chrome, once per computer size (`agent-computers-desktop-2x` and `-4x` for the larger ones); computers bring its helper scripts to your checkout's version when they open. To run your own instead, build it into your E2B team. E2B finds a template by name in your own team first, so new computers then start from yours:
 
 ```sh
 bun install
 E2B_API_KEY=e2b_your_key bun run computer:template
 ```
 
-To build and use another name, set `E2B_COMPUTER_TEMPLATE` for both. Existing computers keep the template they started from until you reset them on the Computer page.
+The build makes every size. To build and use another name, set `E2B_COMPUTER_TEMPLATE` for both. Existing computers keep the template they started from until you reset them, or change their size, on the Computer page.
 
 ## Without Docker
 

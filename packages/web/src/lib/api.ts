@@ -1,4 +1,5 @@
 import type { SyncChange, SyncSettings } from '@agent-computers/capture';
+import type { ComputerSize } from '@agent-computers/computer';
 import type { AgentKind } from '@agent-computers/server/agents';
 import type { ConnectedBrowser } from '@agent-computers/server/browsers';
 import { HEARTBEAT_MS } from '@agent-computers/server/computer-timing';
@@ -19,7 +20,15 @@ export type ComputerView = {
     estimate?: string;
   } | null;
   capture: { completedAt: string; uploadedAt: string; cookieCount: number } | null;
-  computer: { status: string; busy: boolean; inLiveView: boolean; appliedCaptureAt: string | null } | null;
+  // The size the member chose; the main computer runs at its own, which a change of size resets onto the new one.
+  size: ComputerSize;
+  computer: {
+    status: string;
+    size: ComputerSize;
+    busy: boolean;
+    inLiveView: boolean;
+    appliedCaptureAt: string | null;
+  } | null;
   // Agents' forks of it that are not paused.
   forks: ForkView[];
 };

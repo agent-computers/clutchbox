@@ -1,7 +1,9 @@
 'use client';
+import { COMPUTER_SIZE_NAMES, COMPUTER_SIZES, type ComputerSize } from '@agent-computers/computer';
 import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
 import { Button } from '@agent-computers/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type ComputerView, computerQuery, grantsQuery } from '../lib/api';
@@ -11,7 +13,7 @@ import { AppPage } from './app-shell';
 import { LiveViewPanel } from './live-view';
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-// The Computer page: status and usage, live view in place, and reset.
+// The Computer page: status and usage, live view in place, size, and reset.
 export function YourComputer() {
   const { data: view, isError } = useQuery(computerQuery);
   return (
@@ -34,6 +36,7 @@ export function YourComputer() {
                 : null
             }
           />
+          <ComputerSizeCard view={view} />
           {view.computer && <ResetComputer />}
         </>
       ) : (
@@ -93,6 +96,83 @@ function ComputerStats({ view }: { view: ComputerView }) {
           <span className="text-xs text-muted-foreground">{stat.note}</span>
         </div>
       ))}
+    </Card>
+  );
+}
+
+const sizeLabel = (size: ComputerSize) =>
+  `${COMPUTER_SIZES[size].cpuCount} vCPUs · ${COMPUTER_SIZES[size].memoryMB / 1024} GB`;
+// Chooses the main computer's size. A computer keeps its size, so changing it resets an existing computer onto the new
+// one, after a confirmation; with no computer yet it only sets the size the first one is created at.
+function ComputerSizeCard({ view }: { view: ComputerView }) {
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState<ComputerSize | null>(null);
+  const change = useMutation({
+    mutationFn: (size: ComputerSize) => api('/computer/size', 'PUT', { size }),
+    onSuccess: () => {
+      setPending(null);
+      return queryClient.invalidateQueries({ queryKey: computerQuery.queryKey });
+    },
+  });
+  const current = view.computer?.size ?? view.size;
+  const shown = pending ?? current;
+  return (
+    <Card id="size" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>
+          <h2>Computer size</h2>
+        </CardTitle>
+        <CardDescription>
+          More CPUs and memory for heavy sites and many tabs.
+          {view.usage &&
+            ` A larger computer uses your ${view.usage.name} at its multiple: a 2x computer uses them twice as fast.`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <ToggleGroup
+          aria-label="Computer size"
+          variant="outline"
+          spacing={0}
+          value={[shown]}
+          disabled={change.isPending}
+          onValueChange={([next]) => {
+            if (!next || next === shown) return;
+            change.reset();
+            const size = next as ComputerSize;
+            if (size === current) setPending(null);
+            else if (view.computer) setPending(size);
+            else change.mutate(size);
+          }}
+        >
+          {COMPUTER_SIZE_NAMES.map(size => (
+            <ToggleGroupItem key={size} value={size} className="h-auto flex-col items-start gap-0 px-4 py-2">
+              <span className="font-medium">{size}</span>
+              <span className="text-xs text-muted-foreground">{sizeLabel(size)}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        {pending && (
+          <div className="grid gap-3 rounded-lg bg-muted p-4">
+            <p className="text-sm">
+              Changing to {pending} resets your computer onto the new size. Its files and every sign-in made on it are
+              deleted, and an agent using it now stops. Your synced sites come back the next time an agent opens it.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="destructive" disabled={change.isPending} onClick={() => change.mutate(pending)}>
+                {change.isPending ? 'Changing…' : `Change to ${pending}`}
+              </Button>
+              <Button variant="secondary" disabled={change.isPending} onClick={() => setPending(null)}>
+                Keep {current}
+              </Button>
+            </div>
+          </div>
+        )}
+        {change.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{change.error.message}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
     </Card>
   );
 }

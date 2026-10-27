@@ -1,6 +1,6 @@
 import type { CdpCookieParam } from '@agent-computers/apply';
 import { siteOfHost } from '@agent-computers/capture';
-import { FIRST_PROFILE } from '@agent-computers/computer';
+import { type ComputerSize, FIRST_PROFILE } from '@agent-computers/computer';
 import type { ComputerAction, ComputerProvider } from './computers';
 
 const cookieHost = (cookie: CdpCookieParam) => cookie.domain ?? new URL(cookie.url!).hostname;
@@ -53,6 +53,8 @@ export function fakeComputerProvider() {
     sync: 0,
     pause: 0,
     timeouts: [] as number[],
+    // The size of each computer created.
+    sizes: [] as ComputerSize[],
     // A connected session's setTimeout, and the provider's own (which never wakes a computer).
     setTimeouts: [] as number[],
     providerTimeouts: [] as number[],
@@ -98,9 +100,10 @@ export function fakeComputerProvider() {
     async find(computerId) {
       return [...sandboxes].find(([, sandbox]) => sandbox.computerId === computerId)?.[0] ?? null;
     },
-    async create(computerId, timeoutMs) {
+    async create(computerId, timeoutMs, size) {
       calls.create++;
       calls.timeouts.push(timeoutMs);
+      calls.sizes.push(size);
       await new Promise(resolve => setTimeout(resolve, createDelayMs));
       const id = `sandbox-${++made}`;
       sandboxes.set(id, {

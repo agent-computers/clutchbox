@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { FIRST_PROFILE } from '@agent-computers/computer';
+import { type ComputerSize, FIRST_PROFILE } from '@agent-computers/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -27,6 +27,7 @@ import {
   MAX_CLIPBOARD_BYTES,
   openComputerSession,
   SESSION_ID_PATTERN,
+  setComputerSize,
   setLiveViewClipboard,
   sweepForks,
   takeOverComputer,
@@ -48,13 +49,13 @@ let pg: PGlite;
 let db: Database;
 let fake: ReturnType<typeof fakeComputerProvider>;
 // The metering hook as the computer service sees it: what it charged, by UTC month, and a refusal tests turn on.
-let charges: { membershipId: number; month: string; seconds: number }[];
+let charges: { membershipId: number; month: string; seconds: number; size: ComputerSize }[];
 let refusal: MeteringRefusal | null;
 const metering: Metering = {
   usage: async () => null,
   refusal: async () => refusal,
-  charge: async (_tx, { membershipId }, seconds, now) => {
-    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds });
+  charge: async (_tx, { membershipId }, seconds, now, size) => {
+    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds, size });
   },
 };
 let computers: Computers;
@@ -192,7 +193,7 @@ describe('main computer', () => {
         updatedAt: new Date(Date.now() - 10 * 60_000),
       })
       .returning();
-    await fake.provider.create(row!.publicId, 60_000);
+    await fake.provider.create(row!.publicId, 60_000, '1x');
     await open(a);
     expect(fake.calls.create).toBe(1);
     expect(await mainRow()).toMatchObject({ status: 'ready', sandboxId: 'sandbox-1' });
@@ -255,6 +256,40 @@ describe('main computer', () => {
     expect(fake.calls.kill).toBe(1);
     expect([...fake.sandboxes.keys()]).toEqual(['recorded-elsewhere', 'sandbox-2']);
     expect(await mainRow()).toMatchObject({ status: 'ready', sandboxId: 'recorded-elsewhere' });
+  });
+});
+
+describe('sizes', () => {
+  it("creates the main computer at the member's size, runs its forks and charges at that size, and resets on a change", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    at('2026-10-20T12:00:00Z');
+    const a = await user('a');
+    const b = await user('b');
+    // Chosen before there is a computer: nothing to reset.
+    expect(await setComputerSize(db, fake.provider, a, '2x')).toBe(false);
+    const first = await open(a);
+    expect(fake.calls.sizes).toEqual(['2x']);
+    expect((await db.select({ size: schema.computers.size }).from(schema.computers)).map(row => row.size)).toEqual([
+      '2x',
+      '2x',
+    ]);
+    expect(await computerView(db, metering, a)).toMatchObject({ size: '2x', computer: { size: '2x' } });
+    // The fork's running time is charged at its size.
+    at('2026-10-20T12:00:30Z');
+    expect(await use(a, first.sessionId)).not.toHaveProperty('error');
+    expect(new Set(charges.map(charge => charge.size))).toEqual(new Set(['2x']));
+    // Another member keeps the default.
+    await open(b);
+    expect(fake.calls.sizes).toEqual(['2x', '1x']);
+    // The same size changes nothing; another resets main and its fork, and the next open creates it at the new size.
+    expect(await setComputerSize(db, fake.provider, a, '2x')).toBe(false);
+    expect(fake.calls.kill).toBe(0);
+    expect(await setComputerSize(db, fake.provider, a, '4x')).toBe(true);
+    expect(fake.calls.kill).toBe(2);
+    expect(await computerView(db, metering, a)).toMatchObject({ size: '4x', computer: null });
+    await open(a);
+    expect(fake.calls.sizes).toEqual(['2x', '1x', '4x']);
+    expect(await computerView(db, metering, b)).toMatchObject({ size: '1x', computer: { size: '1x' } });
   });
 });
 

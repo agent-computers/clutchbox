@@ -1,5 +1,6 @@
+import { COMPUTER_SIZE_NAMES, COMPUTER_SIZES, type ComputerSize } from '@agent-computers/computer';
 import { type BuildOptions, Template, waitForURL } from 'e2b';
-import { HELPER_DIR, REVISION, REVISION_FILE, TEMPLATE, writeHelpers } from './index';
+import { HELPER_DIR, REVISION, REVISION_FILE, TEMPLATE, templateFor, writeHelpers } from './index';
 
 // The E2B template computers start from: E2B Desktop plus current Chrome, Node for the helpers, and the helpers
 // themselves. Its snapshot already runs the desktop and Chrome, so a new computer is ready when create returns.
@@ -22,11 +23,23 @@ export const computerTemplate = () =>
     .setUser('user')
     .setStartCmd(`${HELPER_DIR}/start-desktop.sh`, waitForURL('http://127.0.0.1:9222/json/version'));
 
-// Builds the template into the E2B team of E2B_API_KEY, under `name`. Two CPUs and 4 GB run Chrome on real pages.
+// Builds the template into the E2B team of E2B_API_KEY, under `name`, once for each size (COMPUTER_SIZES), since E2B
+// fixes a computer's CPUs and memory at build. The sizes share the recipe, so builds after the first reuse its layers.
 export async function buildComputerTemplate(
   name = process.env.E2B_COMPUTER_TEMPLATE || TEMPLATE,
   options: Pick<BuildOptions, 'onBuildLogs'> = {},
+  sizes: readonly ComputerSize[] = COMPUTER_SIZE_NAMES,
 ) {
-  const info = await Template.build(computerTemplate(), name, { cpuCount: 2, memoryMB: 4096, ...options });
-  return { template: info.name ?? name, templateId: info.templateId, buildId: info.buildId };
+  const built = [];
+  for (const size of sizes) {
+    const { cpuCount, memoryMB } = COMPUTER_SIZES[size];
+    const info = await Template.build(computerTemplate(), templateFor(name, size), { cpuCount, memoryMB, ...options });
+    built.push({
+      size,
+      template: info.name ?? templateFor(name, size),
+      templateId: info.templateId,
+      buildId: info.buildId,
+    });
+  }
+  return built;
 }

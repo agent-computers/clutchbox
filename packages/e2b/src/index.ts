@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   type ComputerProvider,
   type ComputerSession,
+  type ComputerSize,
   DISPLAY,
   type ExecResult,
   FIRST_PROFILE,
@@ -43,6 +44,8 @@ export const HELPER_DIR = '/opt/agent-computers';
 // (template.ts) gets that one; any other team gets the public one Clutchbox builds from this repository's main
 // branch, weekly for current Chrome. Refresh brings either's helpers to this checkout's REVISION on open.
 export const TEMPLATE = 'agent-computers-desktop';
+// Each size's template: the 1x computer keeps the bare name, and a larger size adds its own (template.ts builds them all).
+export const templateFor = (template: string, size: ComputerSize) => (size === '1x' ? template : `${template}-${size}`);
 const OUTPUT_LIMIT = 32_000;
 const clip = (text: string) => (text.length > OUTPUT_LIMIT ? text.slice(0, OUTPUT_LIMIT) : text);
 const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
@@ -707,9 +710,10 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
       return found?.sandboxId ?? null;
     },
     // E2B pauses (memory included) when timeoutMs lapses without another connect.
-    async create(computerId, timeoutMs) {
-      // The template's snapshot already runs the desktop and Chrome (START_DESKTOP).
-      const sandbox = await BaseSandbox.create(template, createOptions(computerId, timeoutMs));
+    async create(computerId, timeoutMs, size) {
+      // The template's snapshot already runs the desktop and Chrome (START_DESKTOP). E2B fixes a computer's CPUs and
+      // memory when its template is built, so each size has a template.
+      const sandbox = await BaseSandbox.create(templateFor(template, size), createOptions(computerId, timeoutMs));
       try {
         await sandbox.commands.run(`${HELPER_DIR}/ensure-chrome.sh`, { timeoutMs: ENSURE_CHROME_MS });
       } catch (error) {
@@ -718,7 +722,8 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
       }
       return sandbox.sandboxId;
     },
-    // A snapshot is a template to E2B. Its memory holds the running desktop and Chrome, so there is nothing to start.
+    // A snapshot is a template to E2B, with the source's CPUs and memory. Its memory holds the running desktop and
+    // Chrome, so there is nothing to start.
     // The options replace the source's metadata, so a lookup by the source's computerId never finds a fork.
     async createFromSnapshot(snapshotId, computerId, timeoutMs) {
       return (await BaseSandbox.create(snapshotId, createOptions(computerId, timeoutMs))).sandboxId;

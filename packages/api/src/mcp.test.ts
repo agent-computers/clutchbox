@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { e2bComputerProvider } from '@agent-computers/e2b';
+import type { ComputerSize } from '@agent-computers/server/computers';
 import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { and, asc, eq, isNull } from 'drizzle-orm';
@@ -1342,10 +1343,10 @@ describe('agent connections and setup', () => {
       });
       const provider = {
         ...fake.provider,
-        async create(computerId: string, timeoutMs: number) {
+        async create(computerId: string, timeoutMs: number, size: ComputerSize) {
           creating();
           await revoked;
-          return fake.provider.create(computerId, timeoutMs);
+          return fake.provider.create(computerId, timeoutMs, size);
         },
       };
       endpoint = createMcpEndpoint({ db, auth, origin, computers: provider });

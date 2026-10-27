@@ -53,6 +53,16 @@ export type ComputerAction = z.infer<typeof actionSchema>;
 // A Chrome profile on a computer: its own user data directory, so its cookies and storage stay apart from every other
 // profile's. Names are the caller's, in characters a shell passes through unquoted. FIRST_PROFILE is the directory a
 // computer's Chrome ran before profiles, which the first profile a computer gets keeps.
+// Computer sizes, each named by its multiple of the 1x computer's CPUs and memory. Two CPUs and 4 GB run Chrome on real
+// pages; the larger sizes are for heavier sites and more tabs. A computer keeps the size it was created at, and a fork
+// its main computer's, since a fork starts from the main computer's memory.
+export const COMPUTER_SIZES = {
+  '1x': { multiple: 1, cpuCount: 2, memoryMB: 4096 },
+  '2x': { multiple: 2, cpuCount: 4, memoryMB: 8192 },
+  '4x': { multiple: 4, cpuCount: 8, memoryMB: 16384 },
+} as const;
+export type ComputerSize = keyof typeof COMPUTER_SIZES;
+export const COMPUTER_SIZE_NAMES = Object.keys(COMPUTER_SIZES) as [ComputerSize, ...ComputerSize[]];
 export const PROFILE_PATTERN = /^[a-z0-9_]{1,64}$/;
 export const FIRST_PROFILE = 'default';
 export type ExecResult = {
@@ -115,9 +125,10 @@ export interface ComputerProvider {
   // Reconciles a create whose response was lost: provider metadata carries the computer's public ID.
   find(computerId: string): Promise<string | null>;
   // timeoutMs: the provider pauses the computer this long after the call unless called again.
-  create(computerId: string, timeoutMs: number): Promise<string>;
+  create(computerId: string, timeoutMs: number, size: ComputerSize): Promise<string>;
   // A fork: a new computer from a snapshot, with its memory, so the browser runs as it did when the snapshot was
-  // taken. Paused after timeoutMs like create, and found by its own computerId.
+  // taken, at the size of the computer it was taken from. Paused after timeoutMs like create, and found by its own
+  // computerId.
   createFromSnapshot(snapshotId: string, computerId: string, timeoutMs: number): Promise<string>;
   // Snapshots a computer's memory and disk and returns the snapshot's ID. A paused computer is resumed first and then
   // runs until timeoutMs from now; a running one pauses briefly, and every connection to it drops.
