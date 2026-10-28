@@ -1,0 +1,45 @@
+name: Publish CLI
+
+# Run by hand (Actions > Publish CLI > Run workflow, on main) after bumping packages/cli/package.json. It checks the
+# commit, then publishes `clutchbox` to npm with provenance. npm trusts this workflow on main (trusted publishing), so
+# no token is stored here; the package's first version was published by hand, since npm trusts a workflow only for a
+# package that exists.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publish-cli
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: check
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+    steps:
+      - if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Publish from main, not $GITHUB_REF."
+          exit 1
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Check the version is new
+        working-directory: packages/cli
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "clutchbox@$version" version > /dev/null 2>&1; then
+            echo "clutchbox $version is already on npm; bump packages/cli/package.json first."
+            exit 1
+          fi
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+      - working-directory: packages/cli
+        run: npm publish --provenance --access public

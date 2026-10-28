@@ -107,6 +107,17 @@
         "zod": "4.6.7",
       },
     },
+    "packages/cli": {
+      "name": "clutchbox",
+      "version": "0.1.0",
+      "bin": {
+        "clutchbox": "dist/clutchbox.js",
+      },
+      "devDependencies": {
+        "@clutchbox/server": "workspace:*",
+        "@types/node": "24.19.2",
+      },
+    },
     "packages/computer": {
       "name": "@clutchbox/computer",
       "version": "0.1.0",
@@ -829,6 +840,8 @@
     "cliui": ["cliui@8.0.1", "", { "dependencies": { "string-width": "^4.2.0", "strip-ansi": "^6.0.1", "wrap-ansi": "^7.0.0" } }, "sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ=="],
 
     "clsx": ["clsx@2.1.1", "", {}, "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA=="],
+
+    "clutchbox": ["clutchbox@workspace:packages/cli"],
 
     "cn": ["cn@0.4.0", "", { "bin": { "cn": "bin/cn.mjs" } }, "sha512-qOAeUhPwPzBxx6jaeQdo646XIKliKHc2j1ZF7Ngb1o0pJZKH5gq8FkA0aVdUdPFUDXNXyUCXpCtoJISo6dhizg=="],
 

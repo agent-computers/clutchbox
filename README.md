@@ -110,6 +110,7 @@ Then sign in at <http://localhost:3000>, with the link from Mailpit at <http://l
 | --- | --- |
 | [`apps/extension`](apps/extension) | The Chrome extension (Manifest V3) that captures the sites you authorize and syncs them to your server. |
 | [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP. [`Dockerfile`](Dockerfile) and [`compose.yaml`](compose.yaml) run it with Postgres. |
+| [`packages/cli`](packages/cli) | `npx clutchbox`: connects Claude Code and Codex to a Clutchbox server and opens setup. |
 | [`packages/sdk`](packages/sdk) | The TypeScript SDK for the developer REST API: members' latest captures, and computer sessions driven over CDP. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |

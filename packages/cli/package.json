@@ -1,0 +1,41 @@
+{
+  "name": "clutchbox",
+  "version": "0.1.0",
+  "description": "Connect Claude Code and Codex to Clutchbox, so your agents work in a browser that's already signed in as you.",
+  "keywords": [
+    "mcp",
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "browser",
+    "logged-in"
+  ],
+  "homepage": "https://www.clutchbox.dev",
+  "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
+  "author": "Clutchbox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clutchbox-hq/clutchbox.git",
+    "directory": "packages/cli"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "clutchbox": "dist/clutchbox.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18.3"
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --target node --outfile dist/clutchbox.js",
+    "prepublishOnly": "bun run build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@clutchbox/server": "workspace:*",
+    "@types/node": "24.19.2"
+  }
+}

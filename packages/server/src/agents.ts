@@ -9,6 +9,25 @@ export const agentClients: Record<AgentKind, readonly string[]> = {
   codex: ['https://chatgpt.com/oauth/codex/client.json'],
   chatgpt: ['https://chatgpt.com/oauth/client.json'],
 };
+// The commands that add the MCP server to the agents that have a CLI, as arguments. The Agents page shows them and
+// `npx clutchbox` runs them, so both stay the same. Claude Code's user scope makes the server work in every project,
+// not just the directory the command ran in.
+export const mcpServerName = 'clutchbox';
+export const agentAddCommands = {
+  'claude-code': (mcpUrl: string) => [
+    'claude',
+    'mcp',
+    'add',
+    '--transport',
+    'http',
+    '--scope',
+    'user',
+    mcpServerName,
+    mcpUrl,
+  ],
+  codex: (mcpUrl: string) => ['codex', 'mcp', 'add', mcpServerName, '--url', mcpUrl],
+} satisfies Partial<Record<AgentKind, (mcpUrl: string) => string[]>>;
+
 // Codex also serves one document per local callback.
 const codexCallbackClient = /^https:\/\/chatgpt\.com\/oauth\/codex\/[A-Za-z0-9_-]+\/client\.json$/;
 

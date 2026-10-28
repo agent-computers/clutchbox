@@ -1,4 +1,4 @@
-import type { AgentKind } from '@clutchbox/server/agents';
+import { type AgentKind, agentAddCommands, mcpServerName } from '@clutchbox/server/agents';
 import { buttonVariants } from '@clutchbox/ui/components/button';
 import { Input } from '@clutchbox/ui/components/input';
 import type { ReactNode } from 'react';
@@ -24,10 +24,10 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
       <ol className="grid list-decimal gap-3 pl-5 text-sm text-foreground">
         <li>
           In a terminal, run:
-          <Command label="Claude Code command" command={`claude mcp add --transport http clutchbox ${mcpUrl}`} />
+          <Command label="Claude Code command" command={agentAddCommands['claude-code'](mcpUrl).join(' ')} />
         </li>
         <li>
-          In Claude Code, run <code className="text-foreground">/mcp</code>, choose {strong('clutchbox')}, then{' '}
+          In Claude Code, run <code className="text-foreground">/mcp</code>, choose {strong(mcpServerName)}, then{' '}
           {strong('Authenticate')}, and allow the connection in your browser.
         </li>
       </ol>
@@ -62,11 +62,11 @@ export const agents: { kind: AgentKind; name: string; steps: (mcpUrl: string) =>
       <ol className="grid list-decimal gap-3 pl-5 text-sm text-foreground">
         <li>
           In a terminal, run:
-          <Command label="Codex command" command={`codex mcp add clutchbox --url ${mcpUrl}`} />
+          <Command label="Codex command" command={agentAddCommands.codex(mcpUrl).join(' ')} />
         </li>
         <li>
           Follow the browser prompt to sign in and allow the connection. If sign-in did not complete, run:
-          <Command label="Codex sign-in command" command="codex mcp login clutchbox" />
+          <Command label="Codex sign-in command" command={`codex mcp login ${mcpServerName}`} />
         </li>
       </ol>
     ),
