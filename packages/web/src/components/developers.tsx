@@ -78,9 +78,8 @@ function ApiKeys({ organizationId }: { organizationId: string }) {
           <h2>API keys</h2>
         </CardTitle>
         <CardDescription>
-          A key lets your servers read any member's latest synced sign-ins over the REST API, to use in your own
-          browsers, and open sessions on copies of their computer, already signed in, that your agents drive over CDP.
-          Members agreed to this when they joined. Keep keys secret, and delete one you no longer use.
+          Your servers read members' synced sign-ins over REST, or open signed-in copies of their computers to drive
+          over CDP. Members agreed to this when they joined. Keep keys secret.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

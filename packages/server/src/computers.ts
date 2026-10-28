@@ -174,7 +174,8 @@ async function creditFailure(metering: Metering, db: Database, member: Member): 
   return refusal && { error: 'credit_exhausted', ...refusal };
 }
 // Metering after the fact: books the computer's running time since the last meter, up to when the provider was due
-// to pause it, to the metering hook, then records `runsUntil`, when the provider will now pause it. A `runsUntil`
+// to pause it, to the member's month (computer_usage.run_seconds) and the metering hook, then records `runsUntil`,
+// when the provider will now pause it. A `runsUntil`
 // already past means the provider paused the computer then, so that pause is booked too. Nothing is charged ahead or
 // refunded, so the credit can be overshot by the calls and live-view holds already running when it runs out, and time
 // since the last meter (at most the idle minute after the last call), with its pause, is booked at the next one.
@@ -197,8 +198,18 @@ async function meter(tx: Transaction, metering: Metering, computerId: number, me
     .update(schema.computers)
     .set({ billedUntil: row.billedUntil && row.billedUntil > now ? row.billedUntil : now, runsUntil })
     .where(eq(schema.computers.id, computerId));
+  if (seconds > 0)
+    await tx
+      .insert(schema.computerUsage)
+      .values({ membershipId: member.membershipId, month: monthOf(now), runSeconds: seconds })
+      .onConflictDoUpdate({
+        target: [schema.computerUsage.membershipId, schema.computerUsage.month],
+        set: { runSeconds: sql`${schema.computerUsage.runSeconds} + ${seconds}` },
+      });
   if (seconds > 0 || pauses > 0) await metering.charge(tx, member, seconds, now, row.size, pauses);
 }
+// The first of the date's UTC calendar month, as computer_usage.month keys it.
+const monthOf = (date: Date) => `${date.toISOString().slice(0, 7)}-01`;
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
 // The provider runs a computer until timeoutMs after the latest create/connect. Called before the provider call, so
@@ -2211,7 +2222,8 @@ export async function computerView(
   { metering, accounts }: Pick<Computers, 'metering' | 'accounts'>,
   member: Member,
 ) {
-  const [[row], [membership], capture, usage, own] = await Promise.all([
+  const month = monthOf(new Date());
+  const [[row], [membership], capture, usage, own, [ran], [calls]] = await Promise.all([
     db
       .select({
         id: schema.computers.id,
@@ -2233,6 +2245,16 @@ export async function computerView(
     captureView(db, member),
     metering.usage(db, member, new Date()),
     accounts?.(db, member.organizationId),
+    db
+      .select({ seconds: schema.computerUsage.runSeconds })
+      .from(schema.computerUsage)
+      .where(and(eq(schema.computerUsage.membershipId, member.membershipId), eq(schema.computerUsage.month, month))),
+    db
+      .select({ count: sql`count(*)`.mapWith(Number) })
+      .from(schema.toolCalls)
+      .where(
+        and(eq(schema.toolCalls.membershipId, member.membershipId), gte(schema.toolCalls.startedAt, new Date(month))),
+      ),
   ]);
   const now = new Date();
   // Agents work in forks: busy while one of them holds a fork. Live view lists the forks that are not paused.
@@ -2250,6 +2272,8 @@ export async function computerView(
     size: membership?.computerSize ?? '1x',
     // Where the member's computers run.
     account: accountOf(!!own),
+    // This UTC month's running time of the member's computers, forks included, rounded up to the minute, and MCP calls.
+    month: { minutes: Math.ceil((ran?.seconds ?? 0) / 60), mcpCalls: calls?.count ?? 0 },
     // Without a credit (hooks.ts), null.
     usage: usage && {
       cost: usage.cost,

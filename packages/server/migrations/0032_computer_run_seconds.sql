@@ -1,0 +1,1 @@
+ALTER TABLE "computer_usage" ADD COLUMN "run_seconds" integer DEFAULT 0 NOT NULL;

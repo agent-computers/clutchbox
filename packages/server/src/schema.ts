@@ -606,7 +606,8 @@ export const syncSettings = pgTable('sync_settings', {
   sealed: text('sealed').notNull(),
   ...timestamps(),
 });
-// Computer seconds charged per member per UTC calendar month, as the metering hook (hooks.ts) books them.
+// Computer time per member per UTC calendar month: the seconds the metering hook (hooks.ts) charged, in its own units,
+// and the seconds the member's computers ran, which the computer service books (computers.ts, meter) under any hooks.
 export const computerUsage = pgTable(
   'computer_usage',
   {
@@ -617,6 +618,7 @@ export const computerUsage = pgTable(
     // Seconds on the organization's own provider account (provider_accounts), which bills it directly: recorded, never
     // spent from a credit or charged.
     ownAccountSeconds: integer('own_account_seconds').notNull().default(0),
+    runSeconds: integer('run_seconds').notNull().default(0),
     ...timestamps(),
   },
   table => [unique('computer_usage_membership_month_unique').on(table.membershipId, table.month)],

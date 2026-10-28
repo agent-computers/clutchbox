@@ -55,8 +55,8 @@ export function ConnectApps() {
           <h2>Connect apps</h2>
         </CardTitle>
         <CardDescription>
-          Your app sends people here to sign in, join this organization, and connect their browser, then gets back their
-          member ID over OAuth (scope <code>connect</code>, PKCE). Read their synced sites with an API key.
+          Your app sends people here to join and connect their browser, then gets their member ID over OAuth (scope{' '}
+          <code>connect</code>, PKCE).
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

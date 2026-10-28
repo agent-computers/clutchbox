@@ -1068,6 +1068,37 @@ describe('per-call hold and metering', () => {
     await opened.done();
     expect(await used(a)).toEqual([['2026-11-01', 40]]);
   });
+  it("shows the month's running minutes and MCP calls under the default hooks, for the member only", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    at('2026-10-20T12:00:00Z');
+    const a = await user('a');
+    const b = await user('b');
+    const defaults = { provider: fake.provider, metering: noMetering };
+    const opened = await openComputerSession(db, defaults, caller(a));
+    if ('error' in opened) throw new Error(opened.error);
+    at('2026-10-20T12:01:30Z');
+    await opened.done();
+    const call = (member: Member, startedAt: string) => ({
+      membershipId: member.membershipId,
+      clientId: 'client',
+      tool: 'browser',
+      startedAt: new Date(startedAt),
+      endedAt: new Date(startedAt),
+    });
+    await db
+      .insert(schema.toolCalls)
+      .values([
+        call(a, '2026-09-30T23:59:59Z'),
+        call(a, '2026-10-01T00:00:00Z'),
+        call(a, '2026-10-20T12:00:00Z'),
+        call(b, '2026-10-20T12:00:00Z'),
+      ]);
+    // 90 seconds run rounds up to 2 minutes; September's call isn't this month's.
+    expect((await computerView(db, { metering: noMetering }, a)).month).toEqual({ minutes: 2, mcpCalls: 2 });
+    expect((await computerView(db, { metering: noMetering }, b)).month).toEqual({ minutes: 0, mcpCalls: 1 });
+    at('2026-11-01T00:00:00Z');
+    expect((await computerView(db, { metering: noMetering }, a)).month).toEqual({ minutes: 0, mcpCalls: 0 });
+  });
   it('keeps the longer pause when the provider does not take the shorter timeout', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
