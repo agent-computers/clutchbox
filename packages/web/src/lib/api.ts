@@ -22,7 +22,8 @@ export type ComputerView = {
   } | null;
   capture: { completedAt: string; uploadedAt: string; cookieCount: number } | null;
   // This UTC month's running minutes of the member's computers and their MCP calls.
-  month: { minutes: number; mcpCalls: number };
+  // The billing period, as ISO times, with this member's computer minutes and MCP calls in it.
+  period: { start: string; end: string; minutes: number; mcpCalls: number };
   // The size the member chose; the main computer runs at its own, which a change of size resets onto the new one.
   size: ComputerSize;
   // Where the member's computers run: the organization's own provider account, or the deployment's.

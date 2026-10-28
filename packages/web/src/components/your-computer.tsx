@@ -31,7 +31,7 @@ export function YourComputer() {
             exhausted={
               view.usage?.hardStop && view.usage.usedShare >= 1
                 ? {
-                    message: `This month's computer credit is used up. It resets on ${resetsOn(view.usage.resetsAt)}.`,
+                    message: `The computer credit is used up. It renews on ${resetsOn(view.usage.resetsAt)}.`,
                   }
                 : null
             }
@@ -60,7 +60,7 @@ function ComputerStats({ view }: { view: ComputerView }) {
           {
             label: 'Computer credit',
             value: `${usage.cost} of ${usage.credit}`,
-            note: `This month · resets ${resetsOn(usage.resetsAt)}${usage.estimate ? ` · estimated bill ${usage.estimate}` : ''}`,
+            note: `Since ${resetsOn(view.period.start)} · renews ${resetsOn(usage.resetsAt)}${usage.estimate ? ` · estimated bill ${usage.estimate}` : ''}`,
             bar: usedShare(usage),
           },
         ]

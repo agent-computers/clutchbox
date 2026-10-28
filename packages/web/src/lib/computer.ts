@@ -9,9 +9,9 @@ export const resetsOn = (iso: string) =>
 export const usedShare = ({ usedShare }: NonNullable<ComputerView['usage']>) => Math.min(100, usedShare * 100);
 
 const count = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 1 ? '' : 's'}`;
-// This month's use, such as "42 computer minutes · 318 MCP calls this month".
-export const monthUse = ({ month }: ComputerView) =>
-  `${count(month.minutes, 'computer minute')} · ${count(month.mcpCalls, 'MCP call')} this month`;
+// The billing period's use, such as "42 computer minutes · 318 MCP calls since Oct 1".
+export const periodUse = ({ period }: ComputerView) =>
+  `${count(period.minutes, 'computer minute')} · ${count(period.mcpCalls, 'MCP call')} since ${resetsOn(period.start)}`;
 
 // What the computer is doing, for the sidebar, the overview, and the Computer page.
 export function computerStatus(view: ComputerView) {
@@ -26,7 +26,7 @@ export function computerStatus(view: ComputerView) {
     };
   if (computer.busy)
     return { short: 'In use', note: 'An agent is working on a copy of your computer right now.', dot: 'bg-brand' };
-  if (computer.status === 'ready') return { short: 'Ready', note: monthUse(view), dot: 'bg-foreground' };
+  if (computer.status === 'ready') return { short: 'Ready', note: periodUse(view), dot: 'bg-foreground' };
   return { short: 'Starting', note: 'Your computer is starting.', dot: 'bg-muted-foreground' };
 }
 

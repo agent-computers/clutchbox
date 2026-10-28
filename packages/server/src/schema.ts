@@ -152,9 +152,9 @@ export const organizations = pgTable(
       .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
     joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
-    // Computer minutes a month the deployment allows this organization, for its metering hook; null for its default.
+    // Computer minutes a billing period the deployment allows this organization, for its metering hook; null for its default.
     computerMinutes: integer('computer_minutes'),
-    // The most computer time past its credit the deployment's metering hook may charge this organization in a month, in
+    // The most computer time past its credit the deployment's metering hook may charge this organization in a billing period, in
     // US cents, which its owners can change; null for the deployment's default.
     overageLimitCents: integer('overage_limit_cents'),
     // Forks that may run at once across the organization's members (computers.ts, openComputerSession); null for the
@@ -613,14 +613,18 @@ export const syncSettings = pgTable('sync_settings', {
 // Where a computer runs: the deployment's provider account, or its organization's own (hooks.ts, providerAccount).
 export const COMPUTER_ACCOUNTS = ['deployment', 'organization'] as const;
 // Computer time, the one record of it (computers.ts, meter): the seconds a member's computers ran and the times they
-// paused, per UTC calendar month, size, and account. Minutes are its seconds, and a deployment's metering (hooks.ts)
-// prices it when it reads it, so the two never disagree.
+// paused, per UTC day, size, and account. Minutes are its seconds, and a deployment's metering (hooks.ts) sums the
+// days of its billing period and prices them when it reads them, so the two never disagree.
 export const computerTime = pgTable(
   'computer_time',
   {
     id: id(),
     membershipId: membershipId().notNull(),
-    month: date('month', { mode: 'string' }).notNull(),
+    // The UTC day the time was booked on. Null only on rows the code before it wrote while it deployed, which the
+    // migration that drops `month` fills in.
+    day: date('day', { mode: 'string' }),
+    // Replaced by `day`: the code before it booked by month, so it stays, nullable, until that code is gone.
+    month: date('month', { mode: 'string' }),
     size: text('size', { enum: COMPUTER_SIZE_NAMES }).notNull(),
     account: text('account', { enum: COMPUTER_ACCOUNTS }).notNull(),
     runSeconds: integer('run_seconds').notNull().default(0),
@@ -628,6 +632,7 @@ export const computerTime = pgTable(
     ...timestamps(),
   },
   table => [
+    unique('computer_time_day_unique').on(table.membershipId, table.day, table.size, table.account),
     unique('computer_time_month_unique').on(table.membershipId, table.month, table.size, table.account),
     check('computer_time_size', oneOf(table.size, COMPUTER_SIZE_NAMES)),
     check('computer_time_account', oneOf(table.account, COMPUTER_ACCOUNTS)),

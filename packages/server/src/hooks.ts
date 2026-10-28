@@ -10,7 +10,17 @@ import { type Member, singleOrganization, type Tenancy } from './organizations';
 // no credit, no limits of its own, and no operator admin, its computers come from its own E2B config (providerFromConfig), and it serves
 // one organization that everyone joins.
 
-// A member's computer time this month against a credit. The hook decides what the credit covers: the member, or their
+// The span a deployment meters an organization's computer time in, which its credit covers: whole UTC days, from
+// `start` up to `end`, both midnights UTC. Without a deployment's own, a UTC calendar month.
+export type BillingPeriod = { start: Date; end: Date };
+export const calendarMonth = (now: Date): BillingPeriod => ({
+  start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+  end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
+});
+// A date's UTC day, as computer_time.day books it and billing periods count it.
+export const utcDay = (date: Date) => date.toISOString().slice(0, 10);
+
+// A member's computer time this billing period against a credit. The hook decides what the credit covers: the member, or their
 // whole organization, and words its amounts where they are shown.
 export type Usage = {
   // What the month's computer time cost, the credit, and what is left of it, such as "$0.42".
@@ -19,10 +29,11 @@ export type Usage = {
   creditLeft: string;
   // The share of the credit used, from 0 to 1, for its bar.
   usedShare: number;
+  // The billing period's end, when the credit renews.
   resetsAt: Date;
   // Whether running past the credit is refused (true) or charged (false).
   hardStop: boolean;
-  // The month's estimated charge so far, worded by the deployment, for those who may see it; absent otherwise.
+  // The billing period's estimated charge so far, worded by the deployment, for those who may see it; absent otherwise.
   estimate?: string;
 };
 // Why metering refuses to start or extend a computer's run: shown to agents and the page, with when it lifts.
@@ -30,6 +41,8 @@ export type MeteringRefusal = { message: string; resetsAt: Date };
 // Prices computer time against a credit. The computer service records the time itself (schema.ts, computer_time), so
 // a deployment prices what it reads there and keeps no count of its own.
 export type Metering = {
+  // The member's organization's billing period at `now`, which its usage and the computer's minutes count.
+  period(db: Database, member: Member, now: Date): Promise<BillingPeriod>;
   // The usage the account page and agents show; null without a credit.
   usage(db: Database, member: Member, now: Date): Promise<Usage | null>;
   // Checked before a computer is created, woken, or used, and before live view extends its holds.
@@ -38,6 +51,7 @@ export type Metering = {
   minutePrice?(size: ComputerSize): string;
 };
 export const noMetering: Metering = {
+  period: async (_db, _member, now) => calendarMonth(now),
   usage: async () => null,
   refusal: async () => null,
 };

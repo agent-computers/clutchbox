@@ -40,7 +40,7 @@ import {
   SYNC_SLACK_MS,
 } from './computer-timing';
 import type { Database } from './database';
-import { type Limits, type Metering, noLimits, type ServerHooks } from './hooks';
+import { type Limits, type Metering, noLimits, type ServerHooks, utcDay } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
 import { logError } from './log';
 import type { Member } from './organizations';
@@ -177,7 +177,7 @@ async function creditFailure(metering: Metering, db: Database, member: Member): 
   return refusal && { error: 'credit_exhausted', ...refusal };
 }
 // Metering after the fact: books the computer's running time since the last meter, up to when the provider was due
-// to pause it, to the member's month in computer_time, at the computer's size and account, then records `runsUntil`,
+// to pause it, to the member's UTC day in computer_time, at the computer's size and account, then records `runsUntil`,
 // when the provider will now pause it. A `runsUntil` already past means the provider paused the computer then, so that
 // pause is booked too, since a provider may bill the snapshot it takes. Nothing is charged ahead or refunded, so the
 // credit can be overshot by the calls and live-view holds already running when it runs out, and time since the last
@@ -207,19 +207,17 @@ async function meter(tx: Transaction, account: ComputerAccount, computerId: numb
     .insert(t)
     .values({
       membershipId: member.membershipId,
-      month: monthOf(now),
+      day: utcDay(now),
       size: row.size,
       account,
       runSeconds: Math.max(0, seconds),
       pauses,
     })
     .onConflictDoUpdate({
-      target: [t.membershipId, t.month, t.size, t.account],
+      target: [t.membershipId, t.day, t.size, t.account],
       set: { runSeconds: sql`${t.runSeconds} + ${Math.max(0, seconds)}`, pauses: sql`${t.pauses} + ${pauses}` },
     });
 }
-// The first of the date's UTC calendar month, as computer_time.month keys it.
-const monthOf = (date: Date) => `${date.toISOString().slice(0, 7)}-01`;
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
 // The provider runs a computer until timeoutMs after the latest create/connect. Called before the provider call, so
@@ -2232,7 +2230,8 @@ export async function computerView(
   { metering, accounts }: Pick<Computers, 'metering' | 'accounts'>,
   member: Member,
 ) {
-  const month = monthOf(new Date());
+  const now = new Date();
+  const period = await metering.period(db, member, now);
   const [[row], [membership], capture, usage, own, [ran], [calls]] = await Promise.all([
     db
       .select({
@@ -2253,20 +2252,29 @@ export async function computerView(
       .from(schema.memberships)
       .where(eq(schema.memberships.id, member.membershipId)),
     captureView(db, member),
-    metering.usage(db, member, new Date()),
+    metering.usage(db, member, now),
     accounts?.(db, member.organizationId),
     db
       .select({ seconds: sql`coalesce(sum(${schema.computerTime.runSeconds}), 0)`.mapWith(Number) })
       .from(schema.computerTime)
-      .where(and(eq(schema.computerTime.membershipId, member.membershipId), eq(schema.computerTime.month, month))),
+      .where(
+        and(
+          eq(schema.computerTime.membershipId, member.membershipId),
+          gte(schema.computerTime.day, utcDay(period.start)),
+          lt(schema.computerTime.day, utcDay(period.end)),
+        ),
+      ),
     db
       .select({ count: sql`count(*)`.mapWith(Number) })
       .from(schema.toolCalls)
       .where(
-        and(eq(schema.toolCalls.membershipId, member.membershipId), gte(schema.toolCalls.startedAt, new Date(month))),
+        and(
+          eq(schema.toolCalls.membershipId, member.membershipId),
+          gte(schema.toolCalls.startedAt, period.start),
+          lt(schema.toolCalls.startedAt, period.end),
+        ),
       ),
   ]);
-  const now = new Date();
   // Agents work in forks: busy while one of them holds a fork. Live view lists the forks that are not paused.
   const forks = row ? (await listForks(db, member, now)).filter(fork => fork.status !== 'paused') : [];
   const live = row
@@ -2282,8 +2290,14 @@ export async function computerView(
     size: membership?.computerSize ?? '1x',
     // Where the member's computers run.
     account: accountOf(!!own),
-    // This UTC month's running time of the member's computers, forks included, rounded up to the minute, and MCP calls.
-    month: { minutes: Math.ceil((ran?.seconds ?? 0) / 60), mcpCalls: calls?.count ?? 0 },
+    // The billing period, with the running time of the member's computers in it, forks included, rounded up to the
+    // minute, and their MCP calls.
+    period: {
+      start: period.start.toISOString(),
+      end: period.end.toISOString(),
+      minutes: Math.ceil((ran?.seconds ?? 0) / 60),
+      mcpCalls: calls?.count ?? 0,
+    },
     // Without a credit (hooks.ts), null.
     usage: usage && {
       cost: usage.cost,

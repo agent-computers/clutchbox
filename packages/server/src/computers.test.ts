@@ -52,7 +52,7 @@ let db: Database;
 let fake: ReturnType<typeof fakeComputerProvider>;
 // The metering hook as the computer service sees it: a refusal tests turn on.
 let refusal: MeteringRefusal | null;
-const metering: Metering = { usage: async () => null, refusal: async () => refusal };
+const metering: Metering = { ...noMetering, refusal: async () => refusal };
 let computers: Computers;
 const user = (id: string) => person(db, id);
 const join = (userId: string, organizationId: string) => membership(db, userId, organizationId);
@@ -119,7 +119,7 @@ const profilesOf = (owner: { computerId: number } | { snapshotId: number }) =>
     .orderBy(schema.computerProfiles.id);
 // What the newest computer applied to its first profile.
 const applied = async () => (await profilesOf({ computerId: (await computerRow()).id }))[0]!;
-// The member's computer time as booked: its rows, the seconds run by UTC month, and the pauses.
+// The member's computer time as booked: its rows, the seconds run by UTC day, and the pauses.
 const booked = (member: Member) =>
   db
     .select()
@@ -127,10 +127,10 @@ const booked = (member: Member) =>
     .where(eq(schema.computerTime.membershipId, member.membershipId))
     .orderBy(schema.computerTime.id);
 const used = async (member: Member) => {
-  const months = new Map<string, number>();
+  const days = new Map<string, number>();
   for (const row of (await booked(member)).filter(row => row.runSeconds > 0))
-    months.set(row.month, (months.get(row.month) ?? 0) + row.runSeconds);
-  return [...months];
+    days.set(row.day!, (days.get(row.day!) ?? 0) + row.runSeconds);
+  return [...days];
 };
 const pausesBooked = async (member: Member) => (await booked(member)).reduce((sum, row) => sum + row.pauses, 0);
 const at = (iso: string) => vi.setSystemTime(new Date(iso));
@@ -323,7 +323,7 @@ describe('memberships', () => {
     // Usage is charged to the membership whose computer ran.
     at('2026-10-20T12:00:30Z');
     expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
-    expect(await used(a)).toEqual([['2026-10-01', 30]]);
+    expect(await used(a)).toEqual([['2026-10-20', 30]]);
     expect(await used(team)).toEqual([]);
     // Live view: taking over the team fork leaves the personal one to its agent.
     const page = randomUUID();
@@ -990,13 +990,13 @@ describe('per-call hold and metering', () => {
     expect((await mainRow()).runsUntil).toEqual(new Date('2026-10-20T12:00:00Z'));
     at('2026-10-20T12:00:30Z');
     await use(a, opened.sessionId);
-    expect(await used(a)).toEqual([['2026-10-01', 30]]);
+    expect(await used(a)).toEqual([['2026-10-20', 30]]);
     expect(await pausesBooked(a)).toBe(0);
     // After the computer paused, the next call books the idle minute it ran (to 12:01:30), not the time paused, and
     // the pause itself once, since the provider may bill its snapshot.
     at('2026-10-20T12:05:00Z');
     expect(await use(a, opened.sessionId)).not.toHaveProperty('error');
-    expect(await used(a)).toEqual([['2026-10-01', 90]]);
+    expect(await used(a)).toEqual([['2026-10-20', 90]]);
     expect(await pausesBooked(a)).toBe(1);
     at('2026-10-20T12:05:30Z');
     await use(a, opened.sessionId);
@@ -1020,7 +1020,7 @@ describe('per-call hold and metering', () => {
     expect(fake.calls.setTimeouts).toEqual([60_000, 155_000, 60_000]);
     expect((await computerRow()).runsUntil).toEqual(new Date('2026-10-20T12:02:20Z'));
     // Running from 12:00:00 to the last call's end; the idle minute is booked at the next use.
-    expect(await used(a)).toEqual([['2026-10-01', 80]]);
+    expect(await used(a)).toEqual([['2026-10-20', 80]]);
   });
   it('stops counting a call whose end was lost at its deadline, so later calls pause the computer again', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1055,9 +1055,9 @@ describe('per-call hold and metering', () => {
     await call.done();
     expect((await computerRow()).runsUntil).toEqual(new Date('2026-10-20T12:07:50Z'));
     // The open's idle minute, then the call's 110s, past its 100s budget.
-    expect(await used(a)).toEqual([['2026-10-01', 170]]);
+    expect(await used(a)).toEqual([['2026-10-20', 170]]);
   });
-  it('books running time to the month it is metered in', async () => {
+  it('books running time to the UTC day it is metered on', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-31T23:59:30Z');
     const a = await user('a');
@@ -1067,7 +1067,7 @@ describe('per-call hold and metering', () => {
     await opened.done();
     expect(await used(a)).toEqual([['2026-11-01', 40]]);
   });
-  it("shows the month's running minutes and MCP calls under the default hooks, for the member only", async () => {
+  it("shows the billing period's running minutes and MCP calls under the default hooks, for the member only", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
@@ -1092,11 +1092,21 @@ describe('per-call hold and metering', () => {
         call(a, '2026-10-20T12:00:00Z'),
         call(b, '2026-10-20T12:00:00Z'),
       ]);
-    // 90 seconds run rounds up to 2 minutes; September's call isn't this month's.
-    expect((await computerView(db, { metering: noMetering }, a)).month).toEqual({ minutes: 2, mcpCalls: 2 });
-    expect((await computerView(db, { metering: noMetering }, b)).month).toEqual({ minutes: 0, mcpCalls: 1 });
+    // Without a deployment's metering, the billing period is the UTC month. 90 seconds run rounds up to 2 minutes;
+    // September's call isn't in it.
+    const october = { start: '2026-10-01T00:00:00.000Z', end: '2026-11-01T00:00:00.000Z' };
+    expect((await computerView(db, { metering: noMetering }, a)).period).toEqual({
+      ...october,
+      minutes: 2,
+      mcpCalls: 2,
+    });
+    expect((await computerView(db, { metering: noMetering }, b)).period).toEqual({
+      ...october,
+      minutes: 0,
+      mcpCalls: 1,
+    });
     at('2026-11-01T00:00:00Z');
-    expect((await computerView(db, { metering: noMetering }, a)).month).toEqual({ minutes: 0, mcpCalls: 0 });
+    expect((await computerView(db, { metering: noMetering }, a)).period).toMatchObject({ minutes: 0, mcpCalls: 0 });
   });
   it('keeps the longer pause when the provider does not take the shorter timeout', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1110,7 +1120,7 @@ describe('per-call hold and metering', () => {
     // So the next use books the whole hold as running.
     at('2026-10-20T12:05:00Z');
     await use(a, opened.sessionId);
-    expect(await used(a)).toEqual([['2026-10-01', 160]]);
+    expect(await used(a)).toEqual([['2026-10-20', 160]]);
   });
 });
 
@@ -1130,7 +1140,7 @@ describe('computer_close', () => {
     // Nothing is applied or closed: the next open applies, and the agent comes back to its tabs.
     expect(sandbox()).toMatchObject({ paused: true, tabs: ['https://a.example.com/', 'https://b.example.com/'] });
     expect(fake.calls.sync).toBe(0);
-    expect(await used(a)).toEqual([['2026-10-01', 20]]);
+    expect(await used(a)).toEqual([['2026-10-20', 20]]);
     expect((await computerRow()).runsUntil).toEqual(new Date('2026-10-20T12:00:20Z'));
     expect(await sessionRow(opened.sessionId)).toMatchObject({ endReason: 'closed' });
     for (const action of [useComputerSession, closeComputerSession])
@@ -1162,7 +1172,7 @@ describe('computer_close', () => {
     expect(fake.calls.setTimeouts.at(-1)).toBe(60_000);
     expect((await computerRow()).runsUntil).toEqual(new Date('2026-10-20T12:01:40Z'));
     // Running from 12:00:00 to the call's end.
-    expect(await used(a)).toEqual([['2026-10-01', 40]]);
+    expect(await used(a)).toEqual([['2026-10-20', 40]]);
   });
   it('does not wake a fork that already paused', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1837,7 +1847,7 @@ describe('live view', () => {
     expect(await beat(a, page, 'visible')).toMatchObject({ takeover: { mine: true }, watching: true });
     expect(await computerRow()).toMatchObject({ takeoverUntil: new Date('2026-10-20T12:01:35Z') });
     expect(fake.calls.timeouts).toEqual([60_000, 75_000, 75_000]);
-    expect(await used(a)).toEqual([['2026-10-01', 20]]);
+    expect(await used(a)).toEqual([['2026-10-20', 20]]);
     // Hand-back keeps the page watching, so the computer runs to the watch's lapse, and snapshots it for new forks.
     at('2026-10-20T12:00:30Z');
     await handBackComputer(db, computers, a, page);
@@ -1852,7 +1862,7 @@ describe('live view', () => {
     expect(await beat(a, page, 'released')).toMatchObject({ computer: 'paused', watching: false, takeover: null });
     expect(fake.calls.pause).toBe(1);
     expect(sandbox()).toMatchObject({ paused: true });
-    expect(await used(a)).toEqual([['2026-10-01', 40]]);
+    expect(await used(a)).toEqual([['2026-10-20', 40]]);
   });
   it('wakes a paused fork for a watch, keeps it running past an agent close, and lapses a hidden page', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1880,7 +1890,7 @@ describe('live view', () => {
     expect(fake.calls.pause).toBe(pauses);
     expect(fake.calls.providerTimeouts.at(-1)).toBe(65_000);
     expect((await computerRow()).runsUntil).toEqual(new Date('2026-10-20T12:01:25Z'));
-    expect(await used(a)).toEqual([['2026-10-01', 10]]);
+    expect(await used(a)).toEqual([['2026-10-20', 10]]);
     // Hidden: the watch lapses a minute from now instead, and the provider follows.
     at('2026-10-20T12:00:30Z');
     await beat(a, page, 'visible', fork);
