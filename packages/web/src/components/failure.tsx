@@ -1,5 +1,5 @@
 'use client';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
 import { ApiError } from '../lib/api';
 
 // The server's refusals, in words; any other error shows its own message.

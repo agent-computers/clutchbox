@@ -1,4 +1,4 @@
-import { COMPUTER_SIZE_NAMES, COMPUTER_SIZES, type ComputerSize } from '@agent-computers/computer';
+import { COMPUTER_SIZE_NAMES, COMPUTER_SIZES, type ComputerSize } from '@clutchbox/computer';
 import { type BuildOptions, Template, waitForURL } from 'e2b';
 import { HELPER_DIR, REVISION, REVISION_FILE, TEMPLATE, templateFor, writeHelpers } from './index';
 

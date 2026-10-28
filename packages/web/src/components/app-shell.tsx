@@ -14,7 +14,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
-} from '@agent-computers/ui/components/sidebar';
+} from '@clutchbox/ui/components/sidebar';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ArrowUpRight,

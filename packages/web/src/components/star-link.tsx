@@ -1,4 +1,4 @@
-import { cn } from '@agent-computers/ui/lib/utils';
+import { cn } from '@clutchbox/ui/lib/utils';
 import { formatStars } from '../lib/github';
 import { GitHubMark } from './github-mark';
 

@@ -1,9 +1,4 @@
 'use client';
-// Better Auth UI v1.7.30 ProviderButton, adapted for redirect-only sign-in on the sign-in page.
-// Source: https://github.com/better-auth-ui/better-auth-ui/tree/v1.7.30/examples/start-shadcn-baseui-example/src/components/auth.
-// Upstream MIT license: LICENSE.
-import { Button } from '@agent-computers/ui/components/button';
-import { Spinner } from '@agent-computers/ui/components/spinner';
 import {
   type AuthSocialProvider,
   authMutationKeys,
@@ -13,6 +8,11 @@ import {
   getSafeRedirectTo,
 } from '@better-auth-ui/core';
 import { renderProviderIcon, useAuth, useSignInSocial } from '@better-auth-ui/react';
+// Better Auth UI v1.7.30 ProviderButton, adapted for redirect-only sign-in on the sign-in page.
+// Source: https://github.com/better-auth-ui/better-auth-ui/tree/v1.7.30/examples/start-shadcn-baseui-example/src/components/auth.
+// Upstream MIT license: LICENSE.
+import { Button } from '@clutchbox/ui/components/button';
+import { Spinner } from '@clutchbox/ui/components/spinner';
 import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import { useId, useSyncExternalStore } from 'react';
 

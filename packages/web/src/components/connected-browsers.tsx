@@ -1,7 +1,7 @@
 'use client';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api, type Browser, browsersQuery, computerQuery, setupQuery, syncQuery } from '../lib/api';
 

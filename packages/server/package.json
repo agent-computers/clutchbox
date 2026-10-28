@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/server",
+  "name": "@clutchbox/server",
   "version": "0.1.0",
   "description": "The Clutchbox web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres with its migrations.",
   "homepage": "https://www.clutchbox.dev",
@@ -48,10 +48,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agent-computers/apply": "workspace:*",
-    "@agent-computers/capture": "workspace:*",
-    "@agent-computers/computer": "workspace:*",
-    "@agent-computers/e2b": "workspace:*",
+    "@clutchbox/apply": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
+    "@clutchbox/computer": "workspace:*",
+    "@clutchbox/e2b": "workspace:*",
     "@better-auth/api-key": "1.7.11",
     "@better-auth/cimd": "1.7.11",
     "@better-auth/core": "1.7.11",

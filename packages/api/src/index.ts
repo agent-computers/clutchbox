@@ -10,7 +10,7 @@ import {
   syncChangeSchema,
   syncSettingsSchema,
   verifiedServersPath,
-} from '@agent-computers/capture';
+} from '@clutchbox/capture';
 import {
   apiKeyPrincipal,
   computerCallerForMember,
@@ -19,8 +19,8 @@ import {
   type KeyPrincipal,
   latestCaptureForKey,
   membersForKey,
-} from '@agent-computers/server/api-keys';
-import { type Auth, getPrincipal, signedOAuthClient } from '@agent-computers/server/auth';
+} from '@clutchbox/server/api-keys';
+import { type Auth, getPrincipal, signedOAuthClient } from '@clutchbox/server/auth';
 import {
   BROWSER_ID_PATTERN,
   browserRemoved,
@@ -30,7 +30,7 @@ import {
   type SyncPrincipal,
   signOutBrowser,
   syncPrincipal,
-} from '@agent-computers/server/browsers';
+} from '@clutchbox/server/browsers';
 import {
   adoptSyncSettings,
   changeSyncSettings,
@@ -39,8 +39,8 @@ import {
   profileView,
   saveCapture,
   syncView,
-} from '@agent-computers/server/captures';
-import { CALL_BUDGET_MS, EXEC_MAX_SECONDS, IDLE_PAUSE_MS } from '@agent-computers/server/computer-timing';
+} from '@clutchbox/server/captures';
+import { CALL_BUDGET_MS, EXEC_MAX_SECONDS, IDLE_PAUSE_MS } from '@clutchbox/server/computer-timing';
 import {
   accountRefusal,
   COMPUTER_ID_PATTERN,
@@ -60,7 +60,7 @@ import {
   setLiveViewClipboard,
   takeOverComputer,
   useComputerSession,
-} from '@agent-computers/server/computers';
+} from '@clutchbox/server/computers';
 import {
   CONNECT_APP_ID_PATTERN,
   connectionsForOrganization,
@@ -70,12 +70,12 @@ import {
   joinForConnect,
   listConnectApps,
   MAX_REDIRECT_URIS,
-} from '@agent-computers/server/connect';
-import type { Database } from '@agent-computers/server/database';
-import { heartbeat, heartbeatSchema } from '@agent-computers/server/heartbeat';
-import { defaultServerHooks, noLimits, type ServerHooks } from '@agent-computers/server/hooks';
-import { logError } from '@agent-computers/server/log';
-import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@agent-computers/server/mcp';
+} from '@clutchbox/server/connect';
+import type { Database } from '@clutchbox/server/database';
+import { heartbeat, heartbeatSchema } from '@clutchbox/server/heartbeat';
+import { defaultServerHooks, noLimits, type ServerHooks } from '@clutchbox/server/hooks';
+import { logError } from '@clutchbox/server/log';
+import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@clutchbox/server/mcp';
 import {
   joinableOrganizations,
   joinByDomain,
@@ -86,11 +86,11 @@ import {
   organizationView,
   removeMember,
   setJoinDomains,
-} from '@agent-computers/server/members';
-import { currentMember, organizationOf, organizationsOf, type Tenancy } from '@agent-computers/server/organizations';
-import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@agent-computers/server/setup';
-import { isTimeZone, setTimeZone } from '@agent-computers/server/time-zones';
-import { deleteToolCalls } from '@agent-computers/server/tool-calls';
+} from '@clutchbox/server/members';
+import { currentMember, organizationOf, organizationsOf, type Tenancy } from '@clutchbox/server/organizations';
+import { closeSetupNotice, noteSetupStep, resetSetup, setupView } from '@clutchbox/server/setup';
+import { isTimeZone, setTimeZone } from '@clutchbox/server/time-zones';
+import { deleteToolCalls } from '@clutchbox/server/tool-calls';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';

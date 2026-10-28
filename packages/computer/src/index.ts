@@ -1,4 +1,4 @@
-import type { CdpCookieParam } from '@agent-computers/apply';
+import type { CdpCookieParam } from '@clutchbox/apply';
 import { z } from 'zod';
 
 // What a computer offers, whatever runs it: a provider creates, resumes, and pauses computers, and a session

@@ -3,15 +3,15 @@
 // changing one keeps the rest consistent. Extension capture timings are server-sent config instead
 // (defaultExtensionConfig in packages/capture).
 
-// The E2B adapter's command timings live with it (@agent-computers/e2b/timing), clamped to
+// The E2B adapter's command timings live with it (@clutchbox/e2b/timing), clamped to
 // the budgets set here. These are the ones this service uses too.
-import { CDP_BRIDGE_START_MS, ENSURE_CHROME_MS, STREAM_MARGIN_MS } from '@agent-computers/e2b/timing';
+import { CDP_BRIDGE_START_MS, ENSURE_CHROME_MS, STREAM_MARGIN_MS } from '@clutchbox/e2b/timing';
 
 export {
   STREAM_MARGIN_MS,
   STREAM_START_MS,
   TYPE_KEY_DELAY_MS,
-} from '@agent-computers/e2b/timing';
+} from '@clutchbox/e2b/timing';
 
 // --- Computer sessions and control ---
 
@@ -72,7 +72,7 @@ export const CLIPBOARD_SET_MS = 10_000;
 // --- Live view relay (live-view-relay.ts) ---
 
 // Vercel ends the live-view relay's connection at this route limit: the web app's route manifest
-// (@agent-computers/web) writes it into the /api/v1/live-view route file as the literal `maxDuration` Next.js needs.
+// (@clutchbox/web) writes it into the /api/v1/live-view route file as the literal `maxDuration` Next.js needs.
 // 300 s is valid on every Vercel plan (Hobby's cap); Pro allows up to 800 s if reconnects every 5 minutes cost
 // too much.
 export const LIVE_VIEW_MAX_DURATION_MS = 300_000;
@@ -129,7 +129,7 @@ export const CDP_ENDPOINT_MS = ENSURE_CHROME_MS + CDP_BRIDGE_START_MS + STREAM_M
 
 // --- One MCP tool call ---
 
-// Vercel stops an MCP request at 120 s: the web app's route manifest (@agent-computers/web) writes it into the
+// Vercel stops an MCP request at 120 s: the web app's route manifest (@clutchbox/web) writes it into the
 // /api/mcp and /api/v1 route files as the literal `maxDuration` Next.js needs.
 export const ROUTE_MAX_DURATION_MS = 120_000;
 

@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { buildComputerTemplate } from '@agent-computers/e2b/template';
+import { buildComputerTemplate } from '@clutchbox/e2b/template';
 import { defaultBuildLogger } from 'e2b';
 
 if (!process.env.E2B_API_KEY) {

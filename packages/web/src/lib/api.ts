@@ -1,10 +1,10 @@
-import type { SyncChange, SyncSettings } from '@agent-computers/capture';
-import type { ComputerSize } from '@agent-computers/computer';
-import type { AgentKind } from '@agent-computers/server/agents';
-import type { ConnectedBrowser } from '@agent-computers/server/browsers';
-import { HEARTBEAT_MS } from '@agent-computers/server/computer-timing';
-import type { ForkView, LiveViewStatus } from '@agent-computers/server/computers';
-import type { Role } from '@agent-computers/server/members';
+import type { SyncChange, SyncSettings } from '@clutchbox/capture';
+import type { ComputerSize } from '@clutchbox/computer';
+import type { AgentKind } from '@clutchbox/server/agents';
+import type { ConnectedBrowser } from '@clutchbox/server/browsers';
+import { HEARTBEAT_MS } from '@clutchbox/server/computer-timing';
+import type { ForkView, LiveViewStatus } from '@clutchbox/server/computers';
+import type { Role } from '@clutchbox/server/members';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 

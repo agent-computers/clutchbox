@@ -1,7 +1,8 @@
 'use client';
+import { useCreateOrganization, useSetActiveOrganization } from '@better-auth-ui/react/plugins/organization';
 // Creating an organization adapts Better Auth UI v1.7.30's CreateOrganizationDialog to our shared controls and inline
 // errors, on its hook. MIT license: auth/LICENSE.
-import { Button, buttonVariants } from '@agent-computers/ui/components/button';
+import { Button, buttonVariants } from '@clutchbox/ui/components/button';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@agent-computers/ui/components/dialog';
+} from '@clutchbox/ui/components/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,12 +21,11 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@agent-computers/ui/components/dropdown-menu';
-import { Input } from '@agent-computers/ui/components/input';
-import { Label } from '@agent-computers/ui/components/label';
-import { Spinner } from '@agent-computers/ui/components/spinner';
-import { cn } from '@agent-computers/ui/lib/utils';
-import { useCreateOrganization, useSetActiveOrganization } from '@better-auth-ui/react/plugins/organization';
+} from '@clutchbox/ui/components/dropdown-menu';
+import { Input } from '@clutchbox/ui/components/input';
+import { Label } from '@clutchbox/ui/components/label';
+import { Spinner } from '@clutchbox/ui/components/spinner';
+import { cn } from '@clutchbox/ui/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronsUpDown, LogIn, Plus } from 'lucide-react';
 import { useId, useState } from 'react';

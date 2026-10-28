@@ -58,7 +58,7 @@ import {
   verifiedServersPath,
   verifiedServersSchema,
   within,
-} from '@agent-computers/capture';
+} from '@clutchbox/capture';
 
 // The extension signs in to one account on each server, and holds a list of connections, one for each organization
 // of that account (local storage). Each connection keeps its own copy of the keys below, named

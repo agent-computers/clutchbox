@@ -1,8 +1,8 @@
 'use client';
-import type { SignInMethods as Methods } from '@agent-computers/server/config';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import type { SignInMethods as Methods } from '@clutchbox/server/config';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import { LogOut } from 'lucide-react';
 import { AppPage, useAppUser } from './app-shell';
 import { SignInMethods } from './auth/sign-in-methods';

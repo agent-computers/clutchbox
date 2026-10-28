@@ -1,14 +1,14 @@
 'use client';
 
-import { Button } from '@agent-computers/ui/components/button';
-import { Input } from '@agent-computers/ui/components/input';
-import { Separator } from '@agent-computers/ui/components/separator';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@agent-computers/ui/components/sheet';
-import { Skeleton } from '@agent-computers/ui/components/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@agent-computers/ui/components/tooltip';
-import { useIsMobile } from '@agent-computers/ui/hooks/use-mobile';
 import { mergeProps } from '@base-ui/react/merge-props';
 import { useRender } from '@base-ui/react/use-render';
+import { Button } from '@clutchbox/ui/components/button';
+import { Input } from '@clutchbox/ui/components/input';
+import { Separator } from '@clutchbox/ui/components/separator';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@clutchbox/ui/components/sheet';
+import { Skeleton } from '@clutchbox/ui/components/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@clutchbox/ui/components/tooltip';
+import { useIsMobile } from '@clutchbox/ui/hooks/use-mobile';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from 'cn';
 import { PanelLeftIcon } from 'lucide-react';

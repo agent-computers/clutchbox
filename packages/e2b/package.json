@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/e2b",
+  "name": "@clutchbox/e2b",
   "version": "0.1.0",
   "description": "Computers for AI agents on E2B: a Linux desktop sandbox with Chrome that stays signed in to your sites.",
   "keywords": [
@@ -32,13 +32,13 @@
     "build-template": "node --import tsx scripts/build-template.ts"
   },
   "dependencies": {
-    "@agent-computers/computer": "workspace:*",
+    "@clutchbox/computer": "workspace:*",
     "@e2b/desktop": "2.4.0",
     "e2b": "2.55.0"
   },
   "devDependencies": {
-    "@agent-computers/apply": "workspace:*",
-    "@agent-computers/capture": "workspace:*",
+    "@clutchbox/apply": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
     "@types/node": "24.19.2"
   }
 }

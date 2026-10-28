@@ -1,4 +1,4 @@
-# @agent-computers/capture
+# @clutchbox/capture
 
 The capture format and the sync contract shared by the extension, servers, and agents, as [zod](https://zod.dev) schemas with their TypeScript types.
 

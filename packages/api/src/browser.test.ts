@@ -1,4 +1,4 @@
-import type { SessionHandle } from '@agent-computers/server/computers';
+import type { SessionHandle } from '@clutchbox/server/computers';
 import { describe, expect, it } from 'vitest';
 import { browserAction, missingInput, SNAPSHOT } from './browser';
 

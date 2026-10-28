@@ -1,12 +1,12 @@
 import 'server-only';
-import { type ApiExtension, createApi } from '@agent-computers/api';
-import { createAuth } from '@agent-computers/server/auth';
-import { ensureExtensionClient } from '@agent-computers/server/browsers';
-import { readConfig } from '@agent-computers/server/config';
-import { assertDatabaseEnvironment, createDatabase } from '@agent-computers/server/database';
-import type { ServerHooks } from '@agent-computers/server/hooks';
-import { logError } from '@agent-computers/server/log';
-import { providerFromConfig } from '@agent-computers/server/provider';
+import { type ApiExtension, createApi } from '@clutchbox/api';
+import { createAuth } from '@clutchbox/server/auth';
+import { ensureExtensionClient } from '@clutchbox/server/browsers';
+import { readConfig } from '@clutchbox/server/config';
+import { assertDatabaseEnvironment, createDatabase } from '@clutchbox/server/database';
+import type { ServerHooks } from '@clutchbox/server/hooks';
+import { logError } from '@clutchbox/server/log';
+import { providerFromConfig } from '@clutchbox/server/provider';
 import { extensionDownloadVersion } from './lib/extension-download';
 
 export type ServicesOptions = {

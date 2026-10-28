@@ -1,6 +1,6 @@
 import 'server-only';
-import type { ComputerProvider } from '@agent-computers/computer';
-import { e2bComputerProvider, TEMPLATE } from '@agent-computers/e2b';
+import type { ComputerProvider } from '@clutchbox/computer';
+import { e2bComputerProvider, TEMPLATE } from '@clutchbox/e2b';
 import type { ServerConfig } from './config';
 import { fakeComputerProvider } from './fake-computer-provider';
 

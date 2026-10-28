@@ -1,4 +1,4 @@
-import type { CapturedCookie } from '@agent-computers/capture';
+import type { CapturedCookie } from '@clutchbox/capture';
 import { describe, expect, it } from 'vitest';
 import { cookieChanges, toCdpCookie } from './cookies';
 

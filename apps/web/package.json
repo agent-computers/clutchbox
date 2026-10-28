@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/app",
+  "name": "@clutchbox/app",
   "version": "0.1.0",
   "description": "The Clutchbox web app for one organization: the dashboard, sign-in, the API, and MCP, with the product's defaults.",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
@@ -19,11 +19,11 @@
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "@agent-computers/api": "workspace:*",
-    "@agent-computers/capture": "workspace:*",
-    "@agent-computers/server": "workspace:*",
-    "@agent-computers/ui": "workspace:*",
-    "@agent-computers/web": "workspace:*",
+    "@clutchbox/api": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
+    "@clutchbox/server": "workspace:*",
+    "@clutchbox/ui": "workspace:*",
+    "@clutchbox/web": "workspace:*",
     "@better-auth-ui/core": "1.7.30",
     "@better-auth-ui/react": "1.7.30",
     "@better-auth/oauth-provider": "1.7.11",

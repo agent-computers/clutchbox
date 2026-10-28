@@ -1,7 +1,7 @@
 'use client';
 // Better Auth UI v1.7.30 UserAvatar, using the verified user supplied by our server. MIT license: LICENSE.
-import { Avatar, AvatarFallback, AvatarImage } from '@agent-computers/ui/components/avatar';
-import { cn } from '@agent-computers/ui/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '@clutchbox/ui/components/avatar';
+import { cn } from '@clutchbox/ui/lib/utils';
 import { User2 } from 'lucide-react';
 
 export type UserIdentity = { name: string; email: string; image?: string | null | undefined };

@@ -1,6 +1,6 @@
-// Generated from the route manifest in @agent-computers/web (src/route-manifest.ts) by its
+// Generated from the route manifest in @clutchbox/web (src/route-manifest.ts) by its
 // generate-routes script. Change the manifest and regenerate rather than editing this file.
-import { cdpRoute } from '@agent-computers/web/routes/cdp';
+import { cdpRoute } from '@clutchbox/web/routes/cdp';
 import { getServices } from '@/deployment/server';
 
 export const runtime = 'nodejs';

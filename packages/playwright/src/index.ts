@@ -1,5 +1,5 @@
-import { applyCookies, cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
-import { type Capture, type CapturedCookie, captureSchema, siteOfCookie } from '@agent-computers/capture';
+import { applyCookies, cookieChanges, expiredCdpCookie, toCdpCookie } from '@clutchbox/apply';
+import { type Capture, type CapturedCookie, captureSchema, siteOfCookie } from '@clutchbox/capture';
 import type { BrowserContext } from 'playwright-core';
 
 // What was last applied to a browser context: pass it to the next applyCapture so only what changed is written, and

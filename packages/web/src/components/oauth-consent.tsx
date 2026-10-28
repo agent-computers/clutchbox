@@ -1,28 +1,4 @@
 'use client';
-// Adapted from Better Auth UI v1.7.30, shadcn base-nova OAuthConsent (MIT).
-// Source: https://github.com/better-auth-ui/better-auth-ui/tree/v1.7.30/examples/start-shadcn-baseui-example/src/components/auth.
-// Adapted to our shared controls and tokens, keeping our computer-access descriptions and loopback notice.
-// License: oauth-consent.LICENSE.
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Avatar, AvatarFallback, AvatarImage } from '@agent-computers/ui/components/avatar';
-import { Button } from '@agent-computers/ui/components/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@agent-computers/ui/components/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@agent-computers/ui/components/dropdown-menu';
-import { Separator } from '@agent-computers/ui/components/separator';
-import { Spinner } from '@agent-computers/ui/components/spinner';
 import {
   getOAuthAuthorizationDestination,
   type OAuthProviderAuthClient,
@@ -34,6 +10,23 @@ import {
 import { useAuth, useSignOut } from '@better-auth-ui/react';
 import { useOAuthConsent } from '@better-auth-ui/react/plugins/oauth-provider';
 import { useSetActiveOrganization } from '@better-auth-ui/react/plugins/organization';
+// Adapted from Better Auth UI v1.7.30, shadcn base-nova OAuthConsent (MIT).
+// Source: https://github.com/better-auth-ui/better-auth-ui/tree/v1.7.30/examples/start-shadcn-baseui-example/src/components/auth.
+// Adapted to our shared controls and tokens, keeping our computer-access descriptions and loopback notice.
+// License: oauth-consent.LICENSE.
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Avatar, AvatarFallback, AvatarImage } from '@clutchbox/ui/components/avatar';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@clutchbox/ui/components/dropdown-menu';
+import { Separator } from '@clutchbox/ui/components/separator';
+import { Spinner } from '@clutchbox/ui/components/spinner';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppWindow, Check, ChevronsUpDown, Ellipsis, Link as LinkIcon, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';

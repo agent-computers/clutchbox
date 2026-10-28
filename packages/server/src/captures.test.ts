@@ -1,6 +1,6 @@
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { captureDigest } from '@agent-computers/capture';
+import { captureDigest } from '@clutchbox/capture';
 import { PGlite } from '@electric-sql/pglite';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';

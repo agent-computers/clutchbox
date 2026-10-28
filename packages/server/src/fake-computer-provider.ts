@@ -1,6 +1,6 @@
-import type { CdpCookieParam } from '@agent-computers/apply';
-import { siteOfHost } from '@agent-computers/capture';
-import { type ComputerSize, FIRST_PROFILE } from '@agent-computers/computer';
+import type { CdpCookieParam } from '@clutchbox/apply';
+import { siteOfHost } from '@clutchbox/capture';
+import { type ComputerSize, FIRST_PROFILE } from '@clutchbox/computer';
 import type { ComputerAction, ComputerProvider } from './computers';
 
 const cookieHost = (cookie: CdpCookieParam) => cookie.domain ?? new URL(cookie.url!).hostname;

@@ -1,7 +1,7 @@
 'use client';
 
-import { Button } from '@agent-computers/ui/components/button';
 import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alert-dialog';
+import { Button } from '@clutchbox/ui/components/button';
 import { cn } from 'cn';
 import type * as React from 'react';
 

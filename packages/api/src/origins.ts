@@ -1,4 +1,4 @@
-import { extensionOrigins } from '@agent-computers/server/browsers';
+import { extensionOrigins } from '@clutchbox/server/browsers';
 
 export { extensionOrigins };
 // The extension's routes: a sync token works only here, and mutations here also accept the pinned extension

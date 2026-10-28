@@ -1,8 +1,8 @@
-import { getPrincipal } from '@agent-computers/server/auth';
-import { CONNECT_SCOPE, connectApp } from '@agent-computers/server/connect';
-import { organizationsOf } from '@agent-computers/server/organizations';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import type { OAuthScopeMetadataMap } from '@better-auth-ui/core/plugins/oauth-provider';
+import { getPrincipal } from '@clutchbox/server/auth';
+import { CONNECT_SCOPE, connectApp } from '@clutchbox/server/connect';
+import { organizationsOf } from '@clutchbox/server/organizations';
 import { APIError } from 'better-auth/api';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';

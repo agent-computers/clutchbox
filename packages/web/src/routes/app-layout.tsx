@@ -1,5 +1,5 @@
-import { getPrincipal } from '@agent-computers/server/auth';
-import { currentMember } from '@agent-computers/server/organizations';
+import { getPrincipal } from '@clutchbox/server/auth';
+import { currentMember } from '@clutchbox/server/organizations';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';

@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/sdk",
+  "name": "@clutchbox/sdk",
   "version": "0.1.0",
   "description": "The Clutchbox TypeScript SDK: read members' synced sign-ins, and open computers signed in to them that Playwright, browser-use, and Stagehand drive over CDP.",
   "keywords": [
@@ -30,7 +30,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agent-computers/capture": "workspace:*"
+    "@clutchbox/capture": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

@@ -1,4 +1,4 @@
-import { siteGroups } from '@agent-computers/capture/sites';
+import { siteGroups } from '@clutchbox/capture/sites';
 
 // Pure helpers for the setup checklist on the overview.
 

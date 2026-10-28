@@ -1,4 +1,4 @@
-import { productMatcher } from '@agent-computers/web/proxy';
+import { productMatcher } from '@clutchbox/web/proxy';
 import { expect, it } from 'vitest';
 import { config } from './proxy';
 

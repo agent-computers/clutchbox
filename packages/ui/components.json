@@ -11,11 +11,11 @@
   },
   "iconLibrary": "lucide",
   "aliases": {
-    "components": "@agent-computers/ui/components",
-    "utils": "@agent-computers/ui/lib/utils",
-    "hooks": "@agent-computers/ui/hooks",
-    "lib": "@agent-computers/ui/lib",
-    "ui": "@agent-computers/ui/components"
+    "components": "@clutchbox/ui/components",
+    "utils": "@clutchbox/ui/lib/utils",
+    "hooks": "@clutchbox/ui/hooks",
+    "lib": "@clutchbox/ui/lib",
+    "ui": "@clutchbox/ui/components"
   },
   "rtl": false,
   "menuColor": "default",

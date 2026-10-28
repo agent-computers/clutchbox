@@ -1,4 +1,4 @@
-import type { ConnectionSummary } from '@agent-computers/capture';
+import type { ConnectionSummary } from '@clutchbox/capture';
 import { serverOrigin } from '../server';
 import { hint } from './sync-status';
 

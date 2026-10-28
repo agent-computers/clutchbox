@@ -7,7 +7,7 @@ import {
   siteOrigins,
   withCompanions,
   within,
-} from '@agent-computers/capture';
+} from '@clutchbox/capture';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { pendingKey, pendingTtlMs } from '../controller';

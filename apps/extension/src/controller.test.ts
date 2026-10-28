@@ -6,7 +6,7 @@ import {
   type StatusResponse,
   type SyncSettings,
   serverProofPath,
-} from '@agent-computers/capture';
+} from '@clutchbox/capture';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   accountKey,

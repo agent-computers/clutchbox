@@ -1,6 +1,6 @@
 /// <reference path="../lib/novnc.d.ts" />
 'use client';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@agent-computers/ui/components/alert';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@clutchbox/ui/components/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,9 +10,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@agent-computers/ui/components/alert-dialog';
-import { Button, buttonVariants } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+} from '@clutchbox/ui/components/alert-dialog';
+import { Button, buttonVariants } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import {
   Item,
   ItemActions,
@@ -21,9 +21,9 @@ import {
   ItemGroup,
   ItemSeparator,
   ItemTitle,
-} from '@agent-computers/ui/components/item';
-import { Spinner } from '@agent-computers/ui/components/spinner';
-import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
+} from '@clutchbox/ui/components/item';
+import { Spinner } from '@clutchbox/ui/components/spinner';
+import { ToggleGroup, ToggleGroupItem } from '@clutchbox/ui/components/toggle-group';
 import type RFB from '@novnc/novnc';
 import { Eye, Maximize, Monitor, MousePointer2 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';

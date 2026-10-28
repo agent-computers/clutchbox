@@ -1,9 +1,9 @@
 'use client';
-import { COMPUTER_SIZE_NAMES, type ComputerSize, sizeName } from '@agent-computers/computer';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
+import { COMPUTER_SIZE_NAMES, type ComputerSize, sizeName } from '@clutchbox/computer';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { ToggleGroup, ToggleGroupItem } from '@clutchbox/ui/components/toggle-group';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, type ComputerView, computerQuery, grantsQuery } from '../lib/api';

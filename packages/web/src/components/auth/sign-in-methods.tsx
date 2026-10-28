@@ -1,10 +1,12 @@
 'use client';
+import { type AuthSocialProvider, getProviderName, isReauthenticationRequiredError } from '@better-auth-ui/core';
+import { renderProviderIcon, useAuth, useLinkSocial, useListAccounts, useUnlinkAccount } from '@better-auth-ui/react';
 // Better Auth UI v1.7.30 LinkedAccounts and LinkedAccount, adapted to the deployment's sign-in methods, email links,
 // and inline errors. MIT license: LICENSE.
-import type { SignInMethods as Methods, SignInProvider } from '@agent-computers/server/config';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
+import type { SignInMethods as Methods, SignInProvider } from '@clutchbox/server/config';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import {
   Item,
   ItemActions,
@@ -14,11 +16,9 @@ import {
   ItemMedia,
   ItemSeparator,
   ItemTitle,
-} from '@agent-computers/ui/components/item';
-import { Skeleton } from '@agent-computers/ui/components/skeleton';
-import { Spinner } from '@agent-computers/ui/components/spinner';
-import { type AuthSocialProvider, getProviderName, isReauthenticationRequiredError } from '@better-auth-ui/core';
-import { renderProviderIcon, useAuth, useLinkSocial, useListAccounts, useUnlinkAccount } from '@better-auth-ui/react';
+} from '@clutchbox/ui/components/item';
+import { Skeleton } from '@clutchbox/ui/components/skeleton';
+import { Spinner } from '@clutchbox/ui/components/spinner';
 import { KeyRound, Mail, Plug } from 'lucide-react';
 import { Fragment } from 'react';
 import { useAppSignOut } from './user-button';

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { Capture } from '@agent-computers/capture';
+import type { Capture } from '@clutchbox/capture';
 import { expect } from 'vitest';
 import type { Auth } from './auth';
 import { browserOf, EXTENSION_CLIENT_ID } from './browsers';

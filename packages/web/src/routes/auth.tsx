@@ -1,4 +1,4 @@
-import { extensionCors, tokenPreflight } from '@agent-computers/api';
+import { extensionCors, tokenPreflight } from '@clutchbox/api';
 import { type GetServices, unavailable } from '../services';
 
 // /api/auth/*. The extension reaches only the token endpoint from its origin; extensionCors answers it there alone.

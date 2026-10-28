@@ -2,7 +2,7 @@ import {
   CDP_MAX_DURATION_MS,
   LIVE_VIEW_MAX_DURATION_MS,
   ROUTE_MAX_DURATION_MS,
-} from '@agent-computers/server/computer-timing';
+} from '@clutchbox/server/computer-timing';
 
 // Every product URL, as the thin route file each app commits for it. Next.js routes only files in an app's own app/,
 // and reads segment config (runtime, dynamic, maxDuration) only as literals written in that file: a re-exported
@@ -18,7 +18,7 @@ export type RouteEntry = {
   // Its directory under app/, in Next.js segment syntax, outside any route group.
   dir: string;
   file: 'page.tsx' | 'layout.tsx' | 'route.ts';
-  // Its module, @agent-computers/web/routes/<module>.
+  // Its module, @clutchbox/web/routes/<module>.
   module: string;
   // Exports of the module the file passes on unchanged.
   reexport?: string[];

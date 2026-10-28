@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import base from '@agent-computers/web/next-config.mjs';
+import base from '@clutchbox/web/next-config.mjs';
 import type { NextConfig } from 'next';
 
 // The manual build of the extension this app offers, as scripts/build-extension-download.ts recorded it during

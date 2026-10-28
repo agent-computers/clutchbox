@@ -1,24 +1,24 @@
 import 'server-only';
-import { type Auth, getPrincipal } from '@agent-computers/server/auth';
+import { type Auth, getPrincipal } from '@clutchbox/server/auth';
 import {
   LIVE_VIEW_MAX_DURATION_MS,
   LIVE_VIEW_UPSTREAM_OPEN_MS,
   STREAM_MARGIN_MS,
   STREAM_START_MS,
-} from '@agent-computers/server/computer-timing';
+} from '@clutchbox/server/computer-timing';
 import {
   COMPUTER_ID_PATTERN,
   type ComputerProvider,
   connectLiveView,
   LEASE_PATTERN,
   liveViewAccess,
-} from '@agent-computers/server/computers';
-import type { Database } from '@agent-computers/server/database';
-import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
-import { RELAY_CLOSE, relay } from '@agent-computers/server/live-view-relay';
-import { logError } from '@agent-computers/server/log';
-import { currentMember } from '@agent-computers/server/organizations';
-import { MAX_FRAME } from '@agent-computers/server/rfb-filter';
+} from '@clutchbox/server/computers';
+import type { Database } from '@clutchbox/server/database';
+import { defaultServerHooks, type ServerHooks } from '@clutchbox/server/hooks';
+import { RELAY_CLOSE, relay } from '@clutchbox/server/live-view-relay';
+import { logError } from '@clutchbox/server/log';
+import { currentMember } from '@clutchbox/server/organizations';
+import { MAX_FRAME } from '@clutchbox/server/rfb-filter';
 import { upgradeWebSocket } from '@vercel/functions';
 import { WebSocket } from 'ws';
 

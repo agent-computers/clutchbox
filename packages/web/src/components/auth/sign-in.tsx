@@ -1,17 +1,17 @@
 'use client';
-// Better Auth UI v1.7.30 SignIn, retaining its social view and adding an email link form. MIT license: LICENSE.
-import type { SignInMethods } from '@agent-computers/server/config';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { Input } from '@agent-computers/ui/components/input';
-import { Label } from '@agent-computers/ui/components/label';
-import { Separator } from '@agent-computers/ui/components/separator';
-import { Spinner } from '@agent-computers/ui/components/spinner';
 import { getProviderId } from '@better-auth-ui/core';
 import type { MagicLinkAuthClient } from '@better-auth-ui/core/plugins/magic-link';
 import { useAuth } from '@better-auth-ui/react';
 import { useSignInMagicLink } from '@better-auth-ui/react/plugins/magic-link';
+// Better Auth UI v1.7.30 SignIn, retaining its social view and adding an email link form. MIT license: LICENSE.
+import type { SignInMethods } from '@clutchbox/server/config';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Input } from '@clutchbox/ui/components/input';
+import { Label } from '@clutchbox/ui/components/label';
+import { Separator } from '@clutchbox/ui/components/separator';
+import { Spinner } from '@clutchbox/ui/components/spinner';
 import { KeyRound, Mail } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 import { ProviderButton } from './provider-button';

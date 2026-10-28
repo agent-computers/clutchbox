@@ -1,7 +1,8 @@
 'use client';
+import { useAuth, useSignOut } from '@better-auth-ui/react';
 // Better Auth UI v1.7.30 UserButton, adapted to our settings route and immediate sign-out. MIT license: LICENSE.
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { buttonVariants } from '@agent-computers/ui/components/button';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { buttonVariants } from '@clutchbox/ui/components/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,10 +11,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@agent-computers/ui/components/dropdown-menu';
-import { Spinner } from '@agent-computers/ui/components/spinner';
-import { cn } from '@agent-computers/ui/lib/utils';
-import { useAuth, useSignOut } from '@better-auth-ui/react';
+} from '@clutchbox/ui/components/dropdown-menu';
+import { Spinner } from '@clutchbox/ui/components/spinner';
+import { cn } from '@clutchbox/ui/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronsUpDown, LogOut, Settings } from 'lucide-react';
 import type { UserIdentity } from './user-avatar';

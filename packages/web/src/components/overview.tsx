@@ -1,17 +1,10 @@
 'use client';
-import { siteGroups } from '@agent-computers/capture/sites';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from '@agent-computers/ui/components/alert';
-import { Badge } from '@agent-computers/ui/components/badge';
-import { buttonVariants } from '@agent-computers/ui/components/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@agent-computers/ui/components/card';
-import { Input } from '@agent-computers/ui/components/input';
+import { siteGroups } from '@clutchbox/capture/sites';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@clutchbox/ui/components/alert';
+import { Badge } from '@clutchbox/ui/components/badge';
+import { buttonVariants } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Input } from '@clutchbox/ui/components/input';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, CircleCheck, Eye } from 'lucide-react';
 import Link from 'next/link';

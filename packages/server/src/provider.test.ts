@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { e2bComputerProvider, TEMPLATE } from '@agent-computers/e2b';
+import { e2bComputerProvider, TEMPLATE } from '@clutchbox/e2b';
 import { describe, expect, it, vi } from 'vitest';
 import { readConfig } from './config';
 import { providerFromConfig } from './provider';
 
-vi.mock('@agent-computers/e2b', async original => {
-  const actual = await original<typeof import('@agent-computers/e2b')>();
+vi.mock('@clutchbox/e2b', async original => {
+  const actual = await original<typeof import('@clutchbox/e2b')>();
   return { ...actual, e2bComputerProvider: vi.fn(actual.e2bComputerProvider) };
 });
 

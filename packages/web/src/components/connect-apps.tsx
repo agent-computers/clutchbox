@@ -7,12 +7,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@agent-computers/ui/components/alert-dialog';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { Input } from '@agent-computers/ui/components/input';
-import { Label } from '@agent-computers/ui/components/label';
-import { Textarea } from '@agent-computers/ui/components/textarea';
+} from '@clutchbox/ui/components/alert-dialog';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Input } from '@clutchbox/ui/components/input';
+import { Label } from '@clutchbox/ui/components/label';
+import { Textarea } from '@clutchbox/ui/components/textarea';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { api, type ConnectApp, connectAppsQuery } from '../lib/api';

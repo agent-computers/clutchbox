@@ -1,5 +1,5 @@
 'use client';
-import { Button } from '@agent-computers/ui/components/button';
+import { Button } from '@clutchbox/ui/components/button';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { api, setupQuery } from '../lib/api';

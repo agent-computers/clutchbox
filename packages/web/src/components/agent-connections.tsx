@@ -1,10 +1,10 @@
 'use client';
-import type { AgentKind } from '@agent-computers/server/agents';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { Input } from '@agent-computers/ui/components/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@agent-computers/ui/components/tabs';
+import type { AgentKind } from '@clutchbox/server/agents';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Input } from '@clutchbox/ui/components/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clutchbox/ui/components/tabs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleCheck } from 'lucide-react';
 import { ApiError, api, type Grant, grantsQuery, setupQuery } from '../lib/api';

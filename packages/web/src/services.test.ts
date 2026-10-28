@@ -1,9 +1,9 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import type { Database } from '@agent-computers/server/database';
-import { databaseSchema } from '@agent-computers/server/database-schema';
-import { defaultServerHooks, noMetering } from '@agent-computers/server/hooks';
-import { migrationsFolder } from '@agent-computers/server/migrator';
-import * as schema from '@agent-computers/server/schema';
+import type { Database } from '@clutchbox/server/database';
+import { databaseSchema } from '@clutchbox/server/database-schema';
+import { defaultServerHooks, noMetering } from '@clutchbox/server/hooks';
+import { migrationsFolder } from '@clutchbox/server/migrator';
+import * as schema from '@clutchbox/server/schema';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -14,8 +14,8 @@ import { createServices } from './services';
 
 // The product's services, built from the no-op defaults, on a PGlite database instead of the pool.
 let db: Database;
-vi.mock('@agent-computers/server/database', async importOriginal => ({
-  ...(await importOriginal<typeof import('@agent-computers/server/database')>()),
+vi.mock('@clutchbox/server/database', async importOriginal => ({
+  ...(await importOriginal<typeof import('@clutchbox/server/database')>()),
   createDatabase: () => ({ db, pool: undefined }),
 }));
 

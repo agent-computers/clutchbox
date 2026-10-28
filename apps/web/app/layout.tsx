@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
-import '@agent-computers/web/styles.css';
-import { AuthProvider } from '@agent-computers/web/components/auth-provider';
-import { siteOrigin } from '@agent-computers/web/lib/site';
+import '@clutchbox/web/styles.css';
+import { AuthProvider } from '@clutchbox/web/components/auth-provider';
+import { siteOrigin } from '@clutchbox/web/lib/site';
 import { deployment } from '@/deployment/ui';
 
-// The type families live in @agent-computers/ui (packages/ui).
+// The type families live in @clutchbox/ui (packages/ui).
 const garamond = localFont({
   src: [
     { path: '../../../packages/ui/src/fonts/EBGaramond.woff2', weight: '400 500', style: 'normal' },

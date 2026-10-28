@@ -1,5 +1,5 @@
-import { getPrincipal, resumeAuthorization } from '@agent-computers/server/auth';
-import { signInMethods } from '@agent-computers/server/config';
+import { getPrincipal, resumeAuthorization } from '@clutchbox/server/auth';
+import { signInMethods } from '@clutchbox/server/config';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';

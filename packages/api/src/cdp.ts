@@ -1,7 +1,7 @@
 import 'server-only';
-import { keyCaller } from '@agent-computers/server/api-keys';
-import { cdpRelay } from '@agent-computers/server/cdp-relay';
-import { CDP_ENDPOINT_MS, CDP_MAX_DURATION_MS, CDP_UPSTREAM_OPEN_MS } from '@agent-computers/server/computer-timing';
+import { keyCaller } from '@clutchbox/server/api-keys';
+import { cdpRelay } from '@clutchbox/server/cdp-relay';
+import { CDP_ENDPOINT_MS, CDP_MAX_DURATION_MS, CDP_UPSTREAM_OPEN_MS } from '@clutchbox/server/computer-timing';
 import {
   CDP_TOKEN_PATTERN,
   type ComputerFailure,
@@ -9,14 +9,14 @@ import {
   cdpSessionOf,
   computerSessionState,
   useComputerSession,
-} from '@agent-computers/server/computers';
-import type { Database } from '@agent-computers/server/database';
-import { defaultServerHooks, type ServerHooks } from '@agent-computers/server/hooks';
-import { logError } from '@agent-computers/server/log';
+} from '@clutchbox/server/computers';
+import type { Database } from '@clutchbox/server/database';
+import { defaultServerHooks, type ServerHooks } from '@clutchbox/server/hooks';
+import { logError } from '@clutchbox/server/log';
 import { upgradeWebSocket } from '@vercel/functions';
 import { WebSocket } from 'ws';
 
-export { CDP_CLOSE } from '@agent-computers/server/cdp-relay';
+export { CDP_CLOSE } from '@clutchbox/server/cdp-relay';
 
 // The CDP proxy route: GET /api/v1/cdp?token=<secret>, a WebSocket from a developer's CDP client to the Chrome of the
 // fork a REST computer session runs on (POST /api/v1/computers/sessions answers with this URL). Computers stay private:

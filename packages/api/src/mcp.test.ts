@@ -1,8 +1,8 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { e2bComputerProvider } from '@agent-computers/e2b';
-import { type ComputerSize, ProviderAccountRefused } from '@agent-computers/server/computers';
-import { databaseSchema } from '@agent-computers/server/database-schema';
+import { e2bComputerProvider } from '@clutchbox/e2b';
+import { type ComputerSize, ProviderAccountRefused } from '@clutchbox/server/computers';
+import { databaseSchema } from '@clutchbox/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';

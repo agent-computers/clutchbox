@@ -1,4 +1,4 @@
-import { type CapturedCookie, siteOfCookie } from '@agent-computers/capture';
+import { type CapturedCookie, siteOfCookie } from '@clutchbox/capture';
 
 // A cookie's identity, as the browser keys it: setting a cookie with the same identity replaces it.
 const cookieKey = (cookie: CapturedCookie) =>

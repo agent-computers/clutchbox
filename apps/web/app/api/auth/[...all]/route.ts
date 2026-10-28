@@ -1,6 +1,6 @@
-// Generated from the route manifest in @agent-computers/web (src/route-manifest.ts) by its
+// Generated from the route manifest in @clutchbox/web (src/route-manifest.ts) by its
 // generate-routes script. Change the manifest and regenerate rather than editing this file.
-import { authPreflight, authRoute } from '@agent-computers/web/routes/auth';
+import { authPreflight, authRoute } from '@clutchbox/web/routes/auth';
 import { getServices } from '@/deployment/server';
 
 export const runtime = 'nodejs';

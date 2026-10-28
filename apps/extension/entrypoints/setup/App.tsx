@@ -1,4 +1,4 @@
-import type { ServerResponse } from '@agent-computers/capture';
+import type { ServerResponse } from '@clutchbox/capture';
 import { useEffect, useRef, useState } from 'react';
 import { allSitesOffered } from '../../src/build';
 import { serverOrigin } from '../../src/server';

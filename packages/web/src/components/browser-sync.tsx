@@ -1,9 +1,9 @@
 /// <reference types="next/image-types/global" />
 'use client';
-import { siteGroups } from '@agent-computers/capture/sites';
-import { Button, buttonVariants } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@agent-computers/ui/components/collapsible';
+import { siteGroups } from '@clutchbox/capture/sites';
+import { Button, buttonVariants } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@clutchbox/ui/components/collapsible';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown } from 'lucide-react';
 import Image from 'next/image';

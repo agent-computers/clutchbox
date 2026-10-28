@@ -1,4 +1,4 @@
-import type { StatusResponse, SyncStatus as Sync } from '@agent-computers/capture';
+import type { StatusResponse, SyncStatus as Sync } from '@clutchbox/capture';
 import type { ReactNode } from 'react';
 import { Button, buttonVariants } from './components/button';
 

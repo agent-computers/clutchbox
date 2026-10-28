@@ -1,4 +1,4 @@
-import { siteOfHost } from '@agent-computers/capture';
+import { siteOfHost } from '@clutchbox/capture';
 import type { CdpCookieParam } from './cookies';
 
 // Sends one Chrome DevTools Protocol command and resolves with its result, rejecting on a protocol error, as

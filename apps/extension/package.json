@@ -1,6 +1,6 @@
 {
-  "name": "@agent-computers/extension",
-  "version": "26.1027.3",
+  "name": "@clutchbox/extension",
+  "version": "26.1028.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "typecheck": "wxt prepare && tsc --noEmit"
   },
   "dependencies": {
-    "@agent-computers/capture": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
     "@base-ui/react": "1.9.0",
     "@tanstack/react-query": "5.104.3",
     "class-variance-authority": "0.7.1",

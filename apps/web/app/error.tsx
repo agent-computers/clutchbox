@@ -1,5 +1,5 @@
 'use client';
-import { Button } from '@agent-computers/ui/components/button';
+import { Button } from '@clutchbox/ui/components/button';
 export default function ErrorPage({ reset }: { reset: () => void }) {
   return (
     <main id="main" className="mx-auto grid w-full max-w-2xl gap-4 px-5 py-24 sm:px-8">

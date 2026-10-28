@@ -1,4 +1,4 @@
-import { assertDatabaseEnvironment } from '@agent-computers/server/database';
+import { assertDatabaseEnvironment } from '@clutchbox/server/database';
 import { type GetServices, unavailable } from '../services';
 
 // /api/health.

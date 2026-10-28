@@ -7,7 +7,7 @@ import {
   type SyncChange,
   type SyncSettings,
   syncSettingsSchema,
-} from '@agent-computers/capture';
+} from '@clutchbox/capture';
 import { and, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Database } from './database';

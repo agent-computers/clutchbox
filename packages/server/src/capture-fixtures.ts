@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Capture, CapturedCookie } from '@agent-computers/capture';
+import type { Capture, CapturedCookie } from '@clutchbox/capture';
 
 // Synthetic capture builders for tests only; no real browser data.
 export const cookie = (overrides: Partial<CapturedCookie> = {}): CapturedCookie => ({

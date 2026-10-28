@@ -1,5 +1,5 @@
 import 'server-only';
-import type { ComputerProvider, ComputerSize } from '@agent-computers/computer';
+import type { ComputerProvider, ComputerSize } from '@clutchbox/computer';
 import type { BetterAuthPlugin } from 'better-auth';
 import type { Database } from './database';
 import { type Member, singleOrganization, type Tenancy } from './organizations';

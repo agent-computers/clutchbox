@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/capture",
+  "name": "@clutchbox/capture",
   "version": "0.2.0",
   "description": "The capture format and sync contract for syncing browser sign-ins to AI agents: cookies, sites, settings, and OAuth.",
   "keywords": [

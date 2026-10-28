@@ -1,6 +1,6 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
-import { extensionClientId, refreshReuseSeconds, syncScope } from '@agent-computers/capture';
+import { extensionClientId, refreshReuseSeconds, syncScope } from '@clutchbox/capture';
 import { and, asc, eq, exists, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { deleteCaptures, deleteCapturesIn, lockMember } from './captures';
 import type { Database } from './database';

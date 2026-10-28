@@ -1,4 +1,4 @@
-import type { ExchangeResponse, Response } from '@agent-computers/capture';
+import type { ExchangeResponse, Response } from '@clutchbox/capture';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { Button } from '../../src/ui/components/button';

@@ -1,4 +1,4 @@
-import { browserOrigins, serverOrigins } from '@agent-computers/capture';
+import { browserOrigins, serverOrigins } from '@clutchbox/capture';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'wxt';
 import { serverOriginOf } from './src/origin';

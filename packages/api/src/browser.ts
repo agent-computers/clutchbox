@@ -1,6 +1,6 @@
 import 'server-only';
-import { BROWSER_LOAD_MS, BROWSER_LOAD_POLL_MS, BROWSER_SETTLE_MS } from '@agent-computers/server/computer-timing';
-import type { SessionHandle } from '@agent-computers/server/computers';
+import { BROWSER_LOAD_MS, BROWSER_LOAD_POLL_MS, BROWSER_SETTLE_MS } from '@clutchbox/server/computer-timing';
+import type { SessionHandle } from '@clutchbox/server/computers';
 import { z } from 'zod';
 
 // The MCP browser tool: page-level control of the computer's Chrome over the session's CDP commands, so an agent reads

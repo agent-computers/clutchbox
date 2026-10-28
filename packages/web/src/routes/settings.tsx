@@ -1,4 +1,4 @@
-import { signInMethods } from '@agent-computers/server/config';
+import { signInMethods } from '@clutchbox/server/config';
 import type { Metadata } from 'next';
 import { Settings } from '../components/settings';
 import type { GetServices } from '../services';

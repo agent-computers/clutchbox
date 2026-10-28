@@ -1,10 +1,10 @@
 'use client';
-import { exclusionsSchema, type SyncSettings } from '@agent-computers/capture';
-import { siteGroups } from '@agent-computers/capture/sites';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button } from '@agent-computers/ui/components/button';
-import { Label } from '@agent-computers/ui/components/label';
-import { Textarea } from '@agent-computers/ui/components/textarea';
+import { exclusionsSchema, type SyncSettings } from '@clutchbox/capture';
+import { siteGroups } from '@clutchbox/capture/sites';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button } from '@clutchbox/ui/components/button';
+import { Label } from '@clutchbox/ui/components/label';
+import { Textarea } from '@clutchbox/ui/components/textarea';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, browsersQuery, computerQuery, type SyncChange, type SyncView, setupQuery, syncQuery } from '../lib/api';

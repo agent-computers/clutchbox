@@ -1,5 +1,5 @@
 'use client';
-import { Button } from '@agent-computers/ui/components/button';
+import { Button } from '@clutchbox/ui/components/button';
 import { Check, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 

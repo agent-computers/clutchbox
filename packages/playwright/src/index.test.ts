@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { Capture, CapturedCookie } from '@agent-computers/capture';
+import type { Capture, CapturedCookie } from '@clutchbox/capture';
 import { type Browser, chromium } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyCapture } from './index';

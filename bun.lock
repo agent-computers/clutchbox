@@ -16,10 +16,10 @@
       },
     },
     "apps/extension": {
-      "name": "@agent-computers/extension",
+      "name": "@clutchbox/extension",
       "version": "26.1027.3",
       "dependencies": {
-        "@agent-computers/capture": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
         "@base-ui/react": "1.9.0",
         "@tanstack/react-query": "5.104.3",
         "class-variance-authority": "0.7.1",
@@ -38,14 +38,14 @@
       },
     },
     "apps/web": {
-      "name": "@agent-computers/app",
+      "name": "@clutchbox/app",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/api": "workspace:*",
-        "@agent-computers/capture": "workspace:*",
-        "@agent-computers/server": "workspace:*",
-        "@agent-computers/ui": "workspace:*",
-        "@agent-computers/web": "workspace:*",
+        "@clutchbox/api": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/server": "workspace:*",
+        "@clutchbox/ui": "workspace:*",
+        "@clutchbox/web": "workspace:*",
         "@better-auth-ui/core": "1.7.30",
         "@better-auth-ui/react": "1.7.30",
         "@better-auth/oauth-provider": "1.7.11",
@@ -68,11 +68,11 @@
       },
     },
     "packages/api": {
-      "name": "@agent-computers/api",
+      "name": "@clutchbox/api",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/capture": "workspace:*",
-        "@agent-computers/server": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/server": "workspace:*",
         "@better-auth/mcp": "1.7.11",
         "@modelcontextprotocol/server": "2.3.1",
         "@vercel/functions": "3.10.1",
@@ -82,55 +82,55 @@
         "zod": "4.6.7",
       },
       "devDependencies": {
-        "@agent-computers/e2b": "workspace:*",
-        "@agent-computers/sdk": "workspace:*",
+        "@clutchbox/e2b": "workspace:*",
+        "@clutchbox/sdk": "workspace:*",
         "@types/ws": "8.18.2",
         "drizzle-orm": "0.45.4",
         "playwright-core": "1.64.0",
       },
     },
     "packages/apply": {
-      "name": "@agent-computers/apply",
+      "name": "@clutchbox/apply",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/capture": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
       },
     },
     "packages/capture": {
-      "name": "@agent-computers/capture",
+      "name": "@clutchbox/capture",
       "version": "0.2.0",
       "dependencies": {
         "zod": "4.6.7",
       },
     },
     "packages/computer": {
-      "name": "@agent-computers/computer",
+      "name": "@clutchbox/computer",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/apply": "workspace:*",
+        "@clutchbox/apply": "workspace:*",
         "zod": "4.6.7",
       },
     },
     "packages/e2b": {
-      "name": "@agent-computers/e2b",
+      "name": "@clutchbox/e2b",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/computer": "workspace:*",
+        "@clutchbox/computer": "workspace:*",
         "@e2b/desktop": "2.4.0",
         "e2b": "2.55.0",
       },
       "devDependencies": {
-        "@agent-computers/apply": "workspace:*",
-        "@agent-computers/capture": "workspace:*",
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
         "@types/node": "24.19.2",
       },
     },
     "packages/playwright": {
-      "name": "@agent-computers/playwright",
+      "name": "@clutchbox/playwright",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/apply": "workspace:*",
-        "@agent-computers/capture": "workspace:*",
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "24.19.2",
@@ -141,10 +141,10 @@
       },
     },
     "packages/sdk": {
-      "name": "@agent-computers/sdk",
+      "name": "@clutchbox/sdk",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/capture": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "24.19.2",
@@ -152,13 +152,13 @@
       },
     },
     "packages/server": {
-      "name": "@agent-computers/server",
+      "name": "@clutchbox/server",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/apply": "workspace:*",
-        "@agent-computers/capture": "workspace:*",
-        "@agent-computers/computer": "workspace:*",
-        "@agent-computers/e2b": "workspace:*",
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/computer": "workspace:*",
+        "@clutchbox/e2b": "workspace:*",
         "@better-auth/api-key": "1.7.11",
         "@better-auth/cimd": "1.7.11",
         "@better-auth/core": "1.7.11",
@@ -183,7 +183,7 @@
       },
     },
     "packages/ui": {
-      "name": "@agent-computers/ui",
+      "name": "@clutchbox/ui",
       "version": "0.1.0",
       "dependencies": {
         "@base-ui/react": "1.9.0",
@@ -205,14 +205,14 @@
       },
     },
     "packages/web": {
-      "name": "@agent-computers/web",
+      "name": "@clutchbox/web",
       "version": "0.1.0",
       "dependencies": {
-        "@agent-computers/api": "workspace:*",
-        "@agent-computers/capture": "workspace:*",
-        "@agent-computers/computer": "workspace:*",
-        "@agent-computers/server": "workspace:*",
-        "@agent-computers/ui": "workspace:*",
+        "@clutchbox/api": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/computer": "workspace:*",
+        "@clutchbox/server": "workspace:*",
+        "@clutchbox/ui": "workspace:*",
         "@better-auth-ui/core": "1.7.30",
         "@better-auth-ui/react": "1.7.30",
         "@better-auth/api-key": "1.7.11",
@@ -245,29 +245,29 @@
 
     "@acemir/cssom": ["@acemir/cssom@0.9.32", "", {}, "sha512-OijrAUu7rrJhSIoHNg6LMPS5e344nwUHA+1EFYYjrh64D+GmytUsfBQjci45TjT+rd5Spsp8B5xsZDT+TgyXXQ=="],
 
-    "@agent-computers/api": ["@agent-computers/api@workspace:packages/api"],
+    "@clutchbox/api": ["@clutchbox/api@workspace:packages/api"],
 
-    "@agent-computers/app": ["@agent-computers/app@workspace:apps/web"],
+    "@clutchbox/app": ["@clutchbox/app@workspace:apps/web"],
 
-    "@agent-computers/apply": ["@agent-computers/apply@workspace:packages/apply"],
+    "@clutchbox/apply": ["@clutchbox/apply@workspace:packages/apply"],
 
-    "@agent-computers/capture": ["@agent-computers/capture@workspace:packages/capture"],
+    "@clutchbox/capture": ["@clutchbox/capture@workspace:packages/capture"],
 
-    "@agent-computers/computer": ["@agent-computers/computer@workspace:packages/computer"],
+    "@clutchbox/computer": ["@clutchbox/computer@workspace:packages/computer"],
 
-    "@agent-computers/e2b": ["@agent-computers/e2b@workspace:packages/e2b"],
+    "@clutchbox/e2b": ["@clutchbox/e2b@workspace:packages/e2b"],
 
-    "@agent-computers/extension": ["@agent-computers/extension@workspace:apps/extension"],
+    "@clutchbox/extension": ["@clutchbox/extension@workspace:apps/extension"],
 
-    "@agent-computers/playwright": ["@agent-computers/playwright@workspace:packages/playwright"],
+    "@clutchbox/playwright": ["@clutchbox/playwright@workspace:packages/playwright"],
 
-    "@agent-computers/sdk": ["@agent-computers/sdk@workspace:packages/sdk"],
+    "@clutchbox/sdk": ["@clutchbox/sdk@workspace:packages/sdk"],
 
-    "@agent-computers/server": ["@agent-computers/server@workspace:packages/server"],
+    "@clutchbox/server": ["@clutchbox/server@workspace:packages/server"],
 
-    "@agent-computers/ui": ["@agent-computers/ui@workspace:packages/ui"],
+    "@clutchbox/ui": ["@clutchbox/ui@workspace:packages/ui"],
 
-    "@agent-computers/web": ["@agent-computers/web@workspace:packages/web"],
+    "@clutchbox/web": ["@clutchbox/web@workspace:packages/web"],
 
     "@aklinker1/rollup-plugin-visualizer": ["@aklinker1/rollup-plugin-visualizer@5.12.0", "", { "dependencies": { "open": "^8.4.0", "picomatch": "^2.3.1", "source-map": "^0.7.4", "yargs": "^17.5.1" }, "peerDependencies": { "rollup": "2.x || 3.x || 4.x" }, "optionalPeers": ["rollup"], "bin": { "rollup-plugin-visualizer": "dist/bin/cli.js" } }, "sha512-X24LvEGw6UFmy0lpGJDmXsMyBD58XmX1bbwsaMLhNoM+UMQfQ3b2RtC+nz4b/NoRK5r6QJSKJHBNVeUdwqybaQ=="],
 

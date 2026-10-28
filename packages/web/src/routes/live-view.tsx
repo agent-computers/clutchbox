@@ -1,8 +1,8 @@
-import { liveViewHandler } from '@agent-computers/api/live-view';
+import { liveViewHandler } from '@clutchbox/api/live-view';
 import { type GetServices, unavailable } from '../services';
 
 // /api/v1/live-view: its own route, not the API's, for its own maxDuration, LIVE_VIEW_MAX_DURATION_MS
-// (@agent-computers/server/computer-timing), which the route manifest gives its route file. The connection lasts until
+// (@clutchbox/server/computer-timing), which the route manifest gives its route file. The connection lasts until
 // the relay closes it, just before that limit, and the page reconnects.
 export const liveViewRoute = (getServices: GetServices) =>
   async function GET(request: Request) {

@@ -1,14 +1,14 @@
 // The product's base Next.js config, which each app's next.config.ts spreads and extends (its own transpiled packages
 // and env). Plain JavaScript, so loading it needs no type stripping.
 export const transpilePackages = [
-  '@agent-computers/api',
-  '@agent-computers/server',
-  '@agent-computers/apply',
-  '@agent-computers/capture',
-  '@agent-computers/computer',
-  '@agent-computers/e2b',
-  '@agent-computers/ui',
-  '@agent-computers/web',
+  '@clutchbox/api',
+  '@clutchbox/server',
+  '@clutchbox/apply',
+  '@clutchbox/capture',
+  '@clutchbox/computer',
+  '@clutchbox/e2b',
+  '@clutchbox/ui',
+  '@clutchbox/web',
 ];
 
 /** @type {import('next').NextConfig} */

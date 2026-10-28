@@ -1,4 +1,4 @@
-import { type CaptureRequest, type StatusResponse, siteName, siteOfInput } from '@agent-computers/capture';
+import { type CaptureRequest, type StatusResponse, siteName, siteOfInput } from '@clutchbox/capture';
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { allSitesOffered, distribution } from '../../src/build';

@@ -1,6 +1,6 @@
-import type { AgentKind } from '@agent-computers/server/agents';
-import { buttonVariants } from '@agent-computers/ui/components/button';
-import { Input } from '@agent-computers/ui/components/input';
+import type { AgentKind } from '@clutchbox/server/agents';
+import { buttonVariants } from '@clutchbox/ui/components/button';
+import { Input } from '@clutchbox/ui/components/input';
 import type { ReactNode } from 'react';
 import { CopyButton } from './copy-button';
 

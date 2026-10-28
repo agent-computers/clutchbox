@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/web",
+  "name": "@clutchbox/web",
   "version": "0.1.0",
   "description": "The Clutchbox web app's product library: the dashboard, sign-in and consent pages as route modules, their components and client code, the route manifest, the proxy, and the Node server.",
   "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
@@ -27,11 +27,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agent-computers/api": "workspace:*",
-    "@agent-computers/capture": "workspace:*",
-    "@agent-computers/computer": "workspace:*",
-    "@agent-computers/server": "workspace:*",
-    "@agent-computers/ui": "workspace:*",
+    "@clutchbox/api": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
+    "@clutchbox/computer": "workspace:*",
+    "@clutchbox/server": "workspace:*",
+    "@clutchbox/ui": "workspace:*",
     "@better-auth-ui/core": "1.7.30",
     "@better-auth-ui/react": "1.7.30",
     "@better-auth/api-key": "1.7.11",

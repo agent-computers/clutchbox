@@ -1,14 +1,14 @@
 import 'server-only';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@agent-computers/apply';
-import { siteOfCookie } from '@agent-computers/capture';
+import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@clutchbox/apply';
+import { siteOfCookie } from '@clutchbox/capture';
 import {
   type ComputerProvider,
   type ComputerSession,
   type ComputerSize,
   FIRST_PROFILE,
   ProviderAccountRefused,
-} from '@agent-computers/computer';
+} from '@clutchbox/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
 import { type AgentKind, agentOf, clientHost } from './agents';
 import {
@@ -55,7 +55,7 @@ import { markToolStep } from './tool-calls';
 export const SESSION_ID_PATTERN = publicIdPattern('computerSession');
 // A fork's ID, which agents reopen it by; like a session's, it works only for the member whose fork it is.
 export const COMPUTER_ID_PATTERN = publicIdPattern('computer');
-// The provider interfaces live in @agent-computers/computer; re-exported for this service's callers.
+// The provider interfaces live in @clutchbox/computer; re-exported for this service's callers.
 export {
   actionSchema,
   COMPUTER_SIZE_NAMES,
@@ -68,7 +68,7 @@ export {
   type ExecResult,
   ProviderAccountRefused,
   sizeName,
-} from '@agent-computers/computer';
+} from '@clutchbox/computer';
 
 export type ComputerFailure = {
   error:

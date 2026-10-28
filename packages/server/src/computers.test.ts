@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { type ComputerSize, FIRST_PROFILE, ProviderAccountRefused } from '@agent-computers/computer';
+import { type ComputerSize, FIRST_PROFILE, ProviderAccountRefused } from '@clutchbox/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';

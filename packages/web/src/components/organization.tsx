@@ -1,7 +1,15 @@
 'use client';
+import { useSession } from '@better-auth-ui/react';
+import {
+  useCancelInvitation,
+  useInviteMember,
+  useListOrganizationInvitations,
+  useListOrganizationMembers,
+  useUpdateMemberRole,
+} from '@better-auth-ui/react/plugins/organization';
 // The members and invitations parts adapt Better Auth UI v1.7.30's OrganizationMembers, OrganizationInvitations, and
 // InviteMemberDialog to our shared controls and inline errors, on its hooks. MIT license: auth/LICENSE.
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -10,17 +18,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@agent-computers/ui/components/alert-dialog';
-import { Badge } from '@agent-computers/ui/components/badge';
-import { Button, buttonVariants } from '@agent-computers/ui/components/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@agent-computers/ui/components/card';
+} from '@clutchbox/ui/components/alert-dialog';
+import { Badge } from '@clutchbox/ui/components/badge';
+import { Button, buttonVariants } from '@clutchbox/ui/components/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import {
   Dialog,
   DialogContent,
@@ -28,7 +29,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@agent-computers/ui/components/dialog';
+} from '@clutchbox/ui/components/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,18 +40,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@agent-computers/ui/components/dropdown-menu';
-import { Input } from '@agent-computers/ui/components/input';
-import { Label } from '@agent-computers/ui/components/label';
-import { ToggleGroup, ToggleGroupItem } from '@agent-computers/ui/components/toggle-group';
-import { useSession } from '@better-auth-ui/react';
-import {
-  useCancelInvitation,
-  useInviteMember,
-  useListOrganizationInvitations,
-  useListOrganizationMembers,
-  useUpdateMemberRole,
-} from '@better-auth-ui/react/plugins/organization';
+} from '@clutchbox/ui/components/dropdown-menu';
+import { Input } from '@clutchbox/ui/components/input';
+import { Label } from '@clutchbox/ui/components/label';
+import { ToggleGroup, ToggleGroupItem } from '@clutchbox/ui/components/toggle-group';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ellipsis } from 'lucide-react';
 import { useRouter } from 'next/navigation';

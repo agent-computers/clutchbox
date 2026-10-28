@@ -3,7 +3,7 @@
 Applies a capture to a Chromium browser context, so an agent's browser starts signed in to the sites you sync.
 
 ```ts
-import { applyCapture } from '@agent-computers/playwright';
+import { applyCapture } from '@clutchbox/playwright';
 import { chromium } from 'playwright';
 
 const browser = await chromium.launch();
@@ -21,7 +21,7 @@ It works on any Chromium Playwright drives: a launched browser, a persistent con
 A capture is the [capture format](../capture)'s `Capture`. Read a member's latest one from a Clutchbox server with an organization API key, which an owner or admin creates on the Developers page:
 
 ```ts
-import { applyCapture, fetchCapture, listMembers } from '@agent-computers/playwright';
+import { applyCapture, fetchCapture, listMembers } from '@clutchbox/playwright';
 
 const server = 'https://www.clutchbox.dev';
 const apiKey = process.env.CLUTCHBOX_API_KEY!; // ack_…

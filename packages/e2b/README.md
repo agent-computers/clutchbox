@@ -1,4 +1,4 @@
-# @agent-computers/e2b
+# @clutchbox/e2b
 
 Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome that pauses when idle, resumes with its memory, and stays signed in to the sites you sync. It implements the [`ComputerProvider`](../computer) interface: screenshots, mouse and keyboard, commands, Chrome DevTools Protocol (one command at a time, or a connection the server relays), file downloads, live view, and cookie sync.
 
@@ -14,13 +14,13 @@ E2B_API_KEY=... bun run --cwd packages/e2b build-template
 
 Set `E2B_COMPUTER_TEMPLATE` to build and use another name.
 
-E2B fixes a computer's CPUs and memory when its template is built, so there is one template per size (`COMPUTER_SIZES` in `@agent-computers/computer`): 2 vCPU · 4 GB uses the bare name, and 4 vCPU · 8 GB and 8 vCPU · 8 GB add `-2x` and `-4x`, after their size keys. The build makes all three, and a fork runs at the size of the computer it was snapshotted from.
+E2B fixes a computer's CPUs and memory when its template is built, so there is one template per size (`COMPUTER_SIZES` in `@clutchbox/computer`): 2 vCPU · 4 GB uses the bare name, and 4 vCPU · 8 GB and 8 vCPU · 8 GB add `-2x` and `-4x`, after their size keys. The build makes all three, and a fork runs at the size of the computer it was snapshotted from.
 
 ## Use it
 
 ```ts
-import { e2bComputerProvider } from '@agent-computers/e2b';
-import { toCdpCookie } from '@agent-computers/apply';
+import { e2bComputerProvider } from '@clutchbox/e2b';
+import { toCdpCookie } from '@clutchbox/apply';
 
 const provider = e2bComputerProvider(); // E2B_COMPUTER_TEMPLATE, or agent-computers-desktop
 const sandboxId = await provider.create('my-computer', 10 * 60_000);

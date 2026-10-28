@@ -1,4 +1,4 @@
-import { extensionClientMetadata } from '@agent-computers/server/browsers';
+import { extensionClientMetadata } from '@clutchbox/server/browsers';
 
 // /oauth/extension-client.json: the extension's OAuth client metadata. The server registers the client itself from the
 // same values (ensureExtensionClient), so this document is for reference, not discovery.

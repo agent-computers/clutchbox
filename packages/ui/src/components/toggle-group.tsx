@@ -1,8 +1,8 @@
 'use client';
 
-import { toggleVariants } from '@agent-computers/ui/components/toggle';
 import { Toggle as TogglePrimitive } from '@base-ui/react/toggle';
 import { ToggleGroup as ToggleGroupPrimitive } from '@base-ui/react/toggle-group';
+import { toggleVariants } from '@clutchbox/ui/components/toggle';
 import type { VariantProps } from 'class-variance-authority';
 import { cn } from 'cn';
 import * as React from 'react';

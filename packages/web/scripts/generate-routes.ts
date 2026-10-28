@@ -12,12 +12,12 @@ import { type RouteEntry, routeManifest } from '../src/route-manifest';
 // --group places a route in one of the app's route groups, such as sign-in in an (auth) group with a plain layout, so
 // it gets that group's layout.
 
-export const GENERATED = '// Generated from the route manifest in @agent-computers/web (src/route-manifest.ts) by its';
+export const GENERATED = '// Generated from the route manifest in @clutchbox/web (src/route-manifest.ts) by its';
 const header = `${GENERATED}\n// generate-routes script. Change the manifest and regenerate rather than editing this file.`;
 
 // The file's text. It must be what Biome would format it to, or `bun run format` and --check disagree.
 export function renderRoute(entry: RouteEntry): string {
-  const from = `'@agent-computers/web/routes/${entry.module}'`;
+  const from = `'@clutchbox/web/routes/${entry.module}'`;
   const { factory, aliases = {}, reexport = [], segment = {} } = entry;
   const lines = [header];
   const imported = [...(factory ? [factory.name] : []), ...Object.values(aliases)].sort();

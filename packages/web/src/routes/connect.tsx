@@ -1,4 +1,4 @@
-import { getPrincipal, signedOAuthClient } from '@agent-computers/server/auth';
+import { getPrincipal, signedOAuthClient } from '@clutchbox/server/auth';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';

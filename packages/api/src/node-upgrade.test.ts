@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { type AddressInfo, connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { databaseSchema } from '@agent-computers/server/database-schema';
+import { databaseSchema } from '@clutchbox/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';

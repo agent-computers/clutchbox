@@ -1,4 +1,4 @@
-import { serverProofPath } from '@agent-computers/capture';
+import { serverProofPath } from '@clutchbox/capture';
 import { type GetServices, unavailable } from '../services';
 
 // /.well-known/*: the auth server's discovery documents, and the file naming this server's origin, which the verified

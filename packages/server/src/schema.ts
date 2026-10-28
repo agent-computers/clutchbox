@@ -1,4 +1,4 @@
-import { COMPUTER_SIZE_NAMES } from '@agent-computers/computer';
+import { COMPUTER_SIZE_NAMES } from '@clutchbox/computer';
 import { relations, sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,

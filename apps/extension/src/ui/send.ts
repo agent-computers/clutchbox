@@ -1,4 +1,4 @@
-import type { CaptureRequest, Response, StatusResponse } from '@agent-computers/capture';
+import type { CaptureRequest, Response, StatusResponse } from '@clutchbox/capture';
 
 export async function send(request: CaptureRequest): Promise<StatusResponse> {
   const response: Response = await chrome.runtime.sendMessage(request);

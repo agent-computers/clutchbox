@@ -5,7 +5,7 @@ The developer REST API of a Clutchbox server, typed: read a member's latest sync
 It calls the server with an organization API key (`ack_…`), which an owner or admin creates on the Developers page. A key reads members' captures with the `captures` scope and opens computer sessions with the `computers` scope; new keys have both, and keys made before the `computers` scope have captures alone.
 
 ```ts
-import { createClient } from '@agent-computers/sdk';
+import { createClient } from '@clutchbox/sdk';
 import { chromium } from 'playwright-core';
 
 const clutchbox = createClient({ server: 'https://agents.example.com', apiKey: process.env.CLUTCHBOX_API_KEY! });

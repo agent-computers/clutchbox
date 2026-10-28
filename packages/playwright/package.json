@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/playwright",
+  "name": "@clutchbox/playwright",
   "version": "0.1.0",
   "description": "Sign Playwright and browser-use browsers in to your sites: apply synced cookies to a context or any Chrome over CDP.",
   "keywords": [
@@ -31,8 +31,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agent-computers/apply": "workspace:*",
-    "@agent-computers/capture": "workspace:*"
+    "@clutchbox/apply": "workspace:*",
+    "@clutchbox/capture": "workspace:*"
   },
   "peerDependencies": {
     "playwright-core": ">=1.40"

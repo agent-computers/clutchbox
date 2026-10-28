@@ -1,4 +1,4 @@
-import { type Response, type ServerResponse, serverOriginOfInput } from '@agent-computers/capture';
+import { type Response, type ServerResponse, serverOriginOfInput } from '@clutchbox/capture';
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { approvedServersKey } from '../controller';

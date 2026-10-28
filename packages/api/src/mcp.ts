@@ -1,6 +1,7 @@
 import 'server-only';
-import type { Auth } from '@agent-computers/server/auth';
-import type { Profile } from '@agent-computers/server/captures';
+import { requireMcpAuth } from '@better-auth/mcp';
+import type { Auth } from '@clutchbox/server/auth';
+import type { Profile } from '@clutchbox/server/captures';
 import {
   ACT_ACTION_ESTIMATE_MS,
   ACT_MAX_WAIT_MS,
@@ -9,7 +10,7 @@ import {
   FORK_UNUSED_MS,
   IDLE_PAUSE_MS,
   TYPE_KEY_DELAY_MS,
-} from '@agent-computers/server/computer-timing';
+} from '@clutchbox/server/computer-timing';
 import {
   accountRefusal,
   actionSchema,
@@ -26,21 +27,20 @@ import {
   type SyncSummary,
   sizeName,
   useComputerSession,
-} from '@agent-computers/server/computers';
-import type { Database } from '@agent-computers/server/database';
-import { defaultServerHooks, type Metering, type ServerHooks } from '@agent-computers/server/hooks';
-import { errorLabel, logError } from '@agent-computers/server/log';
-import { grantIsLive, liveMcpPrincipal, MCP_SCOPE, type McpPrincipal } from '@agent-computers/server/mcp';
-import type { Member } from '@agent-computers/server/organizations';
-import { noteAgentConnected, noteSetupStep } from '@agent-computers/server/setup';
+} from '@clutchbox/server/computers';
+import type { Database } from '@clutchbox/server/database';
+import { defaultServerHooks, type Metering, type ServerHooks } from '@clutchbox/server/hooks';
+import { errorLabel, logError } from '@clutchbox/server/log';
+import { grantIsLive, liveMcpPrincipal, MCP_SCOPE, type McpPrincipal } from '@clutchbox/server/mcp';
+import type { Member } from '@clutchbox/server/organizations';
+import { noteAgentConnected, noteSetupStep } from '@clutchbox/server/setup';
 import {
   markToolStep,
   recordToolCall,
   type ToolTrace,
   toolCallFailed,
   withToolTrace,
-} from '@agent-computers/server/tool-calls';
-import { requireMcpAuth } from '@better-auth/mcp';
+} from '@clutchbox/server/tool-calls';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { BrowserError, browserAction, browserInput, missingInput } from './browser';

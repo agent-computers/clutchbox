@@ -1,4 +1,4 @@
-import { type Capture, captureSchema } from '@agent-computers/capture';
+import { type Capture, captureSchema } from '@clutchbox/capture';
 
 // The Clutchbox TypeScript SDK: the developer REST API (/api/v1) of a Clutchbox server, under an organization API key
 // (`ack_…`) that an owner or admin creates on its Developers page. Read a member's latest synced sign-ins, or open a

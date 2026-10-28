@@ -8,9 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { toCdpCookie } from '@agent-computers/apply';
-import { FIRST_PROFILE } from '@agent-computers/computer';
-import { e2bComputerProvider, HELPER_DIR, REVISION, REVISION_FILE } from '@agent-computers/e2b';
+import { toCdpCookie } from '@clutchbox/apply';
+import { FIRST_PROFILE } from '@clutchbox/computer';
+import { e2bComputerProvider, HELPER_DIR, REVISION, REVISION_FILE } from '@clutchbox/e2b';
 import { WebSocket } from 'ws';
 import { bundle, cookie } from '../src/capture-fixtures';
 import {

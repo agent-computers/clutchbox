@@ -9,7 +9,7 @@ import {
   keyNamePattern,
   PROFILE_PATTERN,
   ProviderAccountRefused,
-} from '@agent-computers/computer';
+} from '@clutchbox/computer';
 import { Sandbox } from '@e2b/desktop';
 import { AuthenticationError, Sandbox as BaseSandbox, CommandExitError, SandboxError, TimeoutError } from 'e2b';
 import {

@@ -1,5 +1,5 @@
 {
-  "name": "@agent-computers/apply",
+  "name": "@clutchbox/apply",
   "version": "0.1.0",
   "description": "Apply synced browser sign-ins to any Chrome over CDP, writing only what changed, so AI agents start signed in.",
   "keywords": [
@@ -28,6 +28,6 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agent-computers/capture": "workspace:*"
+    "@clutchbox/capture": "workspace:*"
   }
 }

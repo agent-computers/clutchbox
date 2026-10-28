@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "jsx": "react-jsx", "paths": { "@agent-computers/ui/*": ["./src/*"] } },
+  "compilerOptions": { "jsx": "react-jsx", "paths": { "@clutchbox/ui/*": ["./src/*"] } },
   "include": ["src"]
 }

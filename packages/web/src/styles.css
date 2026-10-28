@@ -1,3 +1,3 @@
 /* The product's styles: the design system, plus this library's files, which an app's own scan never reaches. */
-@import "@agent-computers/ui/globals.css";
+@import "@clutchbox/ui/globals.css";
 @source "./**/*.{ts,tsx}";

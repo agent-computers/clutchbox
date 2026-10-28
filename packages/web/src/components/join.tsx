@@ -1,8 +1,8 @@
 'use client';
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
-import { Button, buttonVariants } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
 import { useAcceptInvitation, useInvitation, useRejectInvitation } from '@better-auth-ui/react/plugins/organization';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
+import { Button, buttonVariants } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';

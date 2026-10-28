@@ -1,7 +1,8 @@
 'use client';
+import { useCreateApiKey, useDeleteApiKey, useListApiKeys } from '@better-auth-ui/react/plugins/api-key';
 // The API keys part adapts Better Auth UI v1.7.30's ApiKeys, CreateApiKeyDialog, and DeleteApiKeyDialog to our shared
 // controls and inline errors, on its hooks. MIT license: auth/LICENSE.
-import { Alert, AlertDescription } from '@agent-computers/ui/components/alert';
+import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -10,12 +11,11 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@agent-computers/ui/components/alert-dialog';
-import { Button } from '@agent-computers/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@agent-computers/ui/components/card';
-import { Input } from '@agent-computers/ui/components/input';
-import { Label } from '@agent-computers/ui/components/label';
-import { useCreateApiKey, useDeleteApiKey, useListApiKeys } from '@better-auth-ui/react/plugins/api-key';
+} from '@clutchbox/ui/components/alert-dialog';
+import { Button } from '@clutchbox/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
+import { Input } from '@clutchbox/ui/components/input';
+import { Label } from '@clutchbox/ui/components/label';
 import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { organizationQuery } from '../lib/api';

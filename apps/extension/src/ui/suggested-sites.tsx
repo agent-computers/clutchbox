@@ -1,4 +1,4 @@
-import { type ExtensionConfig, type SuggestedSite, withCompanions } from '@agent-computers/capture';
+import { type ExtensionConfig, type SuggestedSite, withCompanions } from '@clutchbox/capture';
 import { Button } from './components/button';
 import { hint } from './sync-status';
 

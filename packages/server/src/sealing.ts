@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { type Capture, type CapturedCookie, captureSchema, cookieSchema } from '@agent-computers/capture';
+import { type Capture, type CapturedCookie, captureSchema, cookieSchema } from '@clutchbox/capture';
 import { z } from 'zod';
 import type { Member } from './organizations';
 
