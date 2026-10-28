@@ -86,9 +86,8 @@ const POLL_MS = 5000;
 
 // The signed-in app: a sidebar of pages, and the queries they share. Until the
 // user is set up, the sidebar marks each setup step done or to do, and the setup queries poll so the marks tick live
-// while the user works in the extension or an agent; after, it shows the computer's status. stars is the deployment
-// repository's star count, from the server, or null without one.
-export function AppShell({ user, stars, children }: { user: AppUser; stars: number | null; children: ReactNode }) {
+// while the user works in the extension or an agent; after, it shows the computer's status.
+export function AppShell({ user, children }: { user: AppUser; children: ReactNode }) {
   const router = useRouter();
   const setup = useQuery({ ...setupQuery, refetchInterval: query => (query.state.data?.setUpAt ? false : POLL_MS) });
   const setUp = !!setup.data?.setUpAt;
@@ -106,7 +105,7 @@ export function AppShell({ user, stars, children }: { user: AppUser; stars: numb
     <UserContext value={user}>
       <GuardContext value={guard}>
         <SidebarProvider>
-          <AppSidebar user={user} stars={stars} setup={setup.data} guard={guard} />
+          <AppSidebar user={user} setup={setup.data} guard={guard} />
           <SidebarInset id="main">
             <header className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
               <SidebarTrigger className="size-11" aria-label="Open the menu" />
@@ -131,12 +130,10 @@ export function AppShell({ user, stars, children }: { user: AppUser; stars: numb
 
 function AppSidebar({
   user,
-  stars,
   setup,
   guard,
 }: {
   user: AppUser;
-  stars: number | null;
   setup: SetupView | undefined;
   guard: RefObject<LeaveGuard | null>;
 }) {
@@ -206,7 +203,7 @@ function AppSidebar({
           >
             clutchbox
           </Link>
-          {shell.githubRepo && <StarLink repo={shell.githubRepo} stars={stars} className="-mr-2" />}
+          {shell.githubRepo && <StarLink repo={shell.githubRepo} className="-mr-2" />}
         </div>
         <OrganizationSwitcher onCreated={() => go('/app/organization')} onJoin={() => go('/join')} />
       </SidebarHeader>
