@@ -59,7 +59,9 @@ jobs:
   publish:
     needs: [version, check]
     if: needs.version.outputs.new == 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # GitHub's own runner: npm accepts provenance only from GitHub-hosted runners, and Blacksmith's count as
+    # self-hosted.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       id-token: write
