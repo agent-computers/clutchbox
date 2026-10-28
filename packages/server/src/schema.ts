@@ -614,6 +614,9 @@ export const computerUsage = pgTable(
     membershipId: membershipId().notNull(),
     month: date('month', { mode: 'string' }).notNull(),
     usedSeconds: integer('used_seconds').notNull().default(0),
+    // Seconds on the organization's own provider account (provider_accounts), which bills it directly: recorded, never
+    // spent from a credit or charged.
+    ownAccountSeconds: integer('own_account_seconds').notNull().default(0),
     ...timestamps(),
   },
   table => [unique('computer_usage_membership_month_unique').on(table.membershipId, table.month)],
@@ -698,4 +701,22 @@ export const billingSubscriptions = pgTable(
     index('billing_subscriptions_stripe_subscription_id_idx').on(table.stripeSubscriptionId),
     check('billing_subscriptions_status', oneOf(table.status, BILLING_SUBSCRIPTION_STATUSES)),
   ],
+);
+
+// An organization's own provider account, which runs all of its computers instead of the deployment's (hooks.ts,
+// providerAccount): its API key, sealed (sealing.ts, sealProviderKey). One per organization.
+export const PROVIDER_ACCOUNT_PROVIDERS = ['e2b'] as const;
+export const providerAccounts = pgTable(
+  'provider_accounts',
+  {
+    id: id(),
+    organizationId: text('organization_public_id')
+      .notNull()
+      .unique()
+      .references(() => organizations.publicId, { onDelete: 'cascade' }),
+    provider: text('provider', { enum: PROVIDER_ACCOUNT_PROVIDERS }).notNull(),
+    sealedApiKey: text('sealed_api_key').notNull(),
+    ...timestamps(),
+  },
+  table => [check('provider_accounts_provider', oneOf(table.provider, PROVIDER_ACCOUNT_PROVIDERS))],
 );

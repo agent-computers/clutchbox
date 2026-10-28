@@ -30,7 +30,7 @@ export { CDP_CLOSE } from '@agent-computers/server/cdp-relay';
 export type CdpDeps = {
   db: Database;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering'>;
+  hooks?: Pick<ServerHooks, 'metering'> & Partial<Pick<ServerHooks, 'providerAccount'>>;
   // Tests stand in for Vercel's upgrade.
   upgrade?: typeof upgradeWebSocket;
 };
@@ -43,7 +43,7 @@ const refuse = (error: string, status: number, extra: Record<string, unknown> = 
 export const failureStatus = ({ error }: Pick<ComputerFailure, 'error'>) =>
   error === 'session_not_found' || error === 'computer_not_found' || error === 'profile_not_found'
     ? 404
-    : error === 'credit_exhausted' || error === 'access_revoked'
+    : error === 'credit_exhausted' || error === 'access_revoked' || error === 'provider_account_refused'
       ? 403
       : 409;
 // The refusal's body, in the API key's words where the service's are an MCP agent's.
@@ -55,7 +55,11 @@ export const failureBody = ({ error, message, busyUntil, resetsAt }: ComputerFai
 });
 
 export function cdpHandler({ db, computers, hooks = defaultServerHooks, upgrade = upgradeWebSocket }: CdpDeps) {
-  const running = { provider: computers, metering: hooks.metering };
+  const running = {
+    provider: computers,
+    metering: hooks.metering,
+    ...(hooks.providerAccount && { accounts: hooks.providerAccount }),
+  };
   return async (request: Request): Promise<Response> => {
     // The platform cuts the connection CDP_MAX_DURATION_MS after the function starts.
     const deadlineMs = Date.now() + CDP_MAX_DURATION_MS;

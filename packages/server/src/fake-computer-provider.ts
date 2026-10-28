@@ -39,7 +39,8 @@ type FakeSandbox = {
 type FakeSnapshot = Pick<FakeSandbox, 'tabs' | 'profile' | 'cookies' | 'profiles' | 'revision' | 'timeZone' | 'public'>;
 // In-memory provider for tests. It records calls and keeps a Chrome-like cookie jar per computer;
 // it is NOT evidence about E2B or Chrome.
-export function fakeComputerProvider() {
+// `account` prefixes its IDs, so two fakes, as two provider accounts, never share one.
+export function fakeComputerProvider({ account = '' }: { account?: string } = {}) {
   const sandboxes = new Map<string, FakeSandbox>();
   const snapshots = new Map<string, FakeSnapshot>();
   // Every computer made, for its ID; calls.create counts those from the template, calls.fork those from a snapshot.
@@ -106,7 +107,7 @@ export function fakeComputerProvider() {
       calls.timeouts.push(timeoutMs);
       calls.sizes.push(size);
       await new Promise(resolve => setTimeout(resolve, createDelayMs));
-      const id = `sandbox-${++made}`;
+      const id = `${account}sandbox-${++made}`;
       sandboxes.set(id, {
         computerId,
         actions: [],
@@ -125,7 +126,7 @@ export function fakeComputerProvider() {
       if (createFromSnapshotFails) throw new Error('createFromSnapshot failed in fake');
       const snapshot = snapshots.get(snapshotId);
       if (!snapshot) throw new Error('snapshot not found');
-      const id = `sandbox-${++made}`;
+      const id = `${account}sandbox-${++made}`;
       sandboxes.set(id, {
         ...structuredClone(snapshot),
         computerId,
@@ -143,7 +144,7 @@ export function fakeComputerProvider() {
       if (snapshotFails) throw new Error('snapshot failed in fake');
       // Like E2B: a paused computer is resumed to take it.
       sandbox.paused = false;
-      const id = `snapshot-${calls.snapshot}`;
+      const id = `${account}snapshot-${calls.snapshot}`;
       const { tabs, profile, cookies, profiles, revision: helpers, timeZone, public: open } = sandbox;
       snapshots.set(
         id,

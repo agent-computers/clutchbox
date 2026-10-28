@@ -8,9 +8,10 @@ import {
   FIRST_PROFILE,
   keyNamePattern,
   PROFILE_PATTERN,
+  ProviderAccountRefused,
 } from '@agent-computers/computer';
 import { Sandbox } from '@e2b/desktop';
-import { Sandbox as BaseSandbox, CommandExitError, TimeoutError } from 'e2b';
+import { AuthenticationError, Sandbox as BaseSandbox, CommandExitError, SandboxError, TimeoutError } from 'e2b';
 import {
   CDP_BRIDGE_START_MS,
   CDP_BRIDGE_VERSION_MS,
@@ -703,19 +704,34 @@ const createOptions = (computerId: string, timeoutMs: number) => ({
   metadata: { computerId, app: 'agent-computers' },
 });
 
-export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE || TEMPLATE): ComputerProvider {
-  return {
+// Whether E2B refused the API key itself: a revoked or wrong key (401), or a team E2B blocks, such as for unpaid usage
+// (403).
+const refusesKey = (error: unknown) =>
+  error instanceof AuthenticationError ||
+  (error instanceof SandboxError && (error as { statusCode?: number }).statusCode === 403);
+
+// Computers on the E2B team of the deployment's E2B_API_KEY, or of `apiKey`, a team its owner brought, whose refusal
+// each method then throws as ProviderAccountRefused.
+export function e2bComputerProvider(
+  template = process.env.E2B_COMPUTER_TEMPLATE || TEMPLATE,
+  { apiKey }: { apiKey?: string } = {},
+): ComputerProvider {
+  const account = apiKey ? { apiKey } : {};
+  const provider: ComputerProvider = {
     name: 'e2b',
     revision: REVISION,
     async find(computerId) {
-      const [found] = await Sandbox.list({ query: { metadata: { computerId } } }).nextItems();
+      const [found] = await Sandbox.list({ ...account, query: { metadata: { computerId } } }).nextItems();
       return found?.sandboxId ?? null;
     },
     // E2B pauses (memory included) when timeoutMs lapses without another connect.
     async create(computerId, timeoutMs, size) {
       // The template's snapshot already runs the desktop and Chrome (START_DESKTOP). E2B fixes a computer's CPUs and
       // memory when its template is built, so each size has a template.
-      const sandbox = await BaseSandbox.create(templateFor(template, size), createOptions(computerId, timeoutMs));
+      const sandbox = await BaseSandbox.create(templateFor(template, size), {
+        ...account,
+        ...createOptions(computerId, timeoutMs),
+      });
       try {
         await sandbox.commands.run(`${HELPER_DIR}/ensure-chrome.sh`, { timeoutMs: ENSURE_CHROME_MS });
       } catch (error) {
@@ -728,30 +744,60 @@ export function e2bComputerProvider(template = process.env.E2B_COMPUTER_TEMPLATE
     // Chrome, so there is nothing to start.
     // The options replace the source's metadata, so a lookup by the source's computerId never finds a fork.
     async createFromSnapshot(snapshotId, computerId, timeoutMs) {
-      return (await BaseSandbox.create(snapshotId, createOptions(computerId, timeoutMs))).sandboxId;
+      return (await BaseSandbox.create(snapshotId, { ...account, ...createOptions(computerId, timeoutMs) })).sandboxId;
     },
     // E2B snapshots only a running sandbox (a paused one answers 404), so connect first, which resumes a paused one.
     async snapshot(sandboxId, timeoutMs) {
-      await BaseSandbox.connect(sandboxId, { timeoutMs, requestTimeoutMs: SNAPSHOT_REQUEST_MS });
-      return (await BaseSandbox.createSnapshot(sandboxId, { requestTimeoutMs: SNAPSHOT_REQUEST_MS })).snapshotId;
+      await BaseSandbox.connect(sandboxId, { ...account, timeoutMs, requestTimeoutMs: SNAPSHOT_REQUEST_MS });
+      return (await BaseSandbox.createSnapshot(sandboxId, { ...account, requestTimeoutMs: SNAPSHOT_REQUEST_MS }))
+        .snapshotId;
     },
     async deleteSnapshot(snapshotId) {
       // False: already gone. E2B refuses (400) while a computer made from the snapshot remains.
-      await BaseSandbox.deleteSnapshot(snapshotId, { requestTimeoutMs: PROVIDER_REQUEST_MS });
+      await BaseSandbox.deleteSnapshot(snapshotId, { ...account, requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
     async connect(sandboxId, timeoutMs) {
       // Connecting resumes a paused computer; on a running one it only extends the timeout.
-      return session(await Sandbox.connect(sandboxId, { timeoutMs }));
+      return session(await Sandbox.connect(sandboxId, { ...account, timeoutMs }));
     },
     async pause(sandboxId) {
       // Memory and filesystem; false (already paused) is fine. Bounded like setTimeout.
-      await BaseSandbox.pause(sandboxId, { requestTimeoutMs: PROVIDER_REQUEST_MS });
+      await BaseSandbox.pause(sandboxId, { ...account, requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
     async setTimeout(sandboxId, timeoutMs) {
-      await BaseSandbox.setTimeout(sandboxId, timeoutMs, { requestTimeoutMs: PROVIDER_REQUEST_MS });
+      await BaseSandbox.setTimeout(sandboxId, timeoutMs, { ...account, requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
     async kill(sandboxId) {
-      await Sandbox.kill(sandboxId, { requestTimeoutMs: PROVIDER_REQUEST_MS });
+      await Sandbox.kill(sandboxId, { ...account, requestTimeoutMs: PROVIDER_REQUEST_MS });
     },
   };
+  if (!apiKey) return provider;
+  const refused = (error: unknown) => {
+    throw refusesKey(error) ? new ProviderAccountRefused(error) : error;
+  };
+  return {
+    ...provider,
+    find: computerId => provider.find(computerId).catch(refused),
+    create: (computerId, timeoutMs, size) => provider.create(computerId, timeoutMs, size).catch(refused),
+    createFromSnapshot: (snapshotId, computerId, timeoutMs) =>
+      provider.createFromSnapshot(snapshotId, computerId, timeoutMs).catch(refused),
+    snapshot: (sandboxId, timeoutMs) => provider.snapshot(sandboxId, timeoutMs).catch(refused),
+    deleteSnapshot: snapshotId => provider.deleteSnapshot(snapshotId).catch(refused),
+    connect: (sandboxId, timeoutMs) => provider.connect(sandboxId, timeoutMs).catch(refused),
+    pause: sandboxId => provider.pause(sandboxId).catch(refused),
+    setTimeout: (sandboxId, timeoutMs) => provider.setTimeout(sandboxId, timeoutMs).catch(refused),
+    kill: sandboxId => provider.kill(sandboxId).catch(refused),
+  };
+}
+
+// Whether E2B accepts an API key, with one cheap call (listing a single sandbox): false when it refuses the key itself
+// (refusesKey); any other failure throws.
+export async function e2bKeyAccepted(apiKey: string) {
+  try {
+    await Sandbox.list({ apiKey, limit: 1, requestTimeoutMs: PROVIDER_REQUEST_MS }).nextItems();
+    return true;
+  } catch (error) {
+    if (refusesKey(error)) return false;
+    throw error;
+  }
 }

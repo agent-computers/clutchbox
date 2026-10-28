@@ -11,6 +11,7 @@ import {
   TYPE_KEY_DELAY_MS,
 } from '@agent-computers/server/computer-timing';
 import {
+  accountRefusal,
   actionSchema,
   type Caller,
   type ComputerAction,
@@ -98,9 +99,10 @@ const recordCalls =
       });
     }
   };
-const failure = (value: ComputerFailure) =>
+const failure = (value: ComputerFailure, extra: Record<string, unknown> = {}) =>
   result(
     {
+      ...extra,
       error: value.error,
       message: value.message,
       ...(value.busyUntil ? { busy_until: value.busyUntil.toISOString() } : {}),
@@ -214,8 +216,11 @@ function registerComputerTools(
     clientId: principal.clientId,
     guard: tx => grantIsLive(tx, principal),
   };
-  const unavailable = (extra: Record<string, unknown> = {}) =>
-    result(
+  // A thrown failure: the organization's own provider account refusing it (accountRefusal), or else no answer.
+  const unavailable = (extra: Record<string, unknown> = {}, error?: unknown) => {
+    const refused = accountRefusal(error);
+    if (refused) return failure(refused, extra);
+    return result(
       {
         ...extra,
         error: 'computer_unavailable',
@@ -224,6 +229,7 @@ function registerComputerTools(
       },
       true,
     );
+  };
   // Every result within a computer session names it and carries the hand-back notice, if any: said once, in the next
   // call's result, or a reopen's.
   const handBack = (handle: Pick<SessionHandle, 'userHadControl'>) =>
@@ -249,7 +255,7 @@ function registerComputerTools(
       return await work(handle, deadline);
     } catch (error) {
       toolCallFailed('mcp tool', error);
-      return unavailable(handle ? state(handle) : {});
+      return unavailable(handle ? state(handle) : {}, error);
     } finally {
       // Ends the call: the computer pauses after the idle minute.
       await handle?.done();
@@ -319,8 +325,13 @@ function registerComputerTools(
           account_email: principal.email,
           browser_sync: syncNote(opened.sync, principal.email),
           sign_in_help: signInHelp,
-          runs_on: { provider: computers.provider.name, size: sizeName(opened.computer.size) },
-          ...(price ? { price_per_minute: price } : {}),
+          // On the organization's own account, its provider charges it directly, at its own price.
+          runs_on: {
+            provider: computers.provider.name,
+            account: opened.computer.account,
+            size: sizeName(opened.computer.size),
+          },
+          ...(price && opened.computer.account === 'deployment' ? { price_per_minute: price } : {}),
           live_view_url: `${origin}/app/computer?computer=${opened.computer.id}`,
           computers: others.map(fork => ({
             computer_id: fork.computerId,
@@ -333,7 +344,7 @@ function registerComputerTools(
       } catch (error) {
         toolCallFailed('mcp computer_open', error);
         // The session started: name it so the agent can retry within it.
-        return unavailable(handle ? { session_id: handle.sessionId } : {});
+        return unavailable(handle ? { session_id: handle.sessionId } : {}, error);
       } finally {
         await handle?.done();
       }
@@ -355,7 +366,7 @@ function registerComputerTools(
         return result({ closed: true, ...(await credit(computers.metering, db, member)) });
       } catch (error) {
         toolCallFailed('mcp computer_close', error);
-        return unavailable();
+        return unavailable({}, error);
       }
     }),
   );
@@ -495,7 +506,7 @@ export function createMcpEndpoint({
   auth: Auth;
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & Partial<Pick<ServerHooks, 'limits'>>;
+  hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & Partial<Pick<ServerHooks, 'limits' | 'providerAccount'>>;
 }) {
   const resource = `${origin}/api/mcp`;
   const serve = (request: Request, principal: McpPrincipal, member: Member) =>
@@ -509,7 +520,12 @@ export function createMcpEndpoint({
         const recorded = recordCalls(db, principal, member);
         registerComputerTools(server, {
           db,
-          computers: { provider: computers, metering: hooks.metering, ...(hooks.limits && { limits: hooks.limits }) },
+          computers: {
+            provider: computers,
+            metering: hooks.metering,
+            ...(hooks.limits && { limits: hooks.limits }),
+            ...(hooks.providerAccount && { accounts: hooks.providerAccount }),
+          },
           origin,
           principal,
           member,

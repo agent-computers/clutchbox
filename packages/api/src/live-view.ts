@@ -36,7 +36,7 @@ export type LiveViewDeps = {
   // The web app's origin, the only one allowed to open the socket.
   origin: string;
   computers: ComputerProvider;
-  hooks?: Pick<ServerHooks, 'operatorAdmin'>;
+  hooks?: Pick<ServerHooks, 'operatorAdmin'> & Partial<Pick<ServerHooks, 'providerAccount'>>;
   // Tests stand in for Vercel's upgrade.
   upgrade?: typeof upgradeWebSocket;
 };
@@ -81,7 +81,13 @@ export function liveViewHandler({
           ? liveViewAccess(db, member, lease, new Date(), target)
           : ('none' as const);
       // Wakes a paused computer until the holds let it pause, as the heartbeat that charged them asked.
-      const session = await connectLiveView(db, computers, member, lease, target);
+      const session = await connectLiveView(
+        db,
+        { provider: computers, ...(hooks.providerAccount && { accounts: hooks.providerAccount }) },
+        member,
+        lease,
+        target,
+      );
       // No computer yet, or this page load holds no live watch or takeover on it (its heartbeat comes first).
       if (session === 'not_found') return refuse('not_found', 404);
       if (session === 'not_watching') return refuse('not_watching', 409);

@@ -23,8 +23,8 @@ function buildServices(hooks: ServerHooks, { extendApi }: ServicesOptions) {
     tenancy: hooks.tenancy,
     limits: hooks.limits,
   });
-  // The provider account's computers, or else the deployment's own from its config.
-  const computers = hooks.providerAccount(config) ?? providerFromConfig(config);
+  // The deployment's computers, from its config; an organization on its own account gets its own (hooks.providerAccount).
+  const computers = providerFromConfig(config);
   return {
     config,
     db,

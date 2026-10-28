@@ -1,7 +1,7 @@
 import 'server-only';
 import { and, asc, count, eq, inArray, sql } from 'drizzle-orm';
 import { removeAllBrowsers } from './browsers';
-import { type ComputerProvider, destroyProviderComputers } from './computers';
+import { destroyProviderComputers, type Providers, providerFor } from './computers';
 import type { Database } from './database';
 import { type Limits, noLimits } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
@@ -209,7 +209,7 @@ type Check = (tx: Transaction) => Promise<MembersFailure | null>;
 // leave it without one; a refusal only that second time (a race) leaves the member in, with tokens to reconnect. The
 // computer rows are locked while the membership goes, so a create in flight finds no row to record its computer in and
 // kills it (computers.ts, ensureComputer and provisionFork).
-async function endMembership(db: Database, provider: ComputerProvider, member: Member, check: Check) {
+async function endMembership(db: Database, providers: Providers, member: Member, check: Check) {
   const refused = await db.transaction(async tx => {
     await lockOrganization(tx, member.organizationId);
     return check(tx);
@@ -241,16 +241,17 @@ async function endMembership(db: Database, provider: ComputerProvider, member: M
     return { computers, snapshots: snapshots.map(snapshot => snapshot.id) };
   });
   if ('error' in ended) return ended;
+  const { provider } = await providerFor(providers, db, member.organizationId);
   await destroyProviderComputers(provider, ended.computers, ended.snapshots);
   return null;
 }
 
 // An owner removes anyone else, an admin removes admins and members. Leaving is how one removes oneself.
-export async function removeMember(db: Database, provider: ComputerProvider, actor: Member, membershipId: string) {
+export async function removeMember(db: Database, providers: Providers, actor: Member, membershipId: string) {
   const target = await memberIn(db, actor.organizationId, membershipId);
   if (!target) return { error: 'not_found' } as const;
   const member = { userId: target.userId, membershipId: target.id, organizationId: actor.organizationId };
-  const refused = await endMembership(db, provider, member, async tx => {
+  const refused = await endMembership(db, providers, member, async tx => {
     const actorRole = await roleOf(tx, actor);
     const row = await memberIn(tx, actor.organizationId, membershipId);
     if (!actorRole || !manages(actorRole)) return { error: 'forbidden' };
@@ -262,8 +263,8 @@ export async function removeMember(db: Database, provider: ComputerProvider, act
 }
 
 // Leaves the organization, unless the member is its last owner.
-export async function leaveOrganization(db: Database, provider: ComputerProvider, member: Member) {
-  const refused = await endMembership(db, provider, member, async tx => {
+export async function leaveOrganization(db: Database, providers: Providers, member: Member) {
+  const refused = await endMembership(db, providers, member, async tx => {
     const role = await roleOf(tx, member);
     if (!role) return { error: 'not_found' };
     if (role === 'owner' && (await ownerCount(tx, member.organizationId)) <= 1) return { error: 'last_owner' };

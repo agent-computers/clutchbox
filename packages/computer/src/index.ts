@@ -123,6 +123,15 @@ export interface ComputerSession {
   // public traffic until it is reset, and live view refuses it.
   readonly isPrivate: boolean;
 }
+// Thrown by a provider on an account its owner brought (such as an organization's own E2B API key) when the provider
+// refuses that account: the key was revoked, or the account can't pay. Only someone who manages the account can fix it.
+export class ProviderAccountRefused extends Error {
+  readonly code = 'provider_account_refused';
+  constructor(cause?: unknown) {
+    super('The provider refused the account', { cause });
+    this.name = 'ProviderAccountRefused';
+  }
+}
 export interface ComputerProvider {
   // Who runs the computers, as agents are told, such as "e2b".
   name: string;

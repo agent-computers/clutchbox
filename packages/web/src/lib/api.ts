@@ -23,6 +23,8 @@ export type ComputerView = {
   capture: { completedAt: string; uploadedAt: string; cookieCount: number } | null;
   // The size the member chose; the main computer runs at its own, which a change of size resets onto the new one.
   size: ComputerSize;
+  // Where the member's computers run: the organization's own provider account, or the deployment's.
+  account: 'organization' | 'deployment';
   computer: {
     status: string;
     size: ComputerSize;

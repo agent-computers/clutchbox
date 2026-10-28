@@ -85,3 +85,14 @@ export function sealAppliedCapture(applied: AppliedCapture, owner: Owner, comput
 export function openAppliedCapture(sealed: string, owner: Owner, computerId: string, key = captureKey()) {
   return appliedSchema.parse(open(sealed, aad('applied-capture', owner, [computerId]), key));
 }
+
+// An organization's own provider API key (provider_accounts.sealed_api_key), bound to the organization's public ID
+// rather than a membership, since it is the organization's.
+const providerKeyAad = (organizationId: string) =>
+  Buffer.from(['agent-computers/provider-key/v2', `organization-${organizationId}`].join(':'));
+export function sealProviderKey(apiKey: string, organizationId: string, key = captureKey()) {
+  return seal(apiKey, providerKeyAad(organizationId), key);
+}
+export function openProviderKey(sealed: string, organizationId: string, key = captureKey()) {
+  return openText(sealed, providerKeyAad(organizationId), key);
+}

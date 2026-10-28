@@ -25,7 +25,7 @@ describe('computer sessions over REST', () => {
     const { id: keyId, client } = await newKey(admin.cookie);
     const session = await client.computers.open({ member: worker.publicId, label: 'Scrape' });
     expect(SESSION_ID_PATTERN.test(session.id)).toBe(true);
-    expect(session.computer).toEqual({ id: expect.any(String), label: 'Scrape', created: true });
+    expect(session.computer).toEqual({ id: expect.any(String), label: 'Scrape', created: true, account: 'deployment' });
     expect(session.cdpUrl).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/api\/v1\/cdp\?token=[A-Za-z0-9_-]{43}$/);
     expect(session.liveViewUrl).toBe(`${developer.origin}/app/computer?computer=${session.computer.id}`);
     expect(session.sync).toEqual({ status: 'none' });

@@ -65,6 +65,10 @@ function ComputerStats({ view }: { view: ComputerView }) {
           },
         ]
       : []),
+    // On the organization's own provider account, which bills it directly, so no credit applies.
+    ...(view.account === 'organization'
+      ? [{ label: 'Runs on', value: "Your organization's own account", note: 'Its provider bills it directly' }]
+      : []),
     used
       ? { label: 'Last used by', value: used.name, note: when(used.at) }
       : { label: 'Last used by', value: 'No agent yet', note: 'Ask a connected agent to open it.' },

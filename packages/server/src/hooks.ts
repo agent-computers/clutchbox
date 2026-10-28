@@ -1,7 +1,6 @@
 import 'server-only';
 import type { ComputerProvider, ComputerSize } from '@agent-computers/computer';
 import type { BetterAuthPlugin } from 'better-auth';
-import type { ServerConfig } from './config';
 import type { Database } from './database';
 import { type Member, singleOrganization, type Tenancy } from './organizations';
 
@@ -92,9 +91,10 @@ export type ServerHooks = {
   limits: Limits;
   operatorAdmin: OperatorAdmin;
   authPlugins(db: Database): AuthPlugins;
-  // Computers on a provider account other than the deployment's; undefined falls back to providerFromConfig
-  // (the deployment's E2B_API_KEY).
-  providerAccount(config: ServerConfig): ComputerProvider | undefined;
+  // The provider on the organization's own account (an E2B team it brought), which then runs all of its computers;
+  // null runs them on the deployment's (providerFromConfig, its E2B_API_KEY). Read on every computer call, so it
+  // should be cheap.
+  providerAccount(db: Database, organizationId: string): Promise<ComputerProvider | null>;
   // Which organization a new account joins (organizations.ts). The migration runner takes the same choice for accounts
   // made before organizations, so a deployment passes it there too.
   tenancy: Tenancy;
@@ -104,6 +104,6 @@ export const defaultServerHooks: ServerHooks = {
   limits: noLimits,
   operatorAdmin: noOperatorAdmin,
   authPlugins: noAuthPlugins,
-  providerAccount: () => undefined,
+  providerAccount: async () => null,
   tenancy: singleOrganization,
 };

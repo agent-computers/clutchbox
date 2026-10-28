@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { type ComputerSize, FIRST_PROFILE } from '@agent-computers/computer';
+import { type ComputerSize, FIRST_PROFILE, ProviderAccountRefused } from '@agent-computers/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -11,6 +11,7 @@ import { removeBrowser } from './browsers';
 import { bundle, cookie } from './capture-fixtures';
 import { deleteCaptures } from './captures';
 import {
+  accountRefusal,
   type Caller,
   type Computers,
   closeComputerSession,
@@ -26,6 +27,7 @@ import {
   liveViewStatus,
   MAX_CLIPBOARD_BYTES,
   openComputerSession,
+  resetOrganizationComputers,
   SESSION_ID_PATTERN,
   setComputerSize,
   setLiveViewClipboard,
@@ -204,7 +206,7 @@ describe('main computer', () => {
     const a = await user('a');
     const first = await open(a);
     const mainId = (await mainRow()).id;
-    expect(await deleteMainComputer(db, fake.provider, a)).toBe(true);
+    expect(await deleteMainComputer(db, { provider: fake.provider }, a)).toBe(true);
     expect(fake.calls.kill).toBe(2);
     expect(fake.sandboxes.size).toBe(0);
     expect(fake.snapshots.size).toBe(0);
@@ -224,7 +226,7 @@ describe('main computer', () => {
       expect(fake.calls.create).toBe(1);
       expect(await db.select().from(schema.computers)).toHaveLength(1);
     });
-    await deleteMainComputer(db, fake.provider, a);
+    await deleteMainComputer(db, { provider: fake.provider }, a);
     expect(await opening).toMatchObject({ error: 'starting' });
     expect(fake.sandboxes.size).toBe(0);
     expect(fake.calls.kill).toBe(1);
@@ -268,14 +270,14 @@ describe('sizes', () => {
     const a = await user('a');
     const b = await user('b');
     // Chosen before there is a computer: nothing to reset.
-    expect(await setComputerSize(db, fake.provider, a, '2x')).toBe(false);
+    expect(await setComputerSize(db, { provider: fake.provider }, a, '2x')).toBe(false);
     const first = await open(a);
     expect(fake.calls.sizes).toEqual(['2x']);
     expect((await db.select({ size: schema.computers.size }).from(schema.computers)).map(row => row.size)).toEqual([
       '2x',
       '2x',
     ]);
-    expect(await computerView(db, metering, a)).toMatchObject({ size: '2x', computer: { size: '2x' } });
+    expect(await computerView(db, { metering: metering }, a)).toMatchObject({ size: '2x', computer: { size: '2x' } });
     // The fork's running time is charged at its size.
     at('2026-10-20T12:00:30Z');
     expect(await use(a, first.sessionId)).not.toHaveProperty('error');
@@ -284,14 +286,14 @@ describe('sizes', () => {
     await open(b);
     expect(fake.calls.sizes).toEqual(['2x', '1x']);
     // The same size changes nothing; another resets main and its fork, and the next open creates it at the new size.
-    expect(await setComputerSize(db, fake.provider, a, '2x')).toBe(false);
+    expect(await setComputerSize(db, { provider: fake.provider }, a, '2x')).toBe(false);
     expect(fake.calls.kill).toBe(0);
-    expect(await setComputerSize(db, fake.provider, a, '4x')).toBe(true);
+    expect(await setComputerSize(db, { provider: fake.provider }, a, '4x')).toBe(true);
     expect(fake.calls.kill).toBe(2);
-    expect(await computerView(db, metering, a)).toMatchObject({ size: '4x', computer: null });
+    expect(await computerView(db, { metering: metering }, a)).toMatchObject({ size: '4x', computer: null });
     await open(a);
     expect(fake.calls.sizes).toEqual(['2x', '1x', '4x']);
-    expect(await computerView(db, metering, b)).toMatchObject({ size: '1x', computer: { size: '1x' } });
+    expect(await computerView(db, { metering: metering }, b)).toMatchObject({ size: '1x', computer: { size: '1x' } });
   });
 });
 
@@ -333,15 +335,91 @@ describe('memberships', () => {
     expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
     expect(await liveViewAccess(db, team, page, undefined, teamFork)).toBe('control');
     expect(await liveViewAccess(db, a, page, undefined, teamFork)).toBe('none');
-    expect(await setLiveViewClipboard(db, fake.provider, a, page, 'x', teamFork)).toBe('not_in_control');
+    expect(await setLiveViewClipboard(db, { provider: fake.provider }, a, page, 'x', teamFork)).toBe('not_in_control');
     // Resetting one membership's computers leaves the other's and its session.
-    expect(await deleteMainComputer(db, fake.provider, team)).toBe(true);
+    expect(await deleteMainComputer(db, { provider: fake.provider }, team)).toBe(true);
     expect((await db.select().from(schema.computers)).map(row => row.membershipId)).toEqual([
       a.membershipId,
       a.membershipId,
     ]);
     expect(await use(a, personal.sessionId)).not.toHaveProperty('error');
-    expect(await computerView(db, metering, team)).toMatchObject({ computer: null });
+    expect(await computerView(db, { metering: metering }, team)).toMatchObject({ computer: null });
+  });
+});
+
+describe('provider accounts', () => {
+  // Organization a on a provider account of its own; b on the deployment's.
+  const ownAccount = async () => {
+    const own = fakeComputerProvider({ account: 'own-' });
+    const [a, b] = [await user('a'), await user('b')];
+    const accounts = vi.fn(async (_db: Database, organizationId: string) =>
+      organizationId === a.organizationId ? own.provider : null,
+    );
+    computers = { provider: fake.provider, metering, accounts };
+    return { own, a, b, accounts };
+  };
+  it("runs every computer of an organization on its own account, and the others' on the deployment's", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    at('2026-10-01T12:00:00Z');
+    const { own, a, b } = await ownAccount();
+    const mine = await open(a);
+    const theirs = await open(b);
+    expect(mine.computer.account).toBe('organization');
+    expect(theirs.computer.account).toBe('deployment');
+    expect({ create: own.calls.create, fork: own.calls.fork }).toEqual({ create: 1, fork: 1 });
+    expect({ create: fake.calls.create, fork: fake.calls.fork }).toEqual({ create: 1, fork: 1 });
+    at('2026-10-01T12:00:30Z');
+    expect(await use(a, mine.sessionId)).not.toHaveProperty('error');
+    expect(await computerView(db, computers, a)).toMatchObject({ account: 'organization' });
+    expect(await computerView(db, computers, b)).toMatchObject({ account: 'deployment' });
+    // Live view connects on the organization's account.
+    const page = randomUUID();
+    const fork = { computerId: mine.computer.id };
+    await takeOverComputer(db, computers, a, page, fork);
+    expect(await connectLiveView(db, computers, a, page, fork)).toHaveProperty('isPrivate', true);
+    await handBackComputer(db, computers, a, page, fork);
+    // Its time is still metered.
+    expect(await used(a)).toEqual([['2026-10-01', 30]]);
+    // The sweep any member's close runs kills each expired fork on its own organization's account.
+    await closeComputerSession(db, computers, caller(a), mine.sessionId);
+    await closeComputerSession(db, computers, caller(b), theirs.sessionId);
+    at('2026-10-09T12:00:00Z');
+    const later = await open(b);
+    await closeComputerSession(db, computers, caller(b), later.sessionId);
+    expect(await listForks(db, a)).toEqual([]);
+    expect([...own.sandboxes.values()].map(entry => entry.computerId)).not.toContain(mine.computer.id);
+    expect(own.calls.kill).toBe(1);
+    // Resetting the main computer deletes it on the organization's account.
+    expect(await deleteMainComputer(db, computers, a)).toBe(true);
+    expect(own.sandboxes.size).toBe(0);
+    expect(fake.sandboxes.size).toBe(2);
+  });
+  it("resets an organization's computers on the account they ran on, with the switch in the same transaction", async () => {
+    const { own, a, b } = await ownAccount();
+    const teammate = await join((await user('c')).userId, a.organizationId);
+    await open(a);
+    await open(teammate);
+    await open(b);
+    let switched = false;
+    await resetOrganizationComputers(db, own.provider, a.organizationId, async tx => {
+      expect(await tx.select().from(schema.computers)).toHaveLength(2);
+      switched = true;
+    });
+    expect(switched).toBe(true);
+    expect(own.sandboxes.size).toBe(0);
+    expect(own.snapshots.size).toBe(0);
+    expect((await db.select().from(schema.computers)).every(row => row.membershipId === b.membershipId)).toBe(true);
+    expect(fake.sandboxes.size).toBe(2);
+    // The next open starts the main computer again.
+    expect((await open(a)).computer.created).toBe(true);
+    expect(own.calls.create).toBe(3);
+  });
+  it("answers a refusal of the organization's own account with its own failure", async () => {
+    const { own, a } = await ownAccount();
+    vi.spyOn(own.provider, 'create').mockRejectedValueOnce(new ProviderAccountRefused());
+    const error = await openComputerSession(db, computers, caller(a)).catch(thrown => thrown);
+    expect(accountRefusal(error)).toMatchObject({ error: 'provider_account_refused' });
+    expect(accountRefusal(new Error('timeout'))).toBeNull();
   });
 });
 
@@ -355,6 +433,7 @@ describe('forks', () => {
     await claude.done();
     const chatgpt = await open(a, 'chatgpt');
     expect(claude.computer).toEqual({
+      account: 'deployment',
       id: expect.stringMatching(/^cmp_/),
       label: 'Order history',
       created: true,
@@ -389,7 +468,7 @@ describe('forks', () => {
     (await sandboxOf(id)).tabs = ['https://example.com/work'];
     await saveFromBrowser(db, a, bundle([cookie({ value: 'new' })], new Date('2026-10-20T11:00:00Z')));
     const reopened = await open(a, 'chatgpt', undefined, id);
-    expect(reopened.computer).toEqual({ id, label: null, created: false, size: '1x' });
+    expect(reopened.computer).toEqual({ account: 'deployment', id, label: null, created: false, size: '1x' });
     expect(reopened.sync).toMatchObject({ status: 'applied', sitesUpdated: 1 });
     // The same fork, resumed with its work, and the newest sign-in.
     expect(fake.calls.fork).toBe(1);
@@ -595,7 +674,7 @@ describe('forks', () => {
       .mockRejectedValueOnce(new Error('busy'));
     await deleteFork(db, computers, caller(a, 'claude'), first.computer.id);
     expect(await snapshotRows()).toHaveLength(2);
-    await sweepForks(db, fake.provider);
+    await sweepForks(db, { provider: fake.provider });
     expect(deleteSnapshot).toHaveBeenCalledTimes(3);
     expect(await snapshotRows()).toHaveLength(1);
   });
@@ -734,7 +813,7 @@ describe('forks', () => {
     expect([...fake.sandboxes.values()].map(entry => entry.computerId)).not.toContain(abandoned);
     // One opened since is kept.
     at('2026-10-12T13:00:00Z');
-    await sweepForks(db, fake.provider);
+    await sweepForks(db, { provider: fake.provider });
     expect((await listForks(db, a)).map(fork => fork.computerId)).toEqual([]);
     expect(await listForks(db, b)).toHaveLength(1);
   });
@@ -1558,7 +1637,7 @@ describe('metering', () => {
     if ('error' in opened) throw new Error(opened.error);
     await opened.done();
     expect(await closeComputerSession(db, defaults, caller(a), opened.sessionId)).toEqual({ closed: true });
-    expect((await computerView(db, noMetering, a)).usage).toBeNull();
+    expect((await computerView(db, { metering: noMetering }, a)).usage).toBeNull();
     expect(await liveViewStatus(db, noMetering, a, randomUUID())).not.toHaveProperty('creditExhausted');
   });
 });
@@ -1596,7 +1675,7 @@ describe('live view', () => {
     expect(await liveViewAccess(db, a, lease(), undefined, fork)).toBe('none');
     // The main computer is not taken over.
     expect(await liveViewAccess(db, a, page)).toBe('none');
-    expect((await computerView(db, metering, a)).computer).toMatchObject({ inLiveView: false });
+    expect((await computerView(db, { metering: metering }, a)).computer).toMatchObject({ inLiveView: false });
     at('2026-10-20T12:00:30Z');
     const waiting = await useComputerSession(db, computers, caller(a, claudeCode), agent.sessionId);
     expect(waiting).toMatchObject({ error: 'user_in_control' });
@@ -1761,7 +1840,7 @@ describe('live view', () => {
     // The 10 seconds paused are not booked.
     expect(await used(a)).toEqual([]);
     // The relay connects for the watch, asking the provider to run the computer to the watch's lapse.
-    expect(await connectLiveView(db, fake.provider, a, page, fork)).toHaveProperty('isPrivate', true);
+    expect(await connectLiveView(db, { provider: fake.provider }, a, page, fork)).toHaveProperty('isPrivate', true);
     expect(fake.calls.timeouts.at(-1)).toBe(75_000);
     // Watching is not a session boundary: an agent reopens as usual, and its close leaves the fork running.
     const next = await open(a, 'claude', undefined, agent.computer.id);
@@ -1875,7 +1954,7 @@ describe('live view', () => {
     const agent = await open(a, 'claude');
     const page = lease();
     await takeOver(a, page);
-    await deleteMainComputer(db, fake.provider, a);
+    await deleteMainComputer(db, { provider: fake.provider }, a);
     expect(await liveViewAccess(db, a, page)).toBe('none');
     expect(await beat(a, page, 'released')).toMatchObject({ computer: 'none', takeover: null });
     expect(await use(a, agent.sessionId, 'claude')).toMatchObject({ error: 'session_not_found' });
@@ -1938,7 +2017,7 @@ describe('live view', () => {
     const b = await user('b');
     const page = lease();
     const paste = (member: Member, id: string, text: string) =>
-      setLiveViewClipboard(db, fake.provider, member, id, text);
+      setLiveViewClipboard(db, { provider: fake.provider }, member, id, text);
     expect(await paste(a, page, 'x')).toBe('not_in_control');
     await beat(a, page, 'visible');
     // Watching is not control.
@@ -1970,8 +2049,8 @@ describe('live view', () => {
     expect(await takeOverComputer(db, computers, a, page)).toMatchObject({ error: 'needs_reset' });
     expect(await mainRow()).toMatchObject({ takeoverLease: null });
     await beat(a, page, 'visible');
-    expect(await connectLiveView(db, fake.provider, a, page)).toBe('needs_reset');
-    await deleteMainComputer(db, fake.provider, a);
+    expect(await connectLiveView(db, { provider: fake.provider }, a, page)).toBe('needs_reset');
+    await deleteMainComputer(db, { provider: fake.provider }, a);
     expect(await takeOver(a, page)).toMatchObject({ takeover: { mine: true } });
   });
   it('rolls the takeover back when the computer cannot be reached', async () => {

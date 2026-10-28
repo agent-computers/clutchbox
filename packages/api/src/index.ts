@@ -42,6 +42,7 @@ import {
 } from '@agent-computers/server/captures';
 import { CALL_BUDGET_MS, EXEC_MAX_SECONDS, IDLE_PAUSE_MS } from '@agent-computers/server/computer-timing';
 import {
+  accountRefusal,
   COMPUTER_ID_PATTERN,
   COMPUTER_SIZE_NAMES,
   type ComputerFailure,
@@ -122,7 +123,8 @@ export const MAX_CAPTURE_BYTES = 4_000_000;
 export const MIN_EXTENSION_VERSION = '0.0.0';
 
 // A computer service's refusal (cdp.ts, failureStatus): the credit used up is the user's to wait out (403, with
-// when it resets); a fork that is gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
+// when it resets), and the organization's own provider account refused is its owners' to fix (403); a fork that is
+// gone is 404; a computer starting or being reset elsewhere is worth retrying (409).
 function computerFailure(c: Context<Env>, failure: ComputerFailure) {
   return c.json(failureBody(failure), failureStatus(failure));
 }
@@ -157,15 +159,15 @@ export function createApi({
   origin: string;
   computers: ComputerProvider;
   hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> &
-    Partial<Pick<ServerHooks, 'limits'>> & { tenancy?: Pick<Tenancy, 'canCreate'> };
+    Partial<Pick<ServerHooks, 'limits' | 'providerAccount'>> & { tenancy?: Pick<Tenancy, 'canCreate'> };
   // The extension build this deployment offers for download.
   extensionVersion?: string | undefined;
   minExtensionVersion?: string;
   extend?: ApiExtension;
 }) {
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
-  const { metering, operatorAdmin, tenancy, limits = noLimits } = hooks;
-  const running = { provider: computers, metering, limits };
+  const { metering, operatorAdmin, tenancy, limits = noLimits, providerAccount } = hooks;
+  const running = { provider: computers, metering, limits, ...(providerAccount && { accounts: providerAccount }) };
   // The member a request acts as: for a sync token, in the organization it names (or the browser's, for a build that
   // names none), or for app auth the person's current one (organizations.ts). A person in no organization here yet
   // gets not_a_member, which our web app answers with its join page, and which tells the extension the person has left
@@ -320,10 +322,10 @@ export function createApi({
   app.delete('/organization/members/:id', async c => {
     const id = c.req.param('id');
     if (!MEMBERSHIP_ID_PATTERN.test(id)) return c.json({ error: 'invalid_request' }, 400);
-    return answer(c, await removeMember(db, computers, await memberOf(c), id));
+    return answer(c, await removeMember(db, running, await memberOf(c), id));
   });
   app.post('/organization/leave', async c => {
-    return answer(c, await leaveOrganization(db, computers, await memberOf(c)));
+    return answer(c, await leaveOrganization(db, running, await memberOf(c)));
   });
   // Joining by email domain, for anyone signed in, in an organization here or not.
   app.get('/organizations/joinable', async c =>
@@ -451,7 +453,12 @@ export function createApi({
       return c.json(
         {
           session: opened.sessionId,
-          computer: { id: opened.computer.id, label: opened.computer.label, created: opened.computer.created },
+          computer: {
+            id: opened.computer.id,
+            label: opened.computer.label,
+            created: opened.computer.created,
+            account: opened.computer.account,
+          },
           cdpUrl: `${cdpOrigin}/api/v1/cdp?token=${token}`,
           liveViewUrl: `${origin}/app/computer?computer=${opened.computer.id}`,
           profile: opened.profile && profileView(opened.profile),
@@ -464,7 +471,8 @@ export function createApi({
       );
     } catch (error) {
       logError('api computer open', error);
-      return computerUnavailable(c, handle?.sessionId);
+      const refused = accountRefusal(error);
+      return refused ? computerFailure(c, refused) : computerUnavailable(c, handle?.sessionId);
     } finally {
       await handle?.done();
     }
@@ -500,7 +508,8 @@ export function createApi({
       });
     } catch (error) {
       logError('api computer exec', error);
-      return computerUnavailable(c);
+      const refused = accountRefusal(error);
+      return refused ? computerFailure(c, refused) : computerUnavailable(c);
     } finally {
       await handle?.done();
     }
@@ -534,7 +543,7 @@ export function createApi({
     return c.json(await setTimeZone(db, c.get('principal').id, parsed.data.timeZone));
   });
   // Main computer (validation prototype).
-  app.get('/computer', async c => c.json(await computerView(db, metering, await memberOf(c))));
+  app.get('/computer', async c => c.json(await computerView(db, running, await memberOf(c))));
   // The browsers syncing to this organization, for the Browser sync page. Removing one stops it syncing here and deletes
   // the capture if it sent it; it keeps syncing to the person's other organizations. Neither path takes a sync token or
   // the extension's origin.
@@ -560,12 +569,12 @@ export function createApi({
     // Before the provider, so a provider failure cannot skip it. Agents stay connected.
     await resetSetup(db, member);
     await deleteToolCalls(db, member);
-    await deleteMainComputer(db, computers, member);
+    await deleteMainComputer(db, running, member);
     return c.json({ deleted: true });
   });
   // Reset: only the computer, so it is rebuilt from the current template; synced data and setup stay.
   app.post('/computer/reset', async c =>
-    (await deleteMainComputer(db, computers, await memberOf(c)))
+    (await deleteMainComputer(db, running, await memberOf(c)))
       ? c.json({ reset: true })
       : c.json({ error: 'not_found' }, 404),
   );
@@ -576,7 +585,7 @@ export function createApi({
       .strict()
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const reset = await setComputerSize(db, computers, await memberOf(c), parsed.data.size);
+    const reset = await setComputerSize(db, running, await memberOf(c), parsed.data.size);
     return c.json({ size: parsed.data.size, reset });
   });
   // Live view. The page's heartbeat: each lease it holds goes to its kind's handler
@@ -618,7 +627,7 @@ export function createApi({
         .safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
       const { lease, computer: computerId, text } = parsed.data;
-      const result = await setLiveViewClipboard(db, computers, await memberOf(c), lease, text, { computerId });
+      const result = await setLiveViewClipboard(db, running, await memberOf(c), lease, text, { computerId });
       if (result === 'too_large') return c.json({ error: 'too_large' }, 413);
       if (result === 'not_in_control') return c.json({ error: 'not_in_control' }, 409);
       return c.json({});

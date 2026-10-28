@@ -7,6 +7,7 @@ import {
   type ComputerSession,
   type ComputerSize,
   FIRST_PROFILE,
+  ProviderAccountRefused,
 } from '@agent-computers/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
 import { type AgentKind, agentOf, clientHost } from './agents';
@@ -39,7 +40,7 @@ import {
   SYNC_SLACK_MS,
 } from './computer-timing';
 import type { Database } from './database';
-import { type Limits, type Metering, noLimits } from './hooks';
+import { type Limits, type Metering, noLimits, type ServerHooks } from './hooks';
 import { newPublicId, publicIdPattern } from './ids';
 import { logError } from './log';
 import type { Member } from './organizations';
@@ -65,6 +66,7 @@ export {
   type ComputerSize,
   DISPLAY,
   type ExecResult,
+  ProviderAccountRefused,
   sizeName,
 } from '@agent-computers/computer';
 
@@ -79,7 +81,8 @@ export type ComputerFailure = {
     | 'access_revoked'
     | 'needs_reset'
     | 'computer_not_found'
-    | 'profile_not_found';
+    | 'profile_not_found'
+    | 'provider_account_refused';
   message: string;
   busyUntil?: Date | undefined;
   resetsAt?: Date | undefined;
@@ -121,9 +124,43 @@ const ownedBy = (caller: Caller) =>
 const isCallers = (session: Pick<SessionRow, 'membershipId' | 'clientId' | 'apiKeyId'>, caller: Caller) =>
   session.membershipId === caller.membershipId &&
   (caller.apiKeyId !== undefined ? session.apiKeyId === caller.apiKeyId : session.clientId === caller.clientId);
-// What the computer service runs computers with: the provider, the metering hook (hooks.ts) it books time to, and the
-// deployment's limits (none when left out).
-export type Computers = { provider: ComputerProvider; metering: Metering; limits?: Limits };
+// What the computer service runs computers with: the deployment's provider, the hook that runs an organization's
+// computers on its own account instead (hooks.ts, providerAccount; none when left out), the metering hook it books time
+// to, and the deployment's limits (none when left out).
+export type Computers = {
+  provider: ComputerProvider;
+  accounts?: ServerHooks['providerAccount'];
+  metering: Metering;
+  limits?: Limits;
+};
+// Just the providers, for what needs no metering.
+export type Providers = Pick<Computers, 'provider' | 'accounts'>;
+// The provider that runs the organization's computers, and whether it is on the organization's own account. Every
+// computer of an organization's runs on the one account, so whatever acts on one resolves it from the computer's
+// organization first.
+export async function providerFor({ provider, accounts }: Providers, db: Database, organizationId: string) {
+  const own = await accounts?.(db, organizationId);
+  return own ? { provider: own, ownAccount: true } : { provider, ownAccount: false };
+}
+// The computers of one organization: its provider resolved, so `accounts` is gone and nothing resolves it again.
+async function inOrganization(computers: Computers, db: Database, organizationId: string) {
+  const { provider, ownAccount } = await providerFor(computers, db, organizationId);
+  const { accounts: _resolved, ...rest } = computers;
+  return { ...rest, provider, ownAccount };
+}
+// Where a computer runs, as people and agents are told: the organization's own provider account, or the deployment's.
+export type ComputerAccount = 'organization' | 'deployment';
+const accountOf = (ownAccount: boolean): ComputerAccount => (ownAccount ? 'organization' : 'deployment');
+// What a computer call that the organization's own provider account refused (ProviderAccountRefused) answers, in place
+// of the provider's failure; null for any other error.
+export const accountRefusal = (error: unknown): ComputerFailure | null =>
+  error instanceof ProviderAccountRefused
+    ? {
+        error: 'provider_account_refused',
+        message:
+          "The computer provider refused this organization's own account: its API key may have been revoked, or the account can't pay. Ask an owner or admin of the organization to update the key.",
+      }
+    : null;
 // Every computers column but the sealed baseline, which can run to megabytes: only the apply and the
 // pending notice read it, and only once the capture digest changed.
 const { appliedCapture: _baseline, ...computerColumns } = getTableColumns(schema.computers);
@@ -534,7 +571,7 @@ async function startCall(
 // member's profiles, and how that profile's latest capture applied.
 export type OpenedSession = SessionHandle & {
   sync: SyncSummary;
-  computer: { id: string; label: string | null; created: boolean; size: ComputerSize };
+  computer: { id: string; label: string | null; created: boolean; size: ComputerSize; account: ComputerAccount };
   profile: Profile | null;
   profiles: Profile[];
 };
@@ -565,7 +602,7 @@ const profileNotFound: ComputerFailure = {
 // which this replaces. Callers must already have verified the live MCP grant and pass a guard that re-checks it.
 export async function openComputerSession(
   db: Database,
-  computers: Computers,
+  deployment: Computers,
   caller: Caller,
   {
     sessionId,
@@ -580,8 +617,9 @@ export async function openComputerSession(
   } = {},
 ): Promise<OpenedSession | ComputerFailure> {
   const deadline = Date.now() + SYNC_DEADLINE_MS;
-  const exhausted = await creditFailure(computers.metering, db, caller);
+  const exhausted = await creditFailure(deployment.metering, db, caller);
   if (exhausted) return exhausted;
+  const computers = await inOrganization(deployment, db, caller.organizationId);
   const profiles = await listProfiles(db, caller);
   const choice = { named: profiles.find(each => each.id === profile), profiles };
   if (profile !== undefined && !choice.named) return profileNotFound;
@@ -608,7 +646,13 @@ export async function openComputerSession(
       sessionId: started.publicId,
       session: handle.session,
       sync,
-      computer: { id: computer.publicId, label: computer.label, created: started.created, size: computer.size },
+      computer: {
+        id: computer.publicId,
+        label: computer.label,
+        created: started.created,
+        size: computer.size,
+        account: accountOf(computers.ownAccount),
+      },
       profile: started.profile,
       profiles,
       done,
@@ -689,7 +733,7 @@ async function startSession(
 // as long as the CDP proxy keeps its connection.
 export async function useComputerSession(
   db: Database,
-  computers: Computers,
+  deployment: Computers,
   caller: Caller,
   sessionId: string,
   { budgetMs = CALL_BUDGET_MS }: { budgetMs?: number } = {},
@@ -699,8 +743,9 @@ export async function useComputerSession(
     (await guardFailure(tx, caller)) ?? (await lockSession(tx, caller, sessionId, new Date()));
   const checked = await db.transaction(control);
   if ('error' in checked) return checked;
-  const exhausted = await creditFailure(computers.metering, db, caller);
+  const exhausted = await creditFailure(deployment.metering, db, caller);
   if (exhausted) return exhausted;
+  const computers = await inOrganization(deployment, db, caller.organizationId);
   const started = await db.transaction(
     async (
       tx,
@@ -747,11 +792,12 @@ export async function useComputerSession(
 // takeover suspended is only ended. Then sweeps forks unused for a week (sweepForks), which a close can afford.
 export async function closeComputerSession(
   db: Database,
-  { provider, metering }: Computers,
+  deployment: Computers,
   caller: Caller,
   sessionId: string,
 ): Promise<{ closed: true } | ComputerFailure> {
   if (!SESSION_ID_PATTERN.test(sessionId)) return notFound;
+  const { provider, metering } = await inOrganization(deployment, db, caller.organizationId);
   const closed = await db.transaction(async (tx): Promise<{ closed: true } | ComputerFailure> => {
     const denied = await guardFailure(tx, caller);
     if (denied) return denied;
@@ -772,7 +818,7 @@ export async function closeComputerSession(
       );
     return { closed: true };
   });
-  if ('closed' in closed) await sweepForks(db, provider).catch(error => logError('fork sweep', error));
+  if ('closed' in closed) await sweepForks(db, deployment).catch(error => logError('fork sweep', error));
   return closed;
 }
 
@@ -1140,21 +1186,24 @@ async function latestSnapshot(
     );
     return { id: snapshot!.id };
   });
-  if (superseded) await deleteUnusedSnapshots(db, provider, [superseded]);
+  if (superseded) await deleteUnusedSnapshots(db, { provider }, [superseded]);
   return latest;
 }
 
 // Snapshots that are no longer main's latest and that no fork was made from, at most SWEEP_BATCH of them (only these
 // IDs, when given): deleted at the provider, which refuses earlier, then here. Each is re-checked under its row lock,
-// which a fork's insert referencing it waits on, so a fork never starts from a deleted snapshot.
-async function deleteUnusedSnapshots(db: Database, provider: ComputerProvider, only?: number[]) {
+// which a fork's insert referencing it waits on, so a fork never starts from a deleted snapshot. Each is deleted on
+// its organization's provider.
+async function deleteUnusedSnapshots(db: Database, providers: Providers, only?: number[]) {
   const unused = sql`NOT EXISTS (SELECT 1 FROM ${schema.computers} WHERE ${schema.computers.snapshotId} = ${schema.computerSnapshots.id})`;
   const candidates = await db
-    .select({ id: schema.computerSnapshots.id })
+    .select({ id: schema.computerSnapshots.id, organizationId: schema.memberships.organizationId })
     .from(schema.computerSnapshots)
+    .innerJoin(schema.computers, eq(schema.computers.id, schema.computerSnapshots.computerId))
+    .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computers.membershipId))
     .where(and(unused, only ? inArray(schema.computerSnapshots.id, only) : undefined))
     .limit(SWEEP_BATCH);
-  for (const { id } of candidates)
+  for (const { id, organizationId } of candidates)
     await db
       .transaction(async tx => {
         const [row] = await tx
@@ -1163,6 +1212,7 @@ async function deleteUnusedSnapshots(db: Database, provider: ComputerProvider, o
           .where(and(eq(schema.computerSnapshots.id, id), unused))
           .for('update');
         if (!row) return;
+        const { provider } = await providerFor(providers, db, organizationId);
         await provider.deleteSnapshot(row.providerSnapshotId);
         await tx.delete(schema.computerSnapshots).where(eq(schema.computerSnapshots.id, id));
       })
@@ -1249,11 +1299,12 @@ export async function listForks(db: Database, member: Member, now = new Date()):
 // takeover, means `busy`; the caller's own agent's session just ends.
 export async function deleteFork(
   db: Database,
-  { provider }: Computers,
+  deployment: Computers,
   caller: Caller,
   computerId: string,
 ): Promise<{ deleted: true } | ComputerFailure> {
   if (!COMPUTER_ID_PATTERN.test(computerId)) return forkNotFound;
+  const { provider } = await providerFor(deployment, db, caller.organizationId);
   const found = await db.transaction(async (tx): Promise<ComputerRow | ComputerFailure> => {
     const denied = await guardFailure(tx, caller);
     if (denied) return denied;
@@ -1279,7 +1330,7 @@ export async function deleteFork(
   });
   if ('error' in found) return found;
   await destroyFork(db, provider, found);
-  await sweepForks(db, provider).catch(error => logError('fork sweep', error));
+  await sweepForks(db, deployment).catch(error => logError('fork sweep', error));
   return { deleted: true };
 }
 // Kills a fork's provider computer, recorded or not, then forgets the fork (its sessions go with it) and deletes its
@@ -1291,7 +1342,7 @@ async function destroyFork(
 ) {
   await killFork(provider, fork);
   await db.delete(schema.computers).where(eq(schema.computers.id, fork.id));
-  if (fork.snapshotId) await deleteUnusedSnapshots(db, provider, [fork.snapshotId]);
+  if (fork.snapshotId) await deleteUnusedSnapshots(db, { provider }, [fork.snapshotId]);
 }
 const killFork = async (provider: ComputerProvider, fork: Pick<ComputerRow, 'publicId' | 'sandboxId'>) => {
   for (const sandboxId of new Set([fork.sandboxId, await provider.find(fork.publicId)]))
@@ -1301,7 +1352,8 @@ const killFork = async (provider: ComputerProvider, fork: Pick<ComputerRow, 'pub
 // Deletes, across the deployment, forks unused for FORK_UNUSED_MS and paused, and forks whose create was abandoned
 // (CREATE_STALE_MS), then snapshots nothing uses, SWEEP_BATCH of each per run. The open core has no scheduler, so this
 // runs on the calls that can afford it, computer_close and deleting a fork, as tool call retention runs on each call.
-export async function sweepForks(db: Database, provider: ComputerProvider, now = new Date()) {
+// Each fork is killed on its organization's provider.
+export async function sweepForks(db: Database, providers: Providers, now = new Date()) {
   const due = and(
     isNotNull(schema.computers.forkOf),
     or(
@@ -1316,8 +1368,13 @@ export async function sweepForks(db: Database, provider: ComputerProvider, now =
       ),
     ),
   );
-  const expired = await db.select({ id: schema.computers.id }).from(schema.computers).where(due).limit(SWEEP_BATCH);
-  for (const { id } of expired)
+  const expired = await db
+    .select({ id: schema.computers.id, organizationId: schema.memberships.organizationId })
+    .from(schema.computers)
+    .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computers.membershipId))
+    .where(due)
+    .limit(SWEEP_BATCH);
+  for (const { id, organizationId } of expired)
     await db
       .transaction(async tx => {
         // Re-checked under the row lock, so a reopen that just used it keeps it.
@@ -1327,11 +1384,11 @@ export async function sweepForks(db: Database, provider: ComputerProvider, now =
           .where(and(eq(schema.computers.id, id), due))
           .for('update');
         if (!fork) return;
-        await killFork(provider, fork);
+        await killFork((await providerFor(providers, db, organizationId)).provider, fork);
         await tx.delete(schema.computers).where(eq(schema.computers.id, id));
       })
       .catch(error => logError('fork expiry', error));
-  await deleteUnusedSnapshots(db, provider);
+  await deleteUnusedSnapshots(db, providers);
 }
 
 // Kills every provider computer of a member's that is going away (main and forks), then their snapshots, which the
@@ -1815,13 +1872,14 @@ export async function liveViewStatus(
 // lease's status.
 export async function liveViewHeartbeat(
   db: Database,
-  computers: Computers,
+  deployment: Computers,
   member: Member,
   { id: lease, state }: { id: string; state: 'visible' | 'hidden' | 'released' },
   now = new Date(),
   target: LiveViewTarget = {},
 ): Promise<LiveViewStatus> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
+  const computers = await inOrganization(deployment, db, member.organizationId);
   if (state === 'visible') await extendHolds(db, computers, member, lease, now, target);
   else
     await db.transaction(async tx => {
@@ -1953,12 +2011,13 @@ async function extendHolds(
 // that accepts public traffic is refused (needs_reset), since live view could not reach it privately.
 export async function takeOverComputer(
   db: Database,
-  computers: Computers,
+  deployment: Computers,
   member: Member,
   lease: string,
   target: LiveViewTarget = {},
 ): Promise<LiveViewStatus | ComputerFailure> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
+  const computers = await inOrganization(deployment, db, member.organizationId);
   const { provider, metering } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
   const exhausted = await creditFailure(metering, db, member);
@@ -2044,12 +2103,13 @@ const needsReset: ComputerFailure = {
 // what the member signed in to; a failure leaves it due, for the next fork to retry.
 export async function handBackComputer(
   db: Database,
-  computers: Computers,
+  deployment: Computers,
   member: Member,
   lease: string,
   target: LiveViewTarget = {},
 ): Promise<LiveViewStatus> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
+  const computers = await inOrganization(deployment, db, member.organizationId);
   const now = new Date();
   const main = await db.transaction(async tx => {
     const computer = await lockLiveView(tx, member, now, target);
@@ -2097,12 +2157,13 @@ export async function liveViewAccess(
 // lock, so a release that follows pauses what this wakes. Refuses a computer that accepts public traffic.
 export async function connectLiveView(
   db: Database,
-  provider: ComputerProvider,
+  providers: Providers,
   member: Member,
   lease: string,
   target: LiveViewTarget = {},
 ): Promise<ComputerSession | 'not_found' | 'not_watching' | 'needs_reset'> {
   if (!LEASE_PATTERN.test(lease)) return 'not_watching';
+  const { provider } = await providerFor(providers, db, member.organizationId);
   return db.transaction(async tx => {
     const now = new Date();
     const computer = await lockLiveView(tx, member, now, target);
@@ -2124,7 +2185,7 @@ export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
 // connectLiveView does, but sets the clipboard after it, since that is a command on the computer.
 export async function setLiveViewClipboard(
   db: Database,
-  provider: ComputerProvider,
+  providers: Providers,
   member: Member,
   lease: string,
   text: string,
@@ -2132,6 +2193,7 @@ export async function setLiveViewClipboard(
 ): Promise<'set' | 'not_in_control' | 'too_large'> {
   if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_BYTES) return 'too_large';
   if (!LEASE_PATTERN.test(lease)) return 'not_in_control';
+  const { provider } = await providerFor(providers, db, member.organizationId);
   const session = await db.transaction(async tx => {
     const now = new Date();
     const computer = await lockLiveView(tx, member, now, target);
@@ -2144,8 +2206,12 @@ export async function setLiveViewClipboard(
   return 'set';
 }
 
-export async function computerView(db: Database, metering: Metering, member: Member) {
-  const [[row], [membership], capture, usage] = await Promise.all([
+export async function computerView(
+  db: Database,
+  { metering, accounts }: Pick<Computers, 'metering' | 'accounts'>,
+  member: Member,
+) {
+  const [[row], [membership], capture, usage, own] = await Promise.all([
     db
       .select({
         id: schema.computers.id,
@@ -2166,6 +2232,7 @@ export async function computerView(db: Database, metering: Metering, member: Mem
       .where(eq(schema.memberships.id, member.membershipId)),
     captureView(db, member),
     metering.usage(db, member, new Date()),
+    accounts?.(db, member.organizationId),
   ]);
   const now = new Date();
   // Agents work in forks: busy while one of them holds a fork. Live view lists the forks that are not paused.
@@ -2181,6 +2248,8 @@ export async function computerView(db: Database, metering: Metering, member: Mem
     capture,
     // The size the member chose, which the main computer runs at once it is created.
     size: membership?.computerSize ?? '1x',
+    // Where the member's computers run.
+    account: accountOf(!!own),
     // Without a credit (hooks.ts), null.
     usage: usage && {
       cost: usage.cost,
@@ -2207,18 +2276,18 @@ export async function computerView(db: Database, metering: Metering, member: Mem
 
 // Chooses the size of the member's main computer. A computer keeps its size, so a main computer of another size is
 // reset (deleteMainComputer) and the next computer_open creates one at the new size. Returns whether it reset one.
-export async function setComputerSize(db: Database, provider: ComputerProvider, member: Member, size: ComputerSize) {
+export async function setComputerSize(db: Database, providers: Providers, member: Member, size: ComputerSize) {
   await db
     .update(schema.memberships)
     .set({ computerSize: size, updatedAt: new Date() })
     .where(eq(schema.memberships.id, member.membershipId));
   const [main] = await db.select({ size: schema.computers.size }).from(schema.computers).where(mainOf(member));
-  return !!main && main.size !== size && (await deleteMainComputer(db, provider, member));
+  return !!main && main.size !== size && (await deleteMainComputer(db, providers, member));
 }
 
 // Also resets the computer: deletes the main computer, its forks, and their snapshots, so the next computer_open creates
 // a fresh main from the current template and applies the latest capture wholesale. Returns whether there was one.
-export async function deleteMainComputer(db: Database, provider: ComputerProvider, member: Member) {
+export async function deleteMainComputer(db: Database, providers: Providers, member: Member) {
   const [main] = await db.select({ id: schema.computers.id }).from(schema.computers).where(mainOf(member));
   if (!main) return false;
   const [computers, snapshots] = await Promise.all([
@@ -2233,10 +2302,48 @@ export async function deleteMainComputer(db: Database, provider: ComputerProvide
   ]);
   // Every provider computer before forgetting the rows; its forks, snapshots, and computer sessions go with it (cascade).
   await destroyProviderComputers(
-    provider,
+    (await providerFor(providers, db, member.organizationId)).provider,
     computers,
     snapshots.map(snapshot => snapshot.id),
   );
   await db.delete(schema.computers).where(eq(schema.computers.id, main.id));
   return true;
+}
+
+// Deletes every computer of the organization's members, main computers and forks, with their snapshots, as when its
+// computers move to another provider account, where they can't follow: each main computer starts again on its next
+// open. `change` runs in the transaction that forgets the rows, such as to switch the account; the provider computers
+// go after, on `provider`, the account they ran on. A create in flight finds no row to record its computer in and kills
+// it (ensureComputer and provisionFork).
+export async function resetOrganizationComputers(
+  db: Database,
+  provider: ComputerProvider,
+  organizationId: string,
+  change: (tx: Transaction) => Promise<void>,
+) {
+  const gone = await db.transaction(async tx => {
+    const computers = await tx
+      .select({ id: schema.computers.id, publicId: schema.computers.publicId, sandboxId: schema.computers.sandboxId })
+      .from(schema.computers)
+      .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computers.membershipId))
+      .where(eq(schema.memberships.organizationId, organizationId))
+      .for('update', { of: schema.computers });
+    const ids = computers.map(computer => computer.id);
+    const snapshots = ids.length
+      ? await tx
+          .select({ id: schema.computerSnapshots.providerSnapshotId })
+          .from(schema.computerSnapshots)
+          .where(inArray(schema.computerSnapshots.computerId, ids))
+      : [];
+    // Forks first, then the main computers they were made from.
+    if (ids.length) {
+      await tx
+        .delete(schema.computers)
+        .where(and(inArray(schema.computers.id, ids), isNotNull(schema.computers.forkOf)));
+      await tx.delete(schema.computers).where(inArray(schema.computers.id, ids));
+    }
+    await change(tx);
+    return { computers, snapshots: snapshots.map(snapshot => snapshot.id) };
+  });
+  await destroyProviderComputers(provider, gone.computers, gone.snapshots);
 }

@@ -34,4 +34,6 @@ const png = await computer.screenshot();
 await provider.pause(sandboxId); // resumes later with connect
 ```
 
+Without options, it uses the E2B team of `E2B_API_KEY`. Pass `{ apiKey }` to run computers on another team, such as one an organization brought: E2B bills the team that starts a sandbox, not the template's owner, and each method then throws `ProviderAccountRefused` when E2B refuses that key (revoked, or a team it blocks). `e2bKeyAccepted(apiKey)` checks a key with one cheap call.
+
 Computers are created private: every port needs E2B's traffic token, which stays on your server. Helpers are versioned (`REVISION`), and `refresh` brings a computer made from an older template up to date without rebuilding it.

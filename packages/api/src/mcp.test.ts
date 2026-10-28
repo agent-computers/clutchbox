@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { e2bComputerProvider } from '@agent-computers/e2b';
-import type { ComputerSize } from '@agent-computers/server/computers';
+import { type ComputerSize, ProviderAccountRefused } from '@agent-computers/server/computers';
 import { databaseSchema } from '@agent-computers/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
 import { and, asc, eq, isNull } from 'drizzle-orm';
@@ -600,7 +600,7 @@ describe('main computer tools', () => {
     expect(opened.result.structuredContent).toMatchObject({
       account_id: 'a',
       account_email: 'a@example.test',
-      runs_on: { provider: 'fake', size: '2 vCPU · 4 GB' },
+      runs_on: { provider: 'fake', account: 'deployment', size: '2 vCPU · 4 GB' },
       live_view_url: `${origin}/app/computer?computer=${computerId}`,
       computers: [],
     });
@@ -720,6 +720,30 @@ describe('main computer tools', () => {
     expect(
       (await tool(token, 'computer_close', { session_id: opened.session_id })).result.structuredContent,
     ).toMatchObject(credit);
+  });
+  it("names the organization's own account it runs on, and tells the agent who can fix its refusal", async () => {
+    const own = fakeComputerProvider({ account: 'own-' });
+    const metering = { ...noMetering, minutePrice: () => '$0.0028' };
+    endpoint = createMcpEndpoint({
+      db,
+      auth,
+      origin,
+      computers: fakeComputerProvider().provider,
+      hooks: { metering, operatorAdmin: noOperatorAdmin, providerAccount: async () => own.provider },
+    });
+    const token = (await authorize((await identity('a')).cookie, await register()))!.access_token;
+    const opened = (await tool(token, 'computer_open', {})).result.structuredContent;
+    expect(opened.runs_on).toEqual({ provider: 'fake', account: 'organization', size: '2 vCPU · 4 GB' });
+    // Its provider charges it, at its own price.
+    expect(opened).not.toHaveProperty('price_per_minute');
+    expect(own.calls.create).toBe(1);
+    vi.spyOn(own.provider, 'connect').mockRejectedValueOnce(new ProviderAccountRefused());
+    const refused = (await tool(token, 'computer_act', { session_id: opened.session_id })).result;
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent).toMatchObject({
+      error: 'provider_account_refused',
+      message: expect.stringContaining('owner or admin'),
+    });
   });
   it('gives every account its own computer and keeps other users off it', async () => {
     const fake = fakeComputerProvider();
@@ -1130,7 +1154,7 @@ describe('main computer tools', () => {
         );
         expect((await tool(other, 'computer_close', { session_id: taken })).result.isError).toBe(false);
       } finally {
-        await deleteMainComputer(db, provider, await member(a.id));
+        await deleteMainComputer(db, { provider }, await member(a.id));
       }
     },
     360_000,
