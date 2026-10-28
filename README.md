@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://www.clutchbox.dev">
-    <img src="brand/readme-banner.png" alt="Clutchbox: your agents, already signed in. Sync your sign-ins to where your agents run." width="100%">
+    <img src="brand/readme-demo.gif" alt="An agent asked to catch up on X, an Amazon cart and GitHub reviews opens each site already signed in, using example data." width="100%">
   </a>
 
   <p>

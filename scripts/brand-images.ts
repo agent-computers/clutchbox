@@ -58,14 +58,6 @@ export const shareCard: Image = {
 // brand/, by file name: what is uploaded by hand or shown in the READMEs (brand/README.md says where each goes).
 export const brandFolder: Record<string, Image> = {
   'github-avatar.png': { html: mark(false), size: [500, 500] },
-  'readme-banner.png': {
-    html: `<div class="ground" style="display:flex;flex-direction:column;justify-content:center;padding:0 80px">
-  <p class="wordmark" style="font-size:30px;margin-bottom:36px">clutchbox</p>
-  <h1 style="font-size:84px">${headline(false)}</h1>
-  <p class="tagline" style="margin-top:22px;font-size:30px">${tagline}</p></div>`,
-    size: [1280, 420],
-    scale: 2,
-  },
   // GitHub asks for 1280×640 and under 1 MB; at twice the scale it stays well under.
   'github-social-preview.png': {
     html: `<div class="ground" style="display:flex;flex-direction:column;justify-content:space-between;padding:72px 84px">
