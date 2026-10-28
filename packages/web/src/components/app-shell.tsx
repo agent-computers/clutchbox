@@ -1,5 +1,4 @@
 'use client';
-import { buttonVariants } from '@agent-computers/ui/components/button';
 import {
   Sidebar,
   SidebarContent,
@@ -40,16 +39,14 @@ import {
   computerQuery,
   grantsQuery,
   organizationsQuery,
-  repoStarsQuery,
   type SetupView,
   setupQuery,
   syncQuery,
 } from '../lib/api';
 import { computerStatus } from '../lib/computer';
-import { formatStars } from '../lib/github';
 import { UserButton } from './auth/user-button';
-import { GitHubMark } from './github-mark';
 import { OrganizationSwitcher } from './organization-switcher';
+import { StarLink } from './star-link';
 
 export type AppUser = { id: string; name: string; email: string; image?: string | null };
 const UserContext = createContext<AppUser | null>(null);
@@ -89,8 +86,9 @@ const POLL_MS = 5000;
 
 // The signed-in app: a sidebar of pages, and the queries they share. Until the
 // user is set up, the sidebar marks each setup step done or to do, and the setup queries poll so the marks tick live
-// while the user works in the extension or an agent; after, it shows the computer's status.
-export function AppShell({ user, children }: { user: AppUser; children: ReactNode }) {
+// while the user works in the extension or an agent; after, it shows the computer's status. stars is the deployment
+// repository's star count, from the server, or null without one.
+export function AppShell({ user, stars, children }: { user: AppUser; stars: number | null; children: ReactNode }) {
   const router = useRouter();
   const setup = useQuery({ ...setupQuery, refetchInterval: query => (query.state.data?.setUpAt ? false : POLL_MS) });
   const setUp = !!setup.data?.setUpAt;
@@ -108,7 +106,7 @@ export function AppShell({ user, children }: { user: AppUser; children: ReactNod
     <UserContext value={user}>
       <GuardContext value={guard}>
         <SidebarProvider>
-          <AppSidebar user={user} setup={setup.data} guard={guard} />
+          <AppSidebar user={user} stars={stars} setup={setup.data} guard={guard} />
           <SidebarInset id="main">
             <header className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
               <SidebarTrigger className="size-11" aria-label="Open the menu" />
@@ -133,10 +131,12 @@ export function AppShell({ user, children }: { user: AppUser; children: ReactNod
 
 function AppSidebar({
   user,
+  stars,
   setup,
   guard,
 }: {
   user: AppUser;
+  stars: number | null;
   setup: SetupView | undefined;
   guard: RefObject<LeaveGuard | null>;
 }) {
@@ -206,7 +206,7 @@ function AppSidebar({
           >
             clutchbox
           </Link>
-          {shell.githubRepo && <StarLink repo={shell.githubRepo} />}
+          {shell.githubRepo && <StarLink repo={shell.githubRepo} stars={stars} className="-mr-2" />}
         </div>
         <OrganizationSwitcher onCreated={() => go('/app/organization')} onJoin={() => go('/join')} />
       </SidebarHeader>
@@ -258,26 +258,6 @@ function AppSidebar({
         )}
       </SidebarFooter>
     </Sidebar>
-  );
-}
-
-// Asks for a star on the deployment's repository, with the count once GitHub answers.
-function StarLink({ repo }: { repo: string }) {
-  const { data: stars } = useQuery(repoStarsQuery(repo));
-  return (
-    <a
-      className={buttonVariants({ variant: 'outline', size: 'sm' })}
-      href={`https://github.com/${repo}`}
-      target="_blank"
-      rel="noopener"
-      aria-label={stars === undefined ? 'Star on GitHub' : `Star on GitHub, ${formatStars(stars)} stars`}
-    >
-      <GitHubMark />
-      Star
-      {stars !== undefined && (
-        <span className="border-l pl-1.5 font-normal text-muted-foreground tabular-nums">{formatStars(stars)}</span>
-      )}
-    </a>
   );
 }
 

@@ -146,24 +146,6 @@ export const organizationsQuery = queryOptions({
   queryKey: ['organizations'],
   queryFn: () => api<OrganizationsView>('/organizations'),
 });
-// A public repository's star count, straight from GitHub's API, which allows 60 unauthenticated calls an hour per
-// address; fetched once per load, it never fails the page.
-export const repoStarsQuery = (repo: string) =>
-  queryOptions({
-    queryKey: ['github', repo],
-    queryFn: async ({ signal }) => {
-      const response = await fetch(`https://api.github.com/repos/${repo}`, {
-        headers: { accept: 'application/vnd.github+json' },
-        signal,
-      });
-      if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
-      const { stargazers_count: stars } = (await response.json()) as { stargazers_count?: unknown };
-      if (typeof stars !== 'number') throw new Error('GitHub sent no star count');
-      return stars;
-    },
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
-  });
 export const joinableQuery = queryOptions({
   queryKey: ['organizations', 'joinable'],
   queryFn: () => api<{ organizations: JoinableOrganization[] }>('/organizations/joinable'),
