@@ -26,9 +26,10 @@ Run `bun run format` before committing. `bun run dev:extension` starts the exten
 
 - **Never commit real browser data.** Tests use synthetic cookies only; no captured cookies, profiles, or credentials.
 - **Keep packages standalone.** Every package builds, tests, and runs without any hosted service.
-- **Version the extension** as `YY.MDD.PATCH` (`26.1016.0` is the first release on October 16, 2026) and bump `apps/extension/package.json` when extension or capture code changes. CI checks it.
+- **Version the extension** as `YY.MDD.PATCH`: `26.1016.0` is the first release on October 16, 2026 (January 1 is `101`), and PATCH counts up for later releases that day, restarting at 0 the next day, which Chrome accepts as a manifest version. Bump `apps/extension/package.json` when extension or capture code changes. CI checks it.
+- **Version the CLI** as `MAJOR.MINOR.PATCH`, and bump `packages/cli/package.json` when what it bundles changes. CI checks it.
 - **Adding a product route?** Add it to the route manifest (`packages/web/src/route-manifest.ts`) and run `bun run generate-routes`, rather than writing the route file.
-- **Changing the schema?** Run `bun run db:generate --name <change>` and commit the SQL. A migration must work with the code already deployed, so a destructive change expands in one release and contracts in a later one.
+- **Changing the schema?** Follow the [data conventions](packages/server/README.md#data-conventions), run `bun run db:generate --name <change>`, and commit the SQL. A migration must work with the code already deployed, so a destructive change expands in one release and contracts in a later one.
 - **Adding a provider?** Implement [`ComputerProvider`](packages/computer) in `packages/<provider>`, following [`packages/e2b`](packages/e2b), and add it to the README's package table.
 
 ## Reporting a site that doesn't stay signed in
