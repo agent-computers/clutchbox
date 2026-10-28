@@ -606,24 +606,6 @@ export const syncSettings = pgTable('sync_settings', {
   sealed: text('sealed').notNull(),
   ...timestamps(),
 });
-// Before computer_time: per member and UTC calendar month, the seconds the hosted metering hook charged, in seconds of
-// its smallest size, apart on an organization's own provider account, and the seconds run. No longer written, and
-// copied to computer_time by its migration; dropped in a later release.
-export const computerUsage = pgTable(
-  'computer_usage',
-  {
-    id: id(),
-    membershipId: membershipId().notNull(),
-    month: date('month', { mode: 'string' }).notNull(),
-    usedSeconds: integer('used_seconds').notNull().default(0),
-    // Seconds on the organization's own provider account (provider_accounts), which bills it directly: recorded, never
-    // spent from a credit or charged.
-    ownAccountSeconds: integer('own_account_seconds').notNull().default(0),
-    runSeconds: integer('run_seconds').notNull().default(0),
-    ...timestamps(),
-  },
-  table => [unique('computer_usage_membership_month_unique').on(table.membershipId, table.month)],
-);
 // Where a computer runs: the deployment's provider account, or its organization's own (hooks.ts, providerAccount).
 export const COMPUTER_ACCOUNTS = ['deployment', 'organization'] as const;
 // Computer time, the one record of it (computers.ts, meter): the seconds a member's computers ran and the times they

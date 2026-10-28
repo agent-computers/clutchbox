@@ -239,6 +239,13 @@
       "when": 1793149020537,
       "tag": "0033_computer_time",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793167817720,
+      "tag": "0034_drop_computer_usage",
+      "breakpoints": true
     }
   ]
 }
