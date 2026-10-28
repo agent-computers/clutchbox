@@ -17,6 +17,7 @@
     "dev:extension": "bun run --cwd apps/extension dev",
     "build:extension": "bun run --cwd apps/extension build",
     "zip:manual": "node --import tsx scripts/zip-manual.ts",
+    "check:cli-version": "node --import tsx scripts/check-cli-version.ts",
     "check:extension-version": "node --import tsx scripts/check-extension-version.ts",
     "check:extension": "node --import tsx scripts/check-extension.ts",
     "check:verified-servers": "node --import tsx scripts/check-verified-servers.ts",

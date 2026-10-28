@@ -1,10 +1,17 @@
 name: Publish CLI
 
-# Run by hand (Actions > Publish CLI > Run workflow, on main) after bumping packages/cli/package.json. It checks the
-# commit, then publishes `clutchbox` to npm with provenance. npm trusts this workflow on main (trusted publishing), so
-# no token is stored here; the package's first version was published by hand, since npm trusts a workflow only for a
-# package that exists.
+# Publishes `clutchbox` to npm with provenance whenever main has a CLI version npm doesn't have: on every push that
+# changes what the CLI bundles (CI's check:cli-version makes each such change bump packages/cli/package.json), or by
+# hand (Actions > Publish CLI > Run workflow, on main) to retry one that failed. A push whose version is already on npm
+# skips. npm trusts this workflow on main (trusted publishing), so no token is stored here; the package's first version
+# was published by hand, since npm trusts a workflow only for a package that exists.
 on:
+  push:
+    branches: [main]
+    # What dist/clutchbox.js bundles, as in scripts/check-cli-version.ts, and the package itself.
+    paths:
+      - packages/cli/**
+      - packages/server/src/agents.ts
   workflow_dispatch:
 
 concurrency:
@@ -15,30 +22,50 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    uses: ./.github/workflows/ci.yml
-
-  publish:
-    needs: check
+  version:
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
-    permissions:
-      id-token: write
+    timeout-minutes: 5
+    outputs:
+      new: ${{ steps.version.outputs.new }}
     steps:
       - if: github.ref != 'refs/heads/main'
         run: |
           echo "Publish from main, not $GITHUB_REF."
           exit 1
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - name: Check the version is new
-        working-directory: packages/cli
+        with:
+          sparse-checkout: packages/cli/package.json
+          sparse-checkout-cone-mode: false
+      - id: version
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -p "require('./packages/cli/package.json').version")
           if npm view "clutchbox@$version" version > /dev/null 2>&1; then
-            echo "clutchbox $version is already on npm; bump packages/cli/package.json first."
-            exit 1
+            echo "clutchbox $version is already on npm."
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+              echo "Bump packages/cli/package.json first."
+              exit 1
+            fi
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Publishing clutchbox $version."
+            echo "new=true" >> "$GITHUB_OUTPUT"
           fi
+
+  check:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: [version, check]
+    if: needs.version.outputs.new == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
       # Trusted publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@11
       - working-directory: packages/cli

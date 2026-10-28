@@ -20,4 +20,4 @@ To have your agent do it, paste this into Claude Code or Codex:
 
 ## Develop
 
-`bun run build` bundles `src` into `dist/clutchbox.js`, with no runtime dependencies. The commands it runs come from `@clutchbox/server/agents`, which the Agents page shows too.
+`bun run build` bundles `src` into `dist/clutchbox.js`, with no runtime dependencies. The commands it runs come from `@clutchbox/server/agents`, which the Agents page shows too. A change to either needs a version bump in `package.json` (CI's `check:cli-version`), and the push to main that brings a new version publishes it to npm (`publish-cli.yml`).

@@ -4,12 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The release workflow runs these checks first.
+  # The release and CLI publish workflows run these checks first.
   workflow_call:
 
 concurrency:
-  # By event too, so a push to main never cancels a release's checks.
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # By calling workflow and event too, so a push to main never cancels a release's or a CLI publish's checks (in a
+  # called workflow, github.workflow is the caller's name).
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,10 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # History back to the base commit, for the extension version check.
+          # History back to the base commit, for the extension and CLI version checks.
           fetch-depth: 0
       - uses: ./.github/actions/setup
       - run: bun run check:extension-version ${{ github.event.pull_request.base.sha || github.event.before }}
+      - run: bun run check:cli-version ${{ github.event.pull_request.base.sha || github.event.before }}
       - run: bun run lint
       - run: bun run typecheck
       # Fails when the schema changed without its migration: generating one must change nothing.
