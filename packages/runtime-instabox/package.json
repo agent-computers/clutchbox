@@ -1,0 +1,45 @@
+{
+  "name": "@clutchbox/runtime-instabox",
+  "version": "0.1.0",
+  "description": "Sign an agent's browser in an Instabox sandbox in to your users' sites: apply a Clutchbox member's synced sign-ins to its Chromium in one call.",
+  "keywords": [
+    "instabox",
+    "sandbox",
+    "chrome",
+    "cookies",
+    "ai-agents",
+    "browser-automation",
+    "logged-in",
+    "session"
+  ],
+  "homepage": "https://www.clutchbox.dev",
+  "bugs": "https://github.com/clutchbox-hq/clutchbox/issues",
+  "author": "Clutchbox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clutchbox-hq/clutchbox.git",
+    "directory": "packages/runtime-instabox"
+  },
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@clutchbox/apply": "workspace:*",
+    "@clutchbox/capture": "workspace:*",
+    "@clutchbox/sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@insforge/instabox-sdk": ">=0.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@insforge/instabox-sdk": "0.5.3",
+    "playwright-core": "1.64.0"
+  }
+}

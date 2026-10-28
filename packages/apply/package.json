@@ -22,12 +22,18 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./sandbox": "./src/sandbox.ts",
+    "./sandbox-fixtures": "./src/sandbox-fixtures.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@clutchbox/capture": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "playwright-core": "1.64.0"
   }
 }

@@ -17,10 +17,10 @@
     },
     "apps/extension": {
       "name": "@clutchbox/extension",
-      "version": "26.1027.3",
+      "version": "26.1028.0",
       "dependencies": {
-        "@clutchbox/capture": "workspace:*",
         "@base-ui/react": "1.9.0",
+        "@clutchbox/capture": "workspace:*",
         "@tanstack/react-query": "5.104.3",
         "class-variance-authority": "0.7.1",
         "cn": "0.4.0",
@@ -41,15 +41,15 @@
       "name": "@clutchbox/app",
       "version": "0.1.0",
       "dependencies": {
+        "@better-auth-ui/core": "1.7.30",
+        "@better-auth-ui/react": "1.7.30",
+        "@better-auth/oauth-provider": "1.7.11",
+        "@better-auth/utils": "0.5.0",
         "@clutchbox/api": "workspace:*",
         "@clutchbox/capture": "workspace:*",
         "@clutchbox/server": "workspace:*",
         "@clutchbox/ui": "workspace:*",
         "@clutchbox/web": "workspace:*",
-        "@better-auth-ui/core": "1.7.30",
-        "@better-auth-ui/react": "1.7.30",
-        "@better-auth/oauth-provider": "1.7.11",
-        "@better-auth/utils": "0.5.0",
         "@novnc/novnc": "1.7.0",
         "@tanstack/react-query": "5.104.3",
         "better-auth": "1.7.11",
@@ -71,9 +71,9 @@
       "name": "@clutchbox/api",
       "version": "0.1.0",
       "dependencies": {
+        "@better-auth/mcp": "1.7.11",
         "@clutchbox/capture": "workspace:*",
         "@clutchbox/server": "workspace:*",
-        "@better-auth/mcp": "1.7.11",
         "@modelcontextprotocol/server": "2.3.1",
         "@vercel/functions": "3.10.1",
         "hono": "4.13.13",
@@ -94,6 +94,10 @@
       "version": "0.1.0",
       "dependencies": {
         "@clutchbox/capture": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "24.19.2",
+        "playwright-core": "1.64.0",
       },
     },
     "packages/capture": {
@@ -140,6 +144,57 @@
         "playwright-core": ">=1.40",
       },
     },
+    "packages/runtime-boat": {
+      "name": "@clutchbox/runtime-boat",
+      "version": "0.1.0",
+      "dependencies": {
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/sdk": "workspace:*",
+      },
+      "devDependencies": {
+        "@boatdev/sdk": "1.12.1",
+        "@types/node": "24.19.2",
+        "playwright-core": "1.64.0",
+      },
+      "peerDependencies": {
+        "@boatdev/sdk": ">=1.12",
+      },
+    },
+    "packages/runtime-e2b": {
+      "name": "@clutchbox/runtime-e2b",
+      "version": "0.1.0",
+      "dependencies": {
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/sdk": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "24.19.2",
+        "e2b": "2.55.0",
+        "playwright-core": "1.64.0",
+      },
+      "peerDependencies": {
+        "e2b": ">=2",
+      },
+    },
+    "packages/runtime-instabox": {
+      "name": "@clutchbox/runtime-instabox",
+      "version": "0.1.0",
+      "dependencies": {
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/sdk": "workspace:*",
+      },
+      "devDependencies": {
+        "@insforge/instabox-sdk": "0.5.3",
+        "@types/node": "24.19.2",
+        "playwright-core": "1.64.0",
+      },
+      "peerDependencies": {
+        "@insforge/instabox-sdk": ">=0.5",
+      },
+    },
     "packages/sdk": {
       "name": "@clutchbox/sdk",
       "version": "0.1.0",
@@ -155,10 +210,6 @@
       "name": "@clutchbox/server",
       "version": "0.1.0",
       "dependencies": {
-        "@clutchbox/apply": "workspace:*",
-        "@clutchbox/capture": "workspace:*",
-        "@clutchbox/computer": "workspace:*",
-        "@clutchbox/e2b": "workspace:*",
         "@better-auth/api-key": "1.7.11",
         "@better-auth/cimd": "1.7.11",
         "@better-auth/core": "1.7.11",
@@ -166,6 +217,10 @@
         "@better-auth/mcp": "1.7.11",
         "@better-auth/oauth-provider": "1.7.11",
         "@better-auth/utils": "0.5.0",
+        "@clutchbox/apply": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/computer": "workspace:*",
+        "@clutchbox/e2b": "workspace:*",
         "@vercel/functions": "3.10.1",
         "better-auth": "1.7.11",
         "drizzle-orm": "0.45.4",
@@ -208,16 +263,16 @@
       "name": "@clutchbox/web",
       "version": "0.1.0",
       "dependencies": {
-        "@clutchbox/api": "workspace:*",
-        "@clutchbox/capture": "workspace:*",
-        "@clutchbox/computer": "workspace:*",
-        "@clutchbox/server": "workspace:*",
-        "@clutchbox/ui": "workspace:*",
         "@better-auth-ui/core": "1.7.30",
         "@better-auth-ui/react": "1.7.30",
         "@better-auth/api-key": "1.7.11",
         "@better-auth/oauth-provider": "1.7.11",
         "@better-auth/utils": "0.5.0",
+        "@clutchbox/api": "workspace:*",
+        "@clutchbox/capture": "workspace:*",
+        "@clutchbox/computer": "workspace:*",
+        "@clutchbox/server": "workspace:*",
+        "@clutchbox/ui": "workspace:*",
         "@novnc/novnc": "1.7.0",
         "@tanstack/react-query": "5.104.3",
         "better-auth": "1.7.11",
@@ -244,30 +299,6 @@
     "@1natsu/wait-element": ["@1natsu/wait-element@4.2.0", "", { "dependencies": { "defu": "^6.1.4", "many-keys-map": "^3.0.0" } }, "sha512-Om0Q+WE9mNrpY4AwMTvkFiYHv8VM7TML3PvOqXy+w6kAjLjKhGYHYX+305+a6J8RVpds9s7IF2Z5aOPYwULFNw=="],
 
     "@acemir/cssom": ["@acemir/cssom@0.9.32", "", {}, "sha512-OijrAUu7rrJhSIoHNg6LMPS5e344nwUHA+1EFYYjrh64D+GmytUsfBQjci45TjT+rd5Spsp8B5xsZDT+TgyXXQ=="],
-
-    "@clutchbox/api": ["@clutchbox/api@workspace:packages/api"],
-
-    "@clutchbox/app": ["@clutchbox/app@workspace:apps/web"],
-
-    "@clutchbox/apply": ["@clutchbox/apply@workspace:packages/apply"],
-
-    "@clutchbox/capture": ["@clutchbox/capture@workspace:packages/capture"],
-
-    "@clutchbox/computer": ["@clutchbox/computer@workspace:packages/computer"],
-
-    "@clutchbox/e2b": ["@clutchbox/e2b@workspace:packages/e2b"],
-
-    "@clutchbox/extension": ["@clutchbox/extension@workspace:apps/extension"],
-
-    "@clutchbox/playwright": ["@clutchbox/playwright@workspace:packages/playwright"],
-
-    "@clutchbox/sdk": ["@clutchbox/sdk@workspace:packages/sdk"],
-
-    "@clutchbox/server": ["@clutchbox/server@workspace:packages/server"],
-
-    "@clutchbox/ui": ["@clutchbox/ui@workspace:packages/ui"],
-
-    "@clutchbox/web": ["@clutchbox/web@workspace:packages/web"],
 
     "@aklinker1/rollup-plugin-visualizer": ["@aklinker1/rollup-plugin-visualizer@5.12.0", "", { "dependencies": { "open": "^8.4.0", "picomatch": "^2.3.1", "source-map": "^0.7.4", "yargs": "^17.5.1" }, "peerDependencies": { "rollup": "2.x || 3.x || 4.x" }, "optionalPeers": ["rollup"], "bin": { "rollup-plugin-visualizer": "dist/bin/cli.js" } }, "sha512-X24LvEGw6UFmy0lpGJDmXsMyBD58XmX1bbwsaMLhNoM+UMQfQ3b2RtC+nz4b/NoRK5r6QJSKJHBNVeUdwqybaQ=="],
 
@@ -341,7 +372,39 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.15", "", { "os": "win32", "cpu": "x64" }, "sha512-yAzh4UqEImV6Hcy0zjUqNfJAsUhoD64FBQCdTG8Md/Z2wQeVP/ZmJ3XRYAs1g8J9fjTFyl2fCtc5FB5til47+g=="],
 
+    "@boatdev/sdk": ["@boatdev/sdk@1.12.1", "", {}, "sha512-ehi5EDZGX4YXRPkE28uRODKoLTGNVx3V3P+Hxd1kZ7DUghUcKHvZemM+ObxL5v6Sgfd9FsBDEwPYPYWNtK93pQ=="],
+
     "@bufbuild/protobuf": ["@bufbuild/protobuf@2.16.0", "", {}, "sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q=="],
+
+    "@clutchbox/api": ["@clutchbox/api@workspace:packages/api"],
+
+    "@clutchbox/app": ["@clutchbox/app@workspace:apps/web"],
+
+    "@clutchbox/apply": ["@clutchbox/apply@workspace:packages/apply"],
+
+    "@clutchbox/capture": ["@clutchbox/capture@workspace:packages/capture"],
+
+    "@clutchbox/computer": ["@clutchbox/computer@workspace:packages/computer"],
+
+    "@clutchbox/e2b": ["@clutchbox/e2b@workspace:packages/e2b"],
+
+    "@clutchbox/extension": ["@clutchbox/extension@workspace:apps/extension"],
+
+    "@clutchbox/playwright": ["@clutchbox/playwright@workspace:packages/playwright"],
+
+    "@clutchbox/runtime-boat": ["@clutchbox/runtime-boat@workspace:packages/runtime-boat"],
+
+    "@clutchbox/runtime-e2b": ["@clutchbox/runtime-e2b@workspace:packages/runtime-e2b"],
+
+    "@clutchbox/runtime-instabox": ["@clutchbox/runtime-instabox@workspace:packages/runtime-instabox"],
+
+    "@clutchbox/sdk": ["@clutchbox/sdk@workspace:packages/sdk"],
+
+    "@clutchbox/server": ["@clutchbox/server@workspace:packages/server"],
+
+    "@clutchbox/ui": ["@clutchbox/ui@workspace:packages/ui"],
+
+    "@clutchbox/web": ["@clutchbox/web@workspace:packages/web"],
 
     "@connectrpc/connect": ["@connectrpc/connect@2.2.0", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-M63OQ1ZFcPUm85CuewJ9G9CMV8LjzGR9935xOnXNQGSazAbwMb3x2W7vXBYM1zqrP7XFD8uxp/dUAhirclgwnQ=="],
 
@@ -476,6 +539,8 @@
     "@img/sharp-win32-ia32": ["@img/sharp-win32-ia32@0.35.5", "", { "os": "win32", "cpu": "ia32" }, "sha512-5Zm82LoBc43nhwNybZlG7Y1KO//Zhsn306fQl29ZOuStHLGTo3BWL83q3cznX0poxSAMuYL1On/BHBxkBeKr6A=="],
 
     "@img/sharp-win32-x64": ["@img/sharp-win32-x64@0.35.5", "", { "os": "win32", "cpu": "x64" }, "sha512-x76eH0vEiHlcMQu8Y8IenntaACtddpT6W0wmXtWrnKcnKI7ME5DdgqhAD6SEWOEl1v2zDvkZDhFA9KnURwpfqg=="],
+
+    "@insforge/instabox-sdk": ["@insforge/instabox-sdk@0.5.3", "", {}, "sha512-Gw1p5AYplx5KO41WAecTd/e3RzO/fCux0XIW1ysRemQ5AgIRQox/MsPsKxYjC61SaBTx2eJYkPOorv3Odr6acw=="],
 
     "@isaacs/fs-minipass": ["@isaacs/fs-minipass@4.0.1", "", { "dependencies": { "minipass": "^7.0.4" } }, "sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w=="],
 

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { SANDBOX_CORE } from '@clutchbox/apply/sandbox';
 import {
   type ComputerProvider,
   type ComputerSession,
@@ -117,31 +118,10 @@ socket.onmessage = event => { const message = JSON.parse(event.data); if (messag
 socket.onerror = () => done({ error: 'cdp_connection_failed' });
 `;
 
-// Cookie sync runs inside the sandbox in one process, as plain JavaScript: SYNC_CORE and SYNC_HELPER are the open apply
-// runtime's applyCookies (packages/apply/src/chrome.ts) for a computer's own Node. siteOfHost must match
-// packages/capture/src/sync.ts, and toParam and partition the apply runtime (index.test.ts compares them).
-export const SYNC_CORE = String.raw`function siteOfHost(hostname) {
-  const labels = hostname.replace(/^\./, '').replace(/\.$/, '').toLowerCase().split('.');
-  const secondLevel = labels.length > 2 && /^(co|com|org|net|ac|gov|edu)$/.test(labels.at(-2)) && labels.at(-1).length === 2;
-  return labels.slice(secondLevel ? -3 : -2).join('.');
-}
-function toParam(cookie) {
-  const param = { name: cookie.name, value: cookie.value, path: cookie.path, secure: cookie.secure, httpOnly: cookie.httpOnly };
-  if (cookie.domain.startsWith('.')) param.domain = cookie.domain;
-  else param.url = (cookie.secure ? 'https://' : 'http://') + cookie.domain + cookie.path;
-  if (cookie.sameSite) param.sameSite = cookie.sameSite;
-  if (!cookie.session && cookie.expires > 0) param.expires = cookie.expires;
-  if (cookie.priority) param.priority = cookie.priority;
-  if (cookie.partitionKey) param.partitionKey = typeof cookie.partitionKey === 'string' ? { topLevelSite: cookie.partitionKey, hasCrossSiteAncestor: false } : cookie.partitionKey;
-  return param;
-}
-// Setting an already-expired copy deletes the matching cookie, partition included.
-const expired = cookie => ({ ...toParam(cookie), value: '', expires: 1 });
-function partition(cookies, clearSites) {
-  const clear = new Set(clearSites);
-  return { kept: cookies.filter(cookie => !clear.has(siteOfHost(cookie.domain))).length, clear: cookies.filter(cookie => clear.has(siteOfHost(cookie.domain))) };
-}
-`;
+// Cookie sync runs inside the sandbox in one process, as plain JavaScript: SYNC_CORE (the apply runtime's SANDBOX_CORE,
+// which runtime adapters run too) and SYNC_HELPER are its applyCookies (packages/apply/src/chrome.ts) for a computer's
+// own Node.
+export const SYNC_CORE = SANDBOX_CORE;
 // Prints only counts. Deletes only clearSites' cookies, then sets the incoming ones: other
 // sites are never touched, so a run cut short only affects sites the next open rewrites.
 // Sets in chunks; a rejected chunk is retried cookie by cookie.

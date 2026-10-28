@@ -16,3 +16,7 @@ await applyCookies((method, params) => cdp.send(method, params), {
 ```
 
 The first apply replaces every synced site's cookies. Later applies set only cookies that changed in your browser, so the agent's browser keeps cookies it refreshed itself, and clear sites you signed out of. Other sites are never touched. For Playwright, use [`@clutchbox/playwright`](../playwright), which does this for you.
+
+## In a sandbox
+
+`@clutchbox/apply/sandbox` applies a capture to Chrome inside a sandbox through the sandbox's command API, for a sandbox whose CDP port you can't reach from outside: `applyInSandbox(shell, capture, previous)` with a `SandboxShell` in your provider's words. The [E2B](../runtime-e2b), [Instabox](../runtime-instabox), and [Boat](../runtime-boat) runtime adapters are built on it.

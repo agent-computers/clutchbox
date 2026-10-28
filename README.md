@@ -49,7 +49,15 @@ const page = await browser.contexts()[0].newPage();
 await page.goto('https://github.com'); // signed in as them
 ```
 
-To use your own browsers instead, read a user's latest sign-ins and apply them with the [Playwright](packages/playwright) or [CDP](packages/apply) adapter.
+To use your own browsers instead, read a user's latest sign-ins and apply them with a runtime adapter, in one call:
+
+| Where the agent's browser runs | Runtime adapter |
+| --- | --- |
+| Any Chrome over CDP | [`@clutchbox/apply`](packages/apply) |
+| Playwright, browser-use, Stagehand | [`@clutchbox/playwright`](packages/playwright) |
+| An [E2B](https://e2b.dev) sandbox | [`@clutchbox/runtime-e2b`](packages/runtime-e2b) |
+| An [Instabox](https://instabox.sh) sandbox | [`@clutchbox/runtime-instabox`](packages/runtime-instabox) |
+| A [Boat](https://boat.dev) sandbox | [`@clutchbox/runtime-boat`](packages/runtime-boat) |
 
 ## How it works
 
@@ -105,6 +113,7 @@ Then sign in at <http://localhost:3000>, with the link from Mailpit at <http://l
 | [`packages/sdk`](packages/sdk) | The TypeScript SDK for the developer REST API: members' latest captures, and computer sessions driven over CDP. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
 | [`packages/apply`](packages/apply) | Works out what a capture changes since the last one applied, and applies it to any Chrome over CDP. |
+| [`packages/runtime-e2b`](packages/runtime-e2b), [`runtime-instabox`](packages/runtime-instabox), [`runtime-boat`](packages/runtime-boat) | Runtime adapters: apply a member's latest capture to Chrome in your own E2B, Instabox, or Boat sandbox, through the sandbox's command API. |
 | [`packages/capture`](packages/capture) | The capture format and sync contract: cookies with full metadata, sites, exclusions, and settings. |
 | [`packages/computer`](packages/computer) | The interface a computer provider implements: create, pause, resume, screenshot, act, exec, and CDP. |
 | [`packages/e2b`](packages/e2b) | Computers for agents on [E2B](https://e2b.dev): a Linux desktop sandbox with Chrome, kept signed in. |
