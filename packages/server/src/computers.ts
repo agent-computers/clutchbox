@@ -2345,5 +2345,8 @@ export async function resetOrganizationComputers(
     await change(tx);
     return { computers, snapshots: snapshots.map(snapshot => snapshot.id) };
   });
-  await destroyProviderComputers(provider, gone.computers, gone.snapshots);
+  // The rows are gone, so a failure (such as an account that now refuses its key) leaves only provider computers.
+  await destroyProviderComputers(provider, gone.computers, gone.snapshots).catch(error =>
+    logError('organization computers reset', error),
+  );
 }

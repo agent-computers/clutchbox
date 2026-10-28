@@ -15,7 +15,7 @@ export type ClientOptions = {
 
 // A refusal, with the server's error code: unauthenticated (a wrong or deleted key), insufficient_scope (the key lacks
 // the scope), not_found, no_capture, session_not_found, session_ended, busy, user_in_control, credit_exhausted,
-// computer_unavailable, and others. `message` says what to do, when the server says.
+// provider_account_refused, computer_unavailable, and others. `message` says what to do, when the server says.
 export class ClutchboxError extends Error {
   constructor(
     readonly status: number,

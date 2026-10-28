@@ -41,7 +41,8 @@
     "./organizations": "./src/organizations.ts",
     "./migrator": "./src/migrator.ts",
     "./migrate": "./src/migrate.ts",
-    "./provider": "./src/provider.ts"
+    "./provider": "./src/provider.ts",
+    "./sealing": "./src/sealing.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

@@ -53,7 +53,7 @@ await session.close();
 
 ## Errors
 
-Every call throws `ClutchboxError` on a refusal, with the server's `code` and `status`: `unauthenticated` (a wrong or deleted key), `insufficient_scope`, `not_found` (no such member in the key's organization, or profile of theirs), `no_capture`, `profile_not_found` (that browser no longer syncs to the member), `session_not_found`, `session_ended`, `busy` (another session holds the fork; `busyUntil` says until when), `user_in_control`, `credit_exhausted`, and `computer_unavailable`.
+Every call throws `ClutchboxError` on a refusal, with the server's `code` and `status`: `unauthenticated` (a wrong or deleted key), `insufficient_scope`, `not_found` (no such member in the key's organization, or profile of theirs), `no_capture`, `profile_not_found` (that browser no longer syncs to the member), `session_not_found`, `session_ended`, `busy` (another session holds the fork; `busyUntil` says until when), `user_in_control`, `credit_exhausted`, `provider_account_refused` (the organization's own provider account refused its key; an owner or admin can update it), and `computer_unavailable`.
 
 ## The REST API
 

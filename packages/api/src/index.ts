@@ -114,7 +114,8 @@ type Principal = {
 type Env = { Variables: { principal: Principal; apiKey?: KeyPrincipal } };
 const KEY_PATH = /^\/api\/v1\/(members(\/[^/]+\/capture)?|connections|computers\/sessions(\/[^/]+(\/exec)?)?)$/;
 // A deployment's own routes, added after the shared middleware so they get its session, origin, and header handling.
-export type ApiExtension = (app: Hono<Env>, services: { db: Database }) => void;
+// The deployment's provider comes too, for routes that act on the computers it runs.
+export type ApiExtension = (app: Hono<Env>, services: { db: Database; computers: ComputerProvider }) => void;
 // Vercel Functions refuse request bodies over 4.5 MB with their own FUNCTION_PAYLOAD_TOO_LARGE. This limit sits
 // under it so oversized captures get capture_too_large, which the extension reports; it matches maxUploadBytes there.
 export const MAX_CAPTURE_BYTES = 4_000_000;
@@ -726,7 +727,7 @@ export function createApi({
     return c.json({ deleted: true });
   });
   // After the product's routes, so an extension cannot shadow one.
-  extend?.(app, { db });
+  extend?.(app, { db, computers });
   app.notFound(c => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {
     if (error instanceof HTTPException) return error.getResponse();
