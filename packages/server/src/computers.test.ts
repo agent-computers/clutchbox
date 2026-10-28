@@ -129,7 +129,7 @@ const booked = (member: Member) =>
 const used = async (member: Member) => {
   const days = new Map<string, number>();
   for (const row of (await booked(member)).filter(row => row.runSeconds > 0))
-    days.set(row.day!, (days.get(row.day!) ?? 0) + row.runSeconds);
+    days.set(row.day, (days.get(row.day) ?? 0) + row.runSeconds);
   return [...days];
 };
 const pausesBooked = async (member: Member) => (await booked(member)).reduce((sum, row) => sum + row.pauses, 0);

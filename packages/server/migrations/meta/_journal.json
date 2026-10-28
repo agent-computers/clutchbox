@@ -260,6 +260,13 @@
       "when": 1793204705317,
       "tag": "0036_computer_time_by_day",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793206179871,
+      "tag": "0037_drop_computer_time_month",
+      "breakpoints": true
     }
   ]
 }

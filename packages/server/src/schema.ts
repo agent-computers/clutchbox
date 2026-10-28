@@ -620,11 +620,8 @@ export const computerTime = pgTable(
   {
     id: id(),
     membershipId: membershipId().notNull(),
-    // The UTC day the time was booked on. Null only on rows the code before it wrote while it deployed, which the
-    // migration that drops `month` fills in.
-    day: date('day', { mode: 'string' }),
-    // Replaced by `day`: the code before it booked by month, so it stays, nullable, until that code is gone.
-    month: date('month', { mode: 'string' }),
+    // The UTC day the time was booked on.
+    day: date('day', { mode: 'string' }).notNull(),
     size: text('size', { enum: COMPUTER_SIZE_NAMES }).notNull(),
     account: text('account', { enum: COMPUTER_ACCOUNTS }).notNull(),
     runSeconds: integer('run_seconds').notNull().default(0),
@@ -633,7 +630,6 @@ export const computerTime = pgTable(
   },
   table => [
     unique('computer_time_day_unique').on(table.membershipId, table.day, table.size, table.account),
-    unique('computer_time_month_unique').on(table.membershipId, table.month, table.size, table.account),
     check('computer_time_size', oneOf(table.size, COMPUTER_SIZE_NAMES)),
     check('computer_time_account', oneOf(table.account, COMPUTER_ACCOUNTS)),
     check('computer_time_counts', sql`${table.runSeconds} >= 0 AND ${table.pauses} >= 0`),
