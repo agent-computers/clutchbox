@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { type SpawnSyncOptions, spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { agentAddCommands, mcpServerName } from '@clutchbox/server/agents';
+import { chromeWebStoreUrl, extensionStatus } from './extension';
 import { serverOrigin } from './server';
 
 // `npx clutchbox`: adds a Clutchbox server to the agents on this machine that have a CLI, then opens the web app's
-// setup, which signs the user in and covers browser sync, the steps a terminal can't do. It holds no credentials:
-// each agent signs in with its own consent, as when the user follows the Agents page by hand.
+// setup, which signs the user in and covers browser sync, the steps a terminal can't do, and the Chrome Web Store
+// when this machine's Chrome lacks the extension. It holds no credentials: each agent signs in with its own consent,
+// as when the user follows the Agents page by hand.
 const defaultServer = 'https://www.clutchbox.dev';
 const help = `Usage: npx clutchbox@latest [options]
 
@@ -54,23 +58,42 @@ function configured(agent: Agent, mcpUrl: string) {
   return typeof list.stdout === 'string' && list.stdout.includes(mcpUrl);
 }
 
-function openInBrowser(url: string) {
-  // A machine without a display, such as a remote box an agent runs on, has nowhere to open it.
-  if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
-  const [file, ...args] =
-    process.platform === 'darwin'
-      ? ['open', url]
-      : process.platform === 'win32'
-        ? ['cmd', '/c', 'start', '""', url]
-        : ['xdg-open', url];
+// A machine without a display, such as a remote box an agent runs on, has nowhere to open a page.
+const hasDisplay = () => process.platform !== 'linux' || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY;
+
+function launch(file: string, args: string[]) {
   try {
-    spawn(file as string, args, { stdio: 'ignore', detached: true })
+    spawn(file, args, { stdio: 'ignore', detached: true })
       .on('error', () => {})
       .unref();
     return true;
   } catch {
     return false;
   }
+}
+
+function openInBrowser(url: string) {
+  if (!hasDisplay()) return false;
+  if (process.platform === 'darwin') return launch('open', [url]);
+  if (process.platform === 'win32') return launch('cmd', ['/c', 'start', '""', url]);
+  return launch('xdg-open', [url]);
+}
+
+// The Chrome Web Store installs into the browser that shows it, which must be Chrome, not the default browser. False
+// when Chrome can't be found, so the caller opens the default browser instead.
+function openInChrome(url: string) {
+  if (!hasDisplay()) return false;
+  if (process.platform === 'darwin') return spawnSync('open', ['-a', 'Google Chrome', url]).status === 0;
+  const candidates =
+    process.platform === 'win32'
+      ? [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].flatMap(root =>
+          root ? [join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')] : [],
+        )
+      : (process.env.PATH ?? '')
+          .split(delimiter)
+          .flatMap(dir => (dir ? ['google-chrome-stable', 'google-chrome'].map(bin => join(dir, bin)) : []));
+  const chrome = candidates.find(file => existsSync(file));
+  return chrome ? launch(chrome, [url]) : false;
 }
 
 async function main() {
@@ -123,9 +146,21 @@ async function main() {
   say();
   say('Setup');
   const setupUrl = `${origin}/app`;
+  // Only on the machine the user sits at: over SSH or without a display, Chrome here isn't the user's own.
+  const extension = hasDisplay() && !process.env.SSH_CONNECTION ? await extensionStatus() : 'unknown';
+  // The store build works with the hosted service; a self-hosted server's setup offers the build it accepts.
+  const storeUrl = origin === defaultServer && extension === 'missing' ? chromeWebStoreUrl : undefined;
   const opened = !forAgent && openInBrowser(setupUrl);
   say(opened ? `  Opened ${setupUrl}` : `  Open ${setupUrl}`);
-  yourSteps.unshift(`Sign in at ${setupUrl}, add the Chrome extension, and choose the sites to sync.`);
+  if (extension === 'installed') {
+    say('  ✓ The Chrome extension is installed.');
+    yourSteps.unshift(`Sign in at ${setupUrl}, connect the Chrome extension, and choose the sites to sync.`);
+  } else if (storeUrl) {
+    // Opened last, so the store is the tab in front.
+    const store = !forAgent && (openInChrome(storeUrl) || openInBrowser(storeUrl));
+    say(store ? '  Opened the Chrome Web Store to add the extension' : '  The Chrome extension is not installed.');
+    yourSteps.unshift(`Add the Chrome extension: ${storeUrl}`, `Sign in at ${setupUrl} and choose the sites to sync.`);
+  } else yourSteps.unshift(`Sign in at ${setupUrl}, add the Chrome extension, and choose the sites to sync.`);
 
   say();
   say(forAgent ? 'Steps only the user can do (tell them):' : 'Your steps:');

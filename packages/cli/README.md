@@ -6,7 +6,7 @@ Connects your AI agents to Clutchbox from a terminal, so they work in a browser 
 npx clutchbox@latest
 ```
 
-It adds the Clutchbox MCP server to Claude Code (in every project) and Codex if they are installed, skipping one already connected, then opens setup in your browser: sign in, add the Chrome extension, and choose the sites to sync. It holds no credentials. Each agent asks you to allow its own connection, as when you follow the Agents page by hand. Claude and ChatGPT on the web connect from that page.
+It adds the Clutchbox MCP server to Claude Code (in every project) and Codex if they are installed, skipping one already connected, then opens setup in your browser: sign in, add the Chrome extension, and choose the sites to sync. If Chrome on this machine doesn't have the extension, it also opens the extension's Chrome Web Store page in Chrome (for the hosted service only; a self-hosted server's setup offers the build it accepts). It only reads Chrome's profile files to tell, skips the check over SSH or without a display, and keeps the usual steps whenever it can't tell. It holds no credentials. Each agent asks you to allow its own connection, as when you follow the Agents page by hand. Claude and ChatGPT on the web connect from that page.
 
 | Option | |
 | --- | --- |
