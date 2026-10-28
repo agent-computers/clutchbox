@@ -142,15 +142,18 @@ export async function providerFor({ provider, accounts }: Providers, db: Databas
   const own = await accounts?.(db, organizationId);
   return own ? { provider: own, ownAccount: true } : { provider, ownAccount: false };
 }
-// The computers of one organization: its provider resolved, so `accounts` is gone and nothing resolves it again.
-async function inOrganization(computers: Computers, db: Database, organizationId: string) {
+// Where a computer runs, as people and agents are told and its time is recorded: the organization's own provider
+// account, or the deployment's.
+export type ComputerAccount = (typeof schema.COMPUTER_ACCOUNTS)[number];
+const accountOf = (ownAccount: boolean): ComputerAccount => (ownAccount ? 'organization' : 'deployment');
+// The computers of one organization: its provider resolved, and the account it is on, so `accounts` is gone and nothing
+// resolves it again.
+type InOrganization = Omit<Computers, 'accounts'> & { account: ComputerAccount };
+async function inOrganization(computers: Computers, db: Database, organizationId: string): Promise<InOrganization> {
   const { provider, ownAccount } = await providerFor(computers, db, organizationId);
   const { accounts: _resolved, ...rest } = computers;
-  return { ...rest, provider, ownAccount };
+  return { ...rest, provider, account: accountOf(ownAccount) };
 }
-// Where a computer runs, as people and agents are told: the organization's own provider account, or the deployment's.
-export type ComputerAccount = 'organization' | 'deployment';
-const accountOf = (ownAccount: boolean): ComputerAccount => (ownAccount ? 'organization' : 'deployment');
 // What a computer call that the organization's own provider account refused (ProviderAccountRefused) answers, in place
 // of the provider's failure; null for any other error.
 export const accountRefusal = (error: unknown): ComputerFailure | null =>
@@ -174,12 +177,12 @@ async function creditFailure(metering: Metering, db: Database, member: Member): 
   return refusal && { error: 'credit_exhausted', ...refusal };
 }
 // Metering after the fact: books the computer's running time since the last meter, up to when the provider was due
-// to pause it, to the member's month (computer_usage.run_seconds) and the metering hook, then records `runsUntil`,
-// when the provider will now pause it. A `runsUntil`
-// already past means the provider paused the computer then, so that pause is booked too. Nothing is charged ahead or
-// refunded, so the credit can be overshot by the calls and live-view holds already running when it runs out, and time
-// since the last meter (at most the idle minute after the last call), with its pause, is booked at the next one.
-async function meter(tx: Transaction, metering: Metering, computerId: number, member: Member, runsUntil: Date) {
+// to pause it, to the member's month in computer_time, at the computer's size and account, then records `runsUntil`,
+// when the provider will now pause it. A `runsUntil` already past means the provider paused the computer then, so that
+// pause is booked too, since a provider may bill the snapshot it takes. Nothing is charged ahead or refunded, so the
+// credit can be overshot by the calls and live-view holds already running when it runs out, and time since the last
+// meter (at most the idle minute after the last call), with its pause, is booked at the next one.
+async function meter(tx: Transaction, account: ComputerAccount, computerId: number, member: Member, runsUntil: Date) {
   const [row] = await tx
     .select({
       billedUntil: schema.computers.billedUntil,
@@ -198,24 +201,31 @@ async function meter(tx: Transaction, metering: Metering, computerId: number, me
     .update(schema.computers)
     .set({ billedUntil: row.billedUntil && row.billedUntil > now ? row.billedUntil : now, runsUntil })
     .where(eq(schema.computers.id, computerId));
-  if (seconds > 0)
-    await tx
-      .insert(schema.computerUsage)
-      .values({ membershipId: member.membershipId, month: monthOf(now), runSeconds: seconds })
-      .onConflictDoUpdate({
-        target: [schema.computerUsage.membershipId, schema.computerUsage.month],
-        set: { runSeconds: sql`${schema.computerUsage.runSeconds} + ${seconds}` },
-      });
-  if (seconds > 0 || pauses > 0) await metering.charge(tx, member, seconds, now, row.size, pauses);
+  if (seconds <= 0 && pauses === 0) return;
+  const t = schema.computerTime;
+  await tx
+    .insert(t)
+    .values({
+      membershipId: member.membershipId,
+      month: monthOf(now),
+      size: row.size,
+      account,
+      runSeconds: Math.max(0, seconds),
+      pauses,
+    })
+    .onConflictDoUpdate({
+      target: [t.membershipId, t.month, t.size, t.account],
+      set: { runSeconds: sql`${t.runSeconds} + ${Math.max(0, seconds)}`, pauses: sql`${t.pauses} + ${pauses}` },
+    });
 }
-// The first of the date's UTC calendar month, as computer_usage.month keys it.
+// The first of the date's UTC calendar month, as computer_time.month keys it.
 const monthOf = (date: Date) => `${date.toISOString().slice(0, 7)}-01`;
 const running = (computer: Pick<ComputerRow, 'runsUntil'>, now: Date) =>
   !!computer.runsUntil && computer.runsUntil > now;
 // The provider runs a computer until timeoutMs after the latest create/connect. Called before the provider call, so
 // a failed call still counts as running until then.
-const meterRun = (db: Database, metering: Metering, computerId: number, member: Member, timeoutMs: number) =>
-  db.transaction(tx => meter(tx, metering, computerId, member, new Date(Date.now() + timeoutMs)));
+const meterRun = (db: Database, account: ComputerAccount, computerId: number, member: Member, timeoutMs: number) =>
+  db.transaction(tx => meter(tx, account, computerId, member, new Date(Date.now() + timeoutMs)));
 
 // The member's main computer row.
 const mainOf = (member: Pick<Member, 'membershipId'>) =>
@@ -227,7 +237,7 @@ const resetting: ComputerFailure = {
 // Exactly one caller creates the member's main provider computer, at the size the member chose; others see `starting`.
 async function ensureComputer(
   db: Database,
-  { provider, metering }: Computers,
+  { provider, account }: InOrganization,
   member: Member,
 ): Promise<ComputerRow | ComputerFailure> {
   const [inserted] = await db
@@ -260,7 +270,7 @@ async function ensureComputer(
   }
   let sandboxId = await provider.find(row.publicId);
   if (!sandboxId) {
-    await meterRun(db, metering, row.id, member, IDLE_PAUSE_MS);
+    await meterRun(db, account, row.id, member, IDLE_PAUSE_MS);
     markToolStep('create');
     sandboxId = await provider.create(row.publicId, IDLE_PAUSE_MS, row.size);
   }
@@ -493,7 +503,7 @@ async function liveSession(tx: Transaction, computerId: number) {
 // (the E2B adapter's setTimeout). It meters only once the provider took the time, so a failure keeps the earlier, later pause.
 async function pauseComputer(
   tx: Transaction,
-  metering: Metering,
+  account: ComputerAccount,
   computerId: number,
   member: Member,
   until: Date,
@@ -507,7 +517,7 @@ async function pauseComputer(
     logError('computer pause timeout', error);
     return;
   }
-  await meter(tx, metering, computerId, member, new Date(Date.now() + timeoutMs));
+  await meter(tx, account, computerId, member, new Date(Date.now() + timeoutMs));
 }
 // Pausing without a connected session, for a hold that ended: setTimeout never wakes a paused computer.
 const pauseByProvider =
@@ -518,7 +528,7 @@ const pauseByProvider =
 // computer running, by pauseAt. The session's lastCallAt becomes when its calls ended.
 async function finishCall(
   db: Database,
-  metering: Metering,
+  account: ComputerAccount,
   call: Call,
   pauseAfter: PauseAfter | null,
   { close = false } = {},
@@ -546,14 +556,14 @@ async function finishCall(
       .where(eq(schema.computerSessions.id, call.sessionId));
     if (!pauseAfter) return;
     const until = pauseAt({ ...computer, callsInFlight }, await liveSession(tx, call.computerId), now, !close);
-    return pauseComputer(tx, metering, call.computerId, call.member, until, now, pauseAfter);
+    return pauseComputer(tx, account, call.computerId, call.member, until, now, pauseAfter);
   });
 }
 // Meters and connects for the call's hold: its budget and the idle minute. The returned done() must run after the
 // call's work.
 async function startCall(
   db: Database,
-  { provider, metering }: Computers,
+  { provider, account }: InOrganization,
   call: Call,
   sandboxId: string,
   holdMs = CALL_HOLD_MS,
@@ -561,14 +571,14 @@ async function startCall(
   let session: ComputerSession | null = null;
   let finished: Promise<void> | undefined;
   const done = () => {
-    finished ??= finishCall(db, metering, call, session && (timeoutMs => session!.setTimeout(timeoutMs))).then(
+    finished ??= finishCall(db, account, call, session && (timeoutMs => session!.setTimeout(timeoutMs))).then(
       () => {},
       error => logError('computer call end', error),
     );
     return finished;
   };
   try {
-    await meterRun(db, metering, call.computerId, call.member, holdMs);
+    await meterRun(db, account, call.computerId, call.member, holdMs);
     markToolStep('connect');
     session = await provider.connect(sandboxId, holdMs);
   } catch (error) {
@@ -662,7 +672,7 @@ export async function openComputerSession(
         label: computer.label,
         created: started.created,
         size: computer.size,
-        account: accountOf(computers.ownAccount),
+        account: computers.account,
       },
       profile: started.profile,
       profiles,
@@ -808,7 +818,7 @@ export async function closeComputerSession(
   sessionId: string,
 ): Promise<{ closed: true } | ComputerFailure> {
   if (!SESSION_ID_PATTERN.test(sessionId)) return notFound;
-  const { provider, metering } = await inOrganization(deployment, db, caller.organizationId);
+  const { provider, account } = await inOrganization(deployment, db, caller.organizationId);
   const closed = await db.transaction(async (tx): Promise<{ closed: true } | ComputerFailure> => {
     const denied = await guardFailure(tx, caller);
     if (denied) return denied;
@@ -820,7 +830,7 @@ export async function closeComputerSession(
     if (!session.suspendedAt && running(computer, now))
       await pauseComputer(
         tx,
-        metering,
+        account,
         computer.id,
         caller,
         pauseAt(computer, null, now),
@@ -933,7 +943,7 @@ const forkOfMember = (member: Pick<Member, 'membershipId'>, computerId: string) 
 // cap and metering) until provisionFork creates its provider computer.
 async function createFork(
   db: Database,
-  computers: Computers,
+  computers: InOrganization,
   caller: Caller,
   label: string | undefined,
   choice: ProfileChoice,
@@ -998,7 +1008,7 @@ async function createFork(
       );
     const started = await startSession(tx, caller, fork!, undefined, now, choice);
     if ('error' in started) return started;
-    await meter(tx, computers.metering, fork!.id, caller, new Date(now.getTime() + CALL_HOLD_MS));
+    await meter(tx, computers.account, fork!.id, caller, new Date(now.getTime() + CALL_HOLD_MS));
     return { ...started, computer: fork!, sandboxId: null, created: true };
   });
 }
@@ -1137,7 +1147,7 @@ async function capFailure(
 // without one, the open fails.
 async function latestSnapshot(
   db: Database,
-  { provider, metering }: Computers,
+  { provider, account }: InOrganization,
   member: Member,
   mainId: number,
 ): Promise<{ id: number } | ComputerFailure> {
@@ -1156,7 +1166,7 @@ async function latestSnapshot(
       // Metered first, like a call: a paused main is resumed for the snapshot. Live view may hold it longer.
       const hold = new Date(now.getTime() + SNAPSHOT_HOLD_MS);
       const held = pauseAt(main, null, now);
-      await meter(tx, metering, main.id, member, held > hold ? held : hold);
+      await meter(tx, account, main.id, member, held > hold ? held : hold);
       markToolStep('snapshot');
       providerSnapshotId = await provider.snapshot(sandboxId, SNAPSHOT_HOLD_MS);
     } catch (error) {
@@ -1188,7 +1198,7 @@ async function latestSnapshot(
     const after = new Date();
     await pauseComputer(
       tx,
-      metering,
+      account,
       main.id,
       member,
       pauseAt(main, null, after),
@@ -1800,7 +1810,7 @@ const mine = (computer: Pick<ComputerRow, 'takeoverLease' | 'takeoverUntil'>, le
 // Writes changed holds and lets the computer pause when they no longer keep it running.
 async function shortenHolds(
   tx: Transaction,
-  { provider, metering }: Computers,
+  { provider, account }: InOrganization,
   member: Member,
   computer: LiveViewComputer,
   next: Pick<LiveViewComputer, 'liveViewWatches' | 'takeoverUntil'>,
@@ -1815,7 +1825,7 @@ async function shortenHolds(
     .where(eq(schema.computers.id, computer.id));
   if (!running(computer, now)) return;
   const until = pauseAt({ ...computer, ...next }, await liveSession(tx, computer.id), now);
-  await pauseComputer(tx, metering, computer.id, member, until, now, pauseByProvider(provider, computer.sandboxId!));
+  await pauseComputer(tx, account, computer.id, member, until, now, pauseByProvider(provider, computer.sandboxId!));
 }
 
 // The page's view of live view for one lease. Reads only: a lapsed takeover counts as ended.
@@ -1954,13 +1964,13 @@ function extendedHolds(computer: LiveViewComputer, lease: string, now: Date) {
 // release or hand-back that follows pauses the computer this wakes, rather than this wake undoing it.
 async function extendHolds(
   db: Database,
-  computers: Computers,
+  computers: InOrganization,
   member: Member,
   lease: string,
   now: Date,
   target: LiveViewTarget,
 ) {
-  const { provider, metering } = computers;
+  const { provider, metering, account } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
   const ready = () => db.select(liveViewColumns).from(schema.computers).where(readyTarget(member, target));
   let [current] = await ready();
@@ -1994,7 +2004,7 @@ async function extendHolds(
     // A running computer already due to run past the new deadline was already asked to run that long. Metered first,
     // like a call: a failed wake still counts as running, and the page's next beats show the computer paused.
     if (running(computer, now) && computer.runsUntil! >= pause && !created) return null;
-    await meter(tx, metering, computer.id, member, pause);
+    await meter(tx, account, computer.id, member, pause);
     const session = await provider
       .connect(computer.sandboxId!, Math.max(1, pause.getTime() - Date.now()))
       .catch(error => logError('live view wake', error));
@@ -2029,7 +2039,7 @@ export async function takeOverComputer(
 ): Promise<LiveViewStatus | ComputerFailure> {
   if (!LEASE_PATTERN.test(lease)) throw new Error('invalid live view lease');
   const computers = await inOrganization(deployment, db, member.organizationId);
-  const { provider, metering } = computers;
+  const { provider, metering, account } = computers;
   const deadline = Date.now() + SYNC_DEADLINE_MS;
   const exhausted = await creditFailure(metering, db, member);
   if (exhausted) return exhausted;
@@ -2070,7 +2080,7 @@ export async function takeOverComputer(
           .where(eq(schema.computers.id, computer.id));
         // The suspended session keeps nothing running; its calls in flight do (callsInFlight).
         const pause = pauseAt({ ...computer, liveViewWatches: watches, takeoverUntil: until }, null, now);
-        await meter(tx, metering, computer.id, member, pause);
+        await meter(tx, account, computer.id, member, pause);
         // Under the lock, so a release or hand-back that follows pauses what this wakes. A failure rolls the takeover
         // and its metering back.
         const session = await provider.connect(computer.sandboxId!, Math.max(1, pause.getTime() - Date.now()));
@@ -2246,9 +2256,9 @@ export async function computerView(
     metering.usage(db, member, new Date()),
     accounts?.(db, member.organizationId),
     db
-      .select({ seconds: schema.computerUsage.runSeconds })
-      .from(schema.computerUsage)
-      .where(and(eq(schema.computerUsage.membershipId, member.membershipId), eq(schema.computerUsage.month, month))),
+      .select({ seconds: sql`coalesce(sum(${schema.computerTime.runSeconds}), 0)`.mapWith(Number) })
+      .from(schema.computerTime)
+      .where(and(eq(schema.computerTime.membershipId, member.membershipId), eq(schema.computerTime.month, month))),
     db
       .select({ count: sql`count(*)`.mapWith(Number) })
       .from(schema.toolCalls)

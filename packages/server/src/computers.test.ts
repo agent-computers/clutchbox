@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { type ComputerSize, FIRST_PROFILE, ProviderAccountRefused } from '@clutchbox/computer';
+import { FIRST_PROFILE, ProviderAccountRefused } from '@clutchbox/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -50,16 +50,9 @@ import { setTimeZone } from './time-zones';
 let pg: PGlite;
 let db: Database;
 let fake: ReturnType<typeof fakeComputerProvider>;
-// The metering hook as the computer service sees it: what it charged, by UTC month, and a refusal tests turn on.
-let charges: { membershipId: number; month: string; seconds: number; size: ComputerSize; pauses: number }[];
+// The metering hook as the computer service sees it: a refusal tests turn on.
 let refusal: MeteringRefusal | null;
-const metering: Metering = {
-  usage: async () => null,
-  refusal: async () => refusal,
-  charge: async (_tx, { membershipId }, seconds, now, size, pauses) => {
-    charges.push({ membershipId, month: `${now.toISOString().slice(0, 7)}-01`, seconds, size, pauses });
-  },
-};
+const metering: Metering = { usage: async () => null, refusal: async () => refusal };
 let computers: Computers;
 const user = (id: string) => person(db, id);
 const join = (userId: string, organizationId: string) => membership(db, userId, organizationId);
@@ -126,14 +119,20 @@ const profilesOf = (owner: { computerId: number } | { snapshotId: number }) =>
     .orderBy(schema.computerProfiles.id);
 // What the newest computer applied to its first profile.
 const applied = async () => (await profilesOf({ computerId: (await computerRow()).id }))[0]!;
+// The member's computer time as booked: its rows, the seconds run by UTC month, and the pauses.
+const booked = (member: Member) =>
+  db
+    .select()
+    .from(schema.computerTime)
+    .where(eq(schema.computerTime.membershipId, member.membershipId))
+    .orderBy(schema.computerTime.id);
 const used = async (member: Member) => {
   const months = new Map<string, number>();
-  for (const charge of charges.filter(entry => entry.membershipId === member.membershipId && entry.seconds > 0))
-    months.set(charge.month, (months.get(charge.month) ?? 0) + charge.seconds);
+  for (const row of (await booked(member)).filter(row => row.runSeconds > 0))
+    months.set(row.month, (months.get(row.month) ?? 0) + row.runSeconds);
   return [...months];
 };
-const pausesBooked = (member: Member) =>
-  charges.filter(entry => entry.membershipId === member.membershipId).reduce((sum, entry) => sum + entry.pauses, 0);
+const pausesBooked = async (member: Member) => (await booked(member)).reduce((sum, row) => sum + row.pauses, 0);
 const at = (iso: string) => vi.setSystemTime(new Date(iso));
 // Migrate once per file and give each test a clone, which is much faster than a new database.
 let template: PGlite;
@@ -148,7 +147,6 @@ beforeEach(async () => {
   pg = (await template.clone()) as PGlite;
   db = drizzle(pg, { schema: databaseSchema }) as unknown as Database;
   fake = fakeComputerProvider();
-  charges = [];
   refusal = null;
   computers = { provider: fake.provider, metering };
   // Computer sessions reference their OAuth client.
@@ -281,7 +279,7 @@ describe('sizes', () => {
     // The fork's running time is charged at its size.
     at('2026-10-20T12:00:30Z');
     expect(await use(a, first.sessionId)).not.toHaveProperty('error');
-    expect(new Set(charges.map(charge => charge.size))).toEqual(new Set(['2x']));
+    expect(new Set((await booked(a)).map(row => row.size))).toEqual(new Set(['2x']));
     // Another member keeps the default.
     await open(b);
     expect(fake.calls.sizes).toEqual(['2x', '1x']);
@@ -378,8 +376,9 @@ describe('provider accounts', () => {
     await takeOverComputer(db, computers, a, page, fork);
     expect(await connectLiveView(db, computers, a, page, fork)).toHaveProperty('isPrivate', true);
     await handBackComputer(db, computers, a, page, fork);
-    // Its time is still metered.
+    // Its time is still metered, on its own account.
     expect(await used(a)).toEqual([['2026-10-01', 30]]);
+    expect((await booked(a)).map(row => row.account)).toEqual(['organization']);
     // The sweep any member's close runs kills each expired fork on its own organization's account.
     await closeComputerSession(db, computers, caller(a), mine.sessionId);
     await closeComputerSession(db, computers, caller(b), theirs.sessionId);
@@ -992,16 +991,16 @@ describe('per-call hold and metering', () => {
     at('2026-10-20T12:00:30Z');
     await use(a, opened.sessionId);
     expect(await used(a)).toEqual([['2026-10-01', 30]]);
-    expect(pausesBooked(a)).toBe(0);
+    expect(await pausesBooked(a)).toBe(0);
     // After the computer paused, the next call books the idle minute it ran (to 12:01:30), not the time paused, and
     // the pause itself once, since the provider may bill its snapshot.
     at('2026-10-20T12:05:00Z');
     expect(await use(a, opened.sessionId)).not.toHaveProperty('error');
     expect(await used(a)).toEqual([['2026-10-01', 90]]);
-    expect(pausesBooked(a)).toBe(1);
+    expect(await pausesBooked(a)).toBe(1);
     at('2026-10-20T12:05:30Z');
     await use(a, opened.sessionId);
-    expect(pausesBooked(a)).toBe(1);
+    expect(await pausesBooked(a)).toBe(1);
   });
   it('lets only the last of overlapping calls shorten the timeout to the idle minute', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });

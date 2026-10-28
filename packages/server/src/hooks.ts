@@ -10,8 +10,6 @@ import { type Member, singleOrganization, type Tenancy } from './organizations';
 // no credit, no limits of its own, and no operator admin, its computers come from its own E2B config (providerFromConfig), and it serves
 // one organization that everyone joins.
 
-type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
-
 // A member's computer time this month against a credit. The hook decides what the credit covers: the member, or their
 // whole organization, and words its amounts where they are shown.
 export type Usage = {
@@ -29,29 +27,19 @@ export type Usage = {
 };
 // Why metering refuses to start or extend a computer's run: shown to agents and the page, with when it lifts.
 export type MeteringRefusal = { message: string; resetsAt: Date };
+// Prices computer time against a credit. The computer service records the time itself (schema.ts, computer_time), so
+// a deployment prices what it reads there and keeps no count of its own.
 export type Metering = {
   // The usage the account page and agents show; null without a credit.
   usage(db: Database, member: Member, now: Date): Promise<Usage | null>;
   // Checked before a computer is created, woken, or used, and before live view extends its holds.
   refusal(db: Database, member: Member, now: Date): Promise<MeteringRefusal | null>;
-  // Running time the computer service booked after the fact to the member's computer, at the size the computer runs
-  // at (COMPUTER_SIZES), inside the transaction that recorded it, and how many times the computer paused in it, since a
-  // provider may bill the snapshot it takes on each pause.
-  charge(
-    tx: Transaction,
-    member: Member,
-    seconds: number,
-    now: Date,
-    size: ComputerSize,
-    pauses: number,
-  ): Promise<void>;
   // A size's price per minute, worded by the deployment, such as "$0.0028", where it prices computer time.
   minutePrice?(size: ComputerSize): string;
 };
 export const noMetering: Metering = {
   usage: async () => null,
   refusal: async () => null,
-  charge: async () => {},
 };
 
 // What a deployment allows an organization beyond the product's own limits, such as by its plan. Each answers null to

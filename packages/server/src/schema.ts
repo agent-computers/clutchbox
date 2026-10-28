@@ -606,8 +606,9 @@ export const syncSettings = pgTable('sync_settings', {
   sealed: text('sealed').notNull(),
   ...timestamps(),
 });
-// Computer time per member per UTC calendar month: the seconds the metering hook (hooks.ts) charged, in its own units,
-// and the seconds the member's computers ran, which the computer service books (computers.ts, meter) under any hooks.
+// Before computer_time: per member and UTC calendar month, the seconds the hosted metering hook charged, in seconds of
+// its smallest size, apart on an organization's own provider account, and the seconds run. No longer written, and
+// copied to computer_time by its migration; dropped in a later release.
 export const computerUsage = pgTable(
   'computer_usage',
   {
@@ -622,6 +623,30 @@ export const computerUsage = pgTable(
     ...timestamps(),
   },
   table => [unique('computer_usage_membership_month_unique').on(table.membershipId, table.month)],
+);
+// Where a computer runs: the deployment's provider account, or its organization's own (hooks.ts, providerAccount).
+export const COMPUTER_ACCOUNTS = ['deployment', 'organization'] as const;
+// Computer time, the one record of it (computers.ts, meter): the seconds a member's computers ran and the times they
+// paused, per UTC calendar month, size, and account. Minutes are its seconds, and a deployment's metering (hooks.ts)
+// prices it when it reads it, so the two never disagree.
+export const computerTime = pgTable(
+  'computer_time',
+  {
+    id: id(),
+    membershipId: membershipId().notNull(),
+    month: date('month', { mode: 'string' }).notNull(),
+    size: text('size', { enum: COMPUTER_SIZE_NAMES }).notNull(),
+    account: text('account', { enum: COMPUTER_ACCOUNTS }).notNull(),
+    runSeconds: integer('run_seconds').notNull().default(0),
+    pauses: integer('pauses').notNull().default(0),
+    ...timestamps(),
+  },
+  table => [
+    unique('computer_time_month_unique').on(table.membershipId, table.month, table.size, table.account),
+    check('computer_time_size', oneOf(table.size, COMPUTER_SIZE_NAMES)),
+    check('computer_time_account', oneOf(table.account, COMPUTER_ACCOUNTS)),
+    check('computer_time_counts', sql`${table.runSeconds} >= 0 AND ${table.pauses} >= 0`),
+  ],
 );
 // Setup progress, one row per member. First-completion times and
 // firstSetUpAt are never cleared, so they record the funnel; Delete everything clears only
