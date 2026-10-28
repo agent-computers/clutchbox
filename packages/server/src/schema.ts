@@ -154,6 +154,9 @@ export const organizations = pgTable(
     joinDomains: text('join_domains').array().notNull().default(sql`'{}'::text[]`),
     // Computer minutes a month the deployment allows this organization, for its metering hook; null for its default.
     computerMinutes: integer('computer_minutes'),
+    // The most computer time past its credit the deployment's metering hook may charge this organization in a month, in
+    // US cents, which its owners can change; null for the deployment's default.
+    overageLimitCents: integer('overage_limit_cents'),
     // Forks that may run at once across the organization's members (computers.ts, openComputerSession); null for the
     // deployment's limit (hooks.ts, Limits.runningForks), else DEFAULT_MAX_RUNNING_FORKS.
     maxRunningForks: integer('max_running_forks'),
@@ -169,6 +172,7 @@ export const organizations = pgTable(
   table => [
     check('organizations_name', sql`char_length(${table.name}) BETWEEN 1 AND 100`),
     check('organizations_computer_minutes', sql`${table.computerMinutes} >= 0`),
+    check('organizations_overage_limit_cents', sql`${table.overageLimitCents} >= 0`),
     check('organizations_max_running_forks', sql`${table.maxRunningForks} >= 0`),
     check('organizations_plan', oneOf(table.plan, ORGANIZATION_PLANS)),
   ],

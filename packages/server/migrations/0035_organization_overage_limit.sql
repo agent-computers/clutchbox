@@ -1,0 +1,2 @@
+ALTER TABLE "organizations" ADD COLUMN "overage_limit_cents" integer;--> statement-breakpoint
+ALTER TABLE "organizations" ADD CONSTRAINT "organizations_overage_limit_cents" CHECK ("organizations"."overage_limit_cents" >= 0);
