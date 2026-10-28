@@ -29,6 +29,8 @@ export async function localSandbox(port = SANDBOX_CDP_PORT + 1000 + Math.floor(M
       });
       child.on('error', reject);
       child.on('close', exitCode => resolve({ exitCode, stdout }));
+      // A command that exits without reading its standard input (START_CHROME) closes the pipe first.
+      child.stdin.on('error', () => {});
       child.stdin.end(stdin ?? '');
     });
   // The Chrome's cookies, as Chrome holds them.
