@@ -478,7 +478,7 @@ describe('extension routes over OAuth', () => {
 describe("the extension's token client", () => {
   // The same functions the extension runs (packages/capture/src/oauth.ts), against real Better Auth. The controller
   // tests' fake token endpoint (apps/extension/src/controller.test.ts) assumes these outcomes.
-  it('connects, rotates, replays within the reuse window, and is refused after it', async () => {
+  it('connects, rotates, replays within the reuse window, recovers a lost answer after it, and catches reuse', async () => {
     const a = await identity('a');
     const redirectUri = `${extension}/connected.html`;
     const { verifier, challenge } = await pkce();
@@ -495,13 +495,14 @@ describe("the extension's token client", () => {
         new Request(input, { ...init, headers: { ...(init.headers as object), origin: extension } }),
       )) as typeof fetch;
     const tokensOf = (result: TokenResult) => {
-      if (typeof result !== 'object') throw new Error(`expected tokens, got ${result}`);
+      if (typeof result !== 'object' || !('tokens' in result))
+        throw new Error(`expected tokens, got ${JSON.stringify(result)}`);
       return result.tokens;
     };
     const first = tokensOf(
       await requestTokens(fetcher, origin, { code: (redirect as { code: string }).code, verifier, redirectUri }),
     );
-    expect(first.expiresAt - Date.now()).toBeGreaterThan(290_000);
+    expect(first.expiresAt - Date.now()).toBeGreaterThan(23 * 3600_000);
     expect((await request('GET', '/me', { token: first.access })).status).toBe(200);
     const rotated = tokensOf(await requestTokens(fetcher, origin, { refreshToken: first.refresh }));
     expect(rotated.refresh).not.toBe(first.refresh);
@@ -512,9 +513,13 @@ describe("the extension's token client", () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(Date.now() + 31_000);
-      expect(await requestTokens(fetcher, origin, { refreshToken: first.refresh })).toBe('invalid_grant');
-      // That replay disconnected the browser, so its newer token is refused too.
-      expect(await requestTokens(fetcher, origin, { refreshToken: rotated.refresh })).toBe('invalid_grant');
+      // As if the rotation's answer was lost: its successor is unused, so the old token gets new tokens.
+      const recovered = tokensOf(await requestTokens(fetcher, origin, { refreshToken: first.refresh }));
+      expect(recovered.refresh).not.toBe(rotated.refresh);
+      // The revoked successor, presented later, reads as a copy and disconnects the browser.
+      expect(await requestTokens(fetcher, origin, { refreshToken: rotated.refresh })).toEqual({ refused: 'reused' });
+      expect(await requestTokens(fetcher, origin, { refreshToken: recovered.refresh })).toEqual({ refused: 'ended' });
+      expect((await request('GET', '/me', { token: recovered.access })).status).toBe(401);
     } finally {
       vi.useRealTimers();
     }
@@ -522,7 +527,7 @@ describe("the extension's token client", () => {
     // The code is single-use.
     expect(
       await requestTokens(fetcher, origin, { code: (redirect as { code: string }).code, verifier, redirectUri }),
-    ).toBe('invalid_grant');
+    ).toEqual({ refused: 'ended' });
   });
 });
 

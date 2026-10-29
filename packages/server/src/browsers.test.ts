@@ -23,6 +23,7 @@ import {
   listBrowsers,
   removeAllBrowsers,
   removeBrowser,
+  SYNC_ACCESS_TOKEN_SECONDS,
   signOutBrowser,
   syncPrincipal,
 } from './browsers';
@@ -93,6 +94,12 @@ async function team(userId: string) {
 const connect = (cookie: string, userAgent?: string) =>
   connectBrowser(auth, cookie, { extensionOrigin: extension, ...(userAgent ? { userAgent } : {}) });
 const refresh = (token: string, extra = {}) => refreshBrowser(auth, extension, token, extra);
+// Ends a rotated refresh token's reuse window.
+const pastWindow = (token: string) =>
+  db
+    .update(schema.oauthRefreshToken)
+    .set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) })
+    .where(eq(schema.oauthRefreshToken.token, hash(token)));
 const familyOf = async (accessToken: string) =>
   (
     await db
@@ -323,7 +330,7 @@ describe('sync tokens', () => {
   it("are refused when expired, revoked, another client's, without sync, for a locked-out account, a disabled client, or malformed", async () => {
     const a = await identity('a');
     const tokens = await connect(a);
-    const later = new Date(Date.now() + 301_000);
+    const later = new Date(Date.now() + (SYNC_ACCESS_TOKEN_SECONDS + 1) * 1000);
     expect(await principal(tokens, CHROME_ON_MAC, later)).toBeNull();
     expect(await principal(tokens)).not.toBeNull();
     for (const authorization of [
@@ -622,7 +629,8 @@ describe('connected browsers', () => {
     expect((await refused.json()).error).toBe('invalid_grant');
   });
 
-  it('sign out only the browser whose rotated refresh token is replayed after the reuse window', async () => {
+  it('sign out only the browser whose rotated refresh token is replayed after its successor was used', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const a = await identity('a');
     const one = await connect(a);
     const two = await connect(a);
@@ -633,18 +641,42 @@ describe('connected browsers', () => {
     const retried = await refresh(one.refresh_token);
     expect(retried.status).toBe(200);
     expect(((await retried.json()) as Tokens).refresh_token).toBe(rotated.refresh_token);
-    // Past it, the replay signs that browser out only.
-    await db
-      .update(schema.oauthRefreshToken)
-      .set({ rotationReplayExpiresAt: new Date(Date.now() - 1000) })
-      .where(eq(schema.oauthRefreshToken.token, hash(one.refresh_token)));
+    // The successor is used, so the old token past the window is a copy: that browser is signed out, and only it.
+    const used = (await (await refresh(rotated.refresh_token)).json()) as Tokens;
+    await pastWindow(one.refresh_token);
     const replayed = await refresh(one.refresh_token);
     expect(replayed.status).toBe(400);
-    expect((await replayed.json()).error).toBe('invalid_grant');
-    expect(await principal(rotated)).toBeNull();
-    expect((await refresh(rotated.refresh_token)).status).toBe(400);
+    expect(await replayed.json()).toMatchObject({ error: 'invalid_grant', error_description: 'refresh token reused' });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('"event":"browser.signedOutOnReuse"'));
+    expect(await principal(used)).toBeNull();
+    expect((await refresh(used.refresh_token)).status).toBe(400);
     expect(await principal(two)).not.toBeNull();
     expect((await refresh(two.refresh_token)).status).toBe(200);
+  });
+
+  it('recover a rotation whose answer was lost, and still catch the party holding the revoked successor', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const a = await identity('a');
+    const first = await connect(a);
+    const found = (await principal(first))!;
+    // The browser never got this answer, and asks again after the window with the token it still holds.
+    const lost = (await (await refresh(first.refresh_token)).json()) as Tokens;
+    await pastWindow(first.refresh_token);
+    const recovered = await refresh(first.refresh_token);
+    expect(recovered.status).toBe(200);
+    const again = (await recovered.json()) as Tokens;
+    expect(again.refresh_token).not.toBe(lost.refresh_token);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('"event":"browser.rotationRecovered"'));
+    expect(await principal(again)).toMatchObject({ browser: { id: found.browser.id } });
+    expect(await principal(lost)).toBeNull();
+    // It keeps rotating as usual.
+    const next = (await (await refresh(again.refresh_token)).json()) as Tokens;
+    expect(await principal(next)).not.toBeNull();
+    // Whoever holds the revoked successor (here a copy) signs the browser out by presenting it.
+    const copied = await refresh(lost.refresh_token);
+    expect(await copied.json()).toMatchObject({ error: 'invalid_grant', error_description: 'refresh token reused' });
+    expect(await principal(next)).toBeNull();
+    expect(await db.select().from(schema.connectedBrowsers)).toMatchObject([{ disconnectedAt: expect.any(Date) }]);
   });
 
   it("cannot be revoked through /oauth2/revoke, nor signed out by another client's stale token", async () => {

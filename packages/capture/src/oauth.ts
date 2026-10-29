@@ -6,14 +6,20 @@ import { z } from 'zod';
 // A plain name, not a URL, so a server that registers clients from their metadata URL never tries to fetch it.
 export const extensionClientId = 'agent-computers-extension';
 export const syncScope = 'sync';
-// How long the server gives a rotated refresh token the same answer. A rotated token presented after it counts as
-// theft: the server disconnects that browser and deletes the copy it uploaded.
+// How long the server gives a rotated refresh token the same answer. Presented after it, the server gives the browser
+// new tokens if the token it rotated to was never used (its answer was lost); otherwise that counts as theft, and the
+// server disconnects the browser and deletes the copy it uploaded.
 export const refreshReuseSeconds = 30;
+// Why sync stopped, as the server's refresh refusal says: `reused` when the refresh token presented was rotated and its
+// successor had been used, which can mean it was copied, so the server signed the browser out; `ended` for any other
+// refusal (signed out, unknown, or expired).
+export type TokensEnded = 'reused' | 'ended';
+export const reusedDescription = 'refresh token reused';
 
 // Protocol timings tied to the server, not tunables: they must hold before any config has been fetched.
 // A connect flow stays usable this long, which covers signing in with Google in the tab.
 export const flowTtlMs = 15 * 60_000;
-// Refresh this long before the 5-minute access token expires.
+// Refresh this long before the access token expires.
 export const refreshAheadMs = 60_000;
 // Each refresh attempt's timeout.
 export const refreshAttemptMs = 15_000;
@@ -21,8 +27,7 @@ export const refreshAttemptMs = 15_000;
 export const refreshRetryMs = 20_000;
 // Every attempt is aborted by then, so a retry of a rotation whose response was lost reaches the server inside the
 // reuse window and gets the same answer. If none succeeds in time, the next refresh replays the old token after the
-// window: the server then disconnects this browser and deletes the copy it uploaded, and the extension shows
-// Reconnect.
+// window, which the server recovers from while the token it rotated to is unused.
 export const refreshDeadlineMs = (refreshReuseSeconds - 3) * 1000;
 
 const base64url = (bytes: Uint8Array) =>
@@ -103,10 +108,10 @@ export const tokenResponseSchema = z.object({
   scope: z.string().refine(scope => scope.split(' ').includes(syncScope)),
 });
 export type SyncTokens = { access: string; refresh: string; expiresAt: number };
-// `invalid_grant`: the server refused the code or refresh token. `retry`: the outcome is unknown (network, timeout,
-// 5xx), so the server may have rotated the token. `unavailable`: refused for another reason (429, other 4xx, a body
-// that isn't tokens); the tokens it was sent stay good.
-export type TokenResult = { tokens: SyncTokens } | 'invalid_grant' | 'retry' | 'unavailable';
+// `refused`: the server refused the code or refresh token (invalid_grant), and why. `retry`: the outcome is unknown
+// (network, timeout, 5xx), so the server may have rotated the token. `unavailable`: refused for another reason (429,
+// other 4xx, a body that isn't tokens); the tokens it was sent stay good.
+export type TokenResult = { tokens: SyncTokens } | { refused: TokensEnded } | 'retry' | 'unavailable';
 export async function readTokenResponse(response: Response, now = Date.now()): Promise<TokenResult> {
   if (response.status >= 500) return 'retry';
   let body: unknown;
@@ -122,10 +127,9 @@ export async function readTokenResponse(response: Response, now = Date.now()): P
     const { access_token, refresh_token, expires_in } = parsed.data;
     return { tokens: { access: access_token, refresh: refresh_token, expiresAt: now + expires_in * 1000 } };
   }
-  const error = (body as { error?: unknown } | null)?.error;
-  return (response.status === 400 || response.status === 401) && error === 'invalid_grant'
-    ? 'invalid_grant'
-    : 'unavailable';
+  const { error, error_description } = (body ?? {}) as { error?: unknown; error_description?: unknown };
+  if ((response.status !== 400 && response.status !== 401) || error !== 'invalid_grant') return 'unavailable';
+  return { refused: error_description === reusedDescription ? 'reused' : 'ended' };
 }
 // POSTs a grant to the token endpoint, never with cookies: the extension holds no grant on our site, so credentialed
 // CORS would fail, and the server refuses a cookie there.

@@ -6,6 +6,7 @@ import { generateId } from '@better-auth/core/utils/id';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { mcp } from '@better-auth/mcp';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
+import { reusedDescription } from '@clutchbox/capture';
 import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { genericOAuth, jwt, magicLink } from 'better-auth/plugins';
@@ -20,6 +21,7 @@ import {
   REFRESH_TOKEN_SECONDS,
   recordBrowser,
   refreshTokenClient,
+  SYNC_ACCESS_TOKEN_SECONDS,
   SYNC_SCOPE,
 } from './browsers';
 import { agentClientUrls, OIDC_PROVIDER_ID, type ServerConfig } from './config';
@@ -66,6 +68,8 @@ const PUBLIC_ID_KINDS = {
 const authId = ({ model }: { model: string }) =>
   model in PUBLIC_ID_KINDS ? newPublicId(PUBLIC_ID_KINDS[model as keyof typeof PUBLIC_ID_KINDS]) : generateId();
 
+// Every scope the server grants: agents', the extension's, and Connect apps'.
+const OAUTH_SCOPES = [...MCP_SCOPES, SYNC_SCOPE, CONNECT_SCOPE];
 // An OAuth error answer, shaped like the provider's own.
 const oauthError = (error: string, description: string) =>
   new APIError('BAD_REQUEST', { error, error_description: description });
@@ -143,12 +147,13 @@ const requestGuards = (db: Database) =>
       }
     if (ctx.path === '/oauth2/token' && bodyField(ctx.body, 'grant_type') === 'refresh_token') {
       const refreshToken = bodyField(ctx.body, 'refresh_token');
-      if (
-        refreshToken &&
-        requestClientId(ctx.body, ctx.request?.headers) === EXTENSION_CLIENT_ID &&
-        (await guardExtensionRefresh(db, { refreshToken }))
-      )
-        throw oauthError('invalid_grant', 'invalid refresh token');
+      const refused =
+        refreshToken && requestClientId(ctx.body, ctx.request?.headers) === EXTENSION_CLIENT_ID
+          ? await guardExtensionRefresh(db, { refreshToken })
+          : undefined;
+      // The extension reads the description, to say why sync stopped.
+      if (refused)
+        throw oauthError('invalid_grant', refused === 'reused' ? reusedDescription : 'invalid refresh token');
     }
     if (ctx.path === '/oauth2/revoke') {
       // The extension disconnects with DELETE /api/v1/captures. Better Auth revokes every family of the requesting
@@ -365,11 +370,19 @@ export function createAuth(
         resource: `${config.BETTER_AUTH_URL}/api/mcp`,
         // `sync` is the extension's alone (browsers.ts): never advertised, and never given to agents, whose CIMD
         // registrations store the MCP scopes. The extension's client row allows only offline_access and sync.
-        scopes: [...MCP_SCOPES, SYNC_SCOPE, CONNECT_SCOPE],
+        scopes: OAUTH_SCOPES,
         advertisedMetadata: { scopes_supported: MCP_SCOPES },
         clientRegistrationDefaultScopes: MCP_SCOPES,
         grantTypes: ['authorization_code', 'refresh_token'],
-        accessTokenExpiresIn: ACCESS_TOKEN_SECONDS,
+        // Better Auth gives a token its scopes' shortest lifetime, so every token but the extension's (offline_access
+        // and sync alone) gets ACCESS_TOKEN_SECONDS. A number there is a timestamp, so the lifetime is a string.
+        accessTokenExpiresIn: SYNC_ACCESS_TOKEN_SECONDS,
+        scopeExpirations: Object.fromEntries(
+          OAUTH_SCOPES.filter(scope => scope !== SYNC_SCOPE && scope !== 'offline_access').map(scope => [
+            scope,
+            `${ACCESS_TOKEN_SECONDS}s`,
+          ]),
+        ),
         // 30 days unused; each refresh issues a new 30-day token.
         refreshTokenExpiresIn: REFRESH_TOKEN_SECONDS,
         refreshTokenReuseInterval: REFRESH_REUSE_SECONDS,

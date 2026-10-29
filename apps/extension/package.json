@@ -1,6 +1,6 @@
 {
   "name": "@clutchbox/extension",
-  "version": "26.1028.0",
+  "version": "26.1029.0",
   "private": true,
   "type": "module",
   "scripts": {

@@ -14,3 +14,9 @@ export type SetupEvent = 'setup.browserSynced' | 'setup.agentConnected' | 'setup
 export function logSetupEvent(name: SetupEvent, fields: { user: string }) {
   console.log(JSON.stringify({ ...fields, event: name }));
 }
+// A browser's rotated refresh token presented after the reuse window: recovered as a lost answer, or signed out as
+// theft. Only the opaque user ID is logged.
+export type BrowserEvent = 'browser.rotationRecovered' | 'browser.signedOutOnReuse';
+export function logBrowserEvent(name: BrowserEvent, fields: { user: string; rotatedSecondsAgo: number | null }) {
+  console.log(JSON.stringify({ ...fields, event: name }));
+}

@@ -52,6 +52,7 @@ import {
   syncResponseSchema,
   syncSettingsSchema,
   type TokenResult,
+  type TokensEnded,
   timeoutSignal,
   uploadResultSchema,
   type VerifiedServer,
@@ -76,9 +77,11 @@ export const configKey = 'extensionConfig';
 export const pulledKey = 'settingsPulledAt';
 export const revokedKey = 'revokedSites';
 // Each server's OAuth tokens and the account they belong to, named `<key>:<server origin>` (local storage). The account
-// is kept while its tokens wait for Reconnect, so reconnecting as a different account can start fresh.
+// is kept while its tokens wait for Reconnect, so reconnecting as a different account can start fresh; so is why the
+// tokens ended, when the server said they were reused.
 export const tokensKey = 'syncTokens';
 export const accountKey = 'syncAccount';
+export const endedKey = 'syncEnded';
 const connectionKeys = [settingsKey, syncKey, configKey, pulledKey, revokedKey];
 // The connection the popup shows, kept between openings; and a Sign out whose deletion the server did not confirm.
 export const selectedKey = 'selectedConnection';
@@ -226,7 +229,7 @@ interface Host {
   startFlow(flow: Pick<Flow, 'mode' | 'sites' | 'reconnect' | 'origin' | 'connection'>, from?: number): Promise<void>;
   server(origin: string): Server;
   // A server's tokens ended: every connection on it waits for Reconnect.
-  endTokens(origin: string): Promise<void>;
+  endTokens(origin: string, reason?: TokensEnded): Promise<void>;
   // A request named an organization the account has left: the list is fetched again.
   organizationsChanged(origin: string): void;
   signOut(origin: string): Promise<void>;
@@ -267,8 +270,8 @@ class Server {
     return this.refreshing;
   }
   // Retries an attempt whose outcome is unknown while the server still answers the old token with the same tokens.
-  // `invalid_grant` ends the tokens, unless an earlier attempt may have rotated the token: the server refuses a
-  // retry that arrives before it has saved the answer to replay. Anything else keeps the tokens.
+  // A refusal ends the tokens, unless an earlier attempt may have rotated the token: the server refuses a retry that
+  // arrives before it has saved the answer to replay. Anything else keeps the tokens.
   private async doRefresh(): Promise<Access> {
     const tokens = await this.tokens();
     if (!tokens) return 'reconnect';
@@ -282,7 +285,7 @@ class Server {
       } finally {
         timeout.clear();
       }
-      if (typeof last === 'object') {
+      if (typeof last === 'object' && 'tokens' in last) {
         // Saved before anything else, so the rotated token is never lost. Tokens that ended or changed meanwhile
         // (Sign out, a new sign-in) are kept.
         const current = await this.tokens();
@@ -291,14 +294,14 @@ class Server {
         return last.tokens.access;
       }
       if (last === 'unavailable') return 'unavailable';
-      if (last === 'invalid_grant' && !uncertain) break;
+      if (typeof last === 'object' && !uncertain) break;
       if (last === 'retry') uncertain = true;
       const delay = refreshDelaysMs[attempt];
       if (delay === undefined || Date.now() - start + delay >= refreshRetryMs) break;
       await sleep(delay);
     }
-    if (last !== 'invalid_grant') return 'unavailable';
-    if ((await this.tokens())?.refresh === tokens.refresh) await this.host.endTokens(this.origin);
+    if (typeof last !== 'object') return 'unavailable';
+    if ((await this.tokens())?.refresh === tokens.refresh) await this.host.endTokens(this.origin, last.refused);
     return 'reconnect';
   }
   // Every request to the server: the bearer token, never cookies (no grant on its site, so credentialed CORS would
@@ -618,9 +621,10 @@ class Connection {
   }
   private async accountState(): Promise<AccountState> {
     const stored = await this.server.account();
-    return (await this.tokens())
-      ? { state: 'syncing', email: stored?.email ?? '' }
-      : { state: 'reconnect', ...(stored ? { email: stored.email } : {}) };
+    if (await this.tokens()) return { state: 'syncing', email: stored?.email ?? '' };
+    const ended = keyOf(endedKey, this.origin);
+    const reused = (await this.api.storage.local.get(ended))[ended] === 'reused';
+    return { state: 'reconnect', ...(stored ? { email: stored.email } : {}), ...(reused ? { reused } : {}) };
   }
   // The connection's status; the controller adds the list of connections.
   async status(): Promise<StatusResponse> {
@@ -1165,7 +1169,7 @@ export class CaptureController {
       badge: () => this.badge(),
       startFlow: (flow, from) => this.startFlow(flow, from),
       server: origin => this.server(origin),
-      endTokens: origin => this.endTokens(origin),
+      endTokens: (origin, reason) => this.endTokens(origin, reason),
       organizationsChanged: origin => {
         void this.enqueue(() => this.refreshOrganizations(origin)).catch(() => undefined);
       },
@@ -1260,8 +1264,11 @@ export class CaptureController {
       if (!(await this.server(origin).tokens())) reconnect = true;
     await this.api.action.setBadgeText({ text: reconnect ? '!' : '' }).catch(() => undefined);
   }
-  private async endTokens(origin: string) {
+  // Ending tokens that already ended keeps the reason recorded then.
+  private async endTokens(origin: string, reason?: TokensEnded) {
+    const ending = !!(await this.server(origin).tokens());
     await this.api.storage.local.remove(keyOf(tokensKey, origin));
+    if (reason || ending) await this.api.storage.local.set({ [keyOf(endedKey, origin)]: reason ?? 'ended' });
     for (const connection of this.connections(origin)) await connection.tokensEnded();
     await this.badge();
   }
@@ -1318,7 +1325,11 @@ export class CaptureController {
     } catch {
       // Not confirmed, so reported below.
     } finally {
-      await this.api.storage.local.remove([keyOf(tokensKey, origin), keyOf(accountKey, origin)]);
+      await this.api.storage.local.remove([
+        keyOf(tokensKey, origin),
+        keyOf(accountKey, origin),
+        keyOf(endedKey, origin),
+      ]);
       const gone = this.connections(origin);
       // Unlisted first, so their grants count as unused.
       await this.saveEntries(this.entries.filter(entry => entry.origin !== origin));
@@ -1665,7 +1676,7 @@ export class CaptureController {
       { code: redirect.code, verifier: flow.verifier, redirectUri: this.redirectUri },
       AbortSignal.timeout(checkTimeoutMs),
     );
-    if (typeof result !== 'object') return { ok: false, error: 'unavailable' };
+    if (typeof result !== 'object' || !('tokens' in result)) return { ok: false, error: 'unavailable' };
     const { tokens } = result;
     const me = await meAt(this.api.fetch, origin, tokens.access);
     // A server from before accounts may name no organization; one that lists them lists at least one, since it
@@ -1697,7 +1708,7 @@ export class CaptureController {
       }
     }
     await this.api.storage.local.set({ [keyOf(tokensKey, origin)]: tokens, [keyOf(accountKey, origin)]: me.account });
-    await this.api.storage.local.remove(signOutFailedKey);
+    await this.api.storage.local.remove([signOutFailedKey, keyOf(endedKey, origin)]);
     await this.syncOrganizations(origin, me, keep);
     const ours = this.entries.filter(entry => entry.origin === origin);
     const landing =

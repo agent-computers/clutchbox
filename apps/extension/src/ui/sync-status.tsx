@@ -49,7 +49,7 @@ function summarize({ capture, sync, settings, account }: StatusResponse, busy: b
     return {
       label: 'Reconnect needed',
       tone: 'problem',
-      detail: `This browser stopped syncing${account.email ? ` as ${account.email}` : ''}. It was signed out on the server, or unused for 30 days. Your sites and exclusions are kept.`,
+      detail: `This browser stopped syncing${account.email ? ` as ${account.email}` : ''}. ${account.reused ? 'Its sign-in was used from two places, which can mean it was copied, so the server signed it out.' : 'It was signed out on the server, or unused for 30 days.'} Your sites and exclusions are kept.`,
       action: 'reconnect',
     };
   if (settings.paused) return { label: 'Paused', tone: 'idle', detail: 'Your agents keep the last upload.' };

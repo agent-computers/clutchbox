@@ -435,11 +435,12 @@ export const meSchema = z.object({
   defaultOrganization: z.string().min(1).max(64).nullish().catch(undefined),
 });
 // The account on a connection's server. `reconnect`: signed in, but its tokens ended (signed out on the server,
-// or unused for 30 days), so sync waits for Reconnect.
+// or unused for 30 days), so sync waits for Reconnect; `reused` when the server signed the browser out because its
+// refresh token was used twice.
 export type AccountState =
   | { state: 'none' }
   | { state: 'syncing'; email: string }
-  | { state: 'reconnect'; email?: string };
+  | { state: 'reconnect'; email?: string; reused?: true };
 // One connection in the switcher the popup and the setup tab show: an organization on one server, which the browser
 // syncs to as the account signed in there.
 export interface ConnectionSummary {

@@ -56,8 +56,9 @@ const cookie = {
   storeId: '0',
 };
 // How the server's token endpoint can fail: `network` before it is reached, `lost` after it rotated the token,
-// `replay_pending` a retry that arrives before the server saved the answer to replay (invalid_grant).
-type TokenFailure = 'network' | 'lost' | 'replay_pending' | '5xx' | '429';
+// `replay_pending` a retry that arrives before the server saved the answer to replay (invalid_grant), `reused` a
+// refresh the server took for a copied token and signed the browser out for.
+type TokenFailure = 'network' | 'lost' | 'replay_pending' | 'reused' | '5xx' | '429';
 // `installed`: local storage as a build from before connections left it, which startup moves to the first connection.
 function setup(installed: { [key: string]: unknown } = {}) {
   let session: { [key: string]: unknown } = {};
@@ -124,7 +125,11 @@ function setup(installed: { [key: string]: unknown } = {}) {
   // Each token works only on the server that issued it.
   type Holder = { user: string; organization: string; family: string; server: string };
   const accessTokens = new Map<string, Holder>();
-  const refreshTokens = new Map<string, Holder & { rotatedAt?: number; answer?: object }>();
+  // `answer`: what its rotation returned; `dropped`: a successor revoked when its answer was taken as lost.
+  const refreshTokens = new Map<
+    string,
+    Holder & { rotatedAt?: number; answer?: { access_token: string; refresh_token: string }; dropped?: true }
+  >();
   const revoked = new Set<string>();
   const failures: TokenFailure[] = [];
   // Set by refuseAccess: access tokens minted from then on are refused too.
@@ -143,6 +148,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
     return tokens;
   };
   const invalidGrant = () => answer(400, { error: 'invalid_grant' });
+  const reusedGrant = () => answer(400, { error: 'invalid_grant', error_description: 'refresh token reused' });
   const grantTokens = (body: URLSearchParams, server: string) => {
     if (body.get('client_id') !== 'agent-computers-extension') return answer(401, { error: 'invalid_client' });
     if (body.get('grant_type') === 'authorization_code') {
@@ -165,10 +171,21 @@ function setup(installed: { [key: string]: unknown } = {}) {
     }
     const presented = refreshTokens.get(body.get('refresh_token') ?? '');
     if (!presented || presented.server !== server || revoked.has(presented.family)) return invalidGrant();
+    // As the server does (packages/server/src/browsers.ts, guardExtensionRefresh): after the reuse window, a rotated
+    // token whose successor was never used gets new tokens; anything else reads as a copy and signs the browser out.
+    if (presented.dropped) {
+      revoked.add(presented.family);
+      return reusedGrant();
+    }
     if (presented.answer) {
       if (Date.now() - presented.rotatedAt! <= 30_000) return answer(200, presented.answer);
-      revoked.add(presented.family);
-      return invalidGrant();
+      const successor = refreshTokens.get(presented.answer.refresh_token)!;
+      if (successor.answer || successor.dropped) {
+        revoked.add(presented.family);
+        return reusedGrant();
+      }
+      successor.dropped = true;
+      accessTokens.delete(presented.answer.access_token);
     }
     presented.answer = issue(presented);
     presented.rotatedAt = Date.now();
@@ -180,6 +197,7 @@ function setup(installed: { [key: string]: unknown } = {}) {
     if (failure === '5xx') return answer(503, { error: 'server_error' });
     if (failure === '429') return answer(429, { error: 'rate_limited' });
     if (failure === 'replay_pending') return invalidGrant();
+    if (failure === 'reused') return reusedGrant();
     const response = grantTokens(body, server);
     if (failure === 'lost') throw new TypeError('network');
     return response;
@@ -1813,6 +1831,44 @@ describe('connecting', () => {
       expect((test.stored(tokensKey) as { refresh: string }).refresh).not.toBe(refresh);
     }),
   );
+  it(
+    "recovers when a rotation's answer was lost and every retry failed, as when the computer sleeps",
+    withFakeTimers(async () => {
+      const test = setup();
+      await test.connect();
+      const refresh = await stale(test);
+      test.failNextToken('lost', 'network', 'network', 'network');
+      expect(await settled(test.controller.handle({ type: 'capture' }))).toMatchObject({
+        account: { state: 'syncing' },
+      });
+      expect((test.stored(tokensKey) as { refresh: string }).refresh).toBe(refresh);
+      // Long after the reuse window, the token it still holds gets new tokens.
+      vi.setSystemTime(Date.now() + 60 * 60_000);
+      expect(await settled(test.controller.handle({ type: 'capture' }))).toMatchObject({
+        sync: { state: 'synced' },
+        account: { state: 'syncing' },
+      });
+      expect((test.stored(tokensKey) as { refresh: string }).refresh).not.toBe(refresh);
+    }),
+  );
+  it('says why when the server signed the browser out for a reused sign-in, until Reconnect', async () => {
+    const test = setup();
+    await test.connect();
+    await stale(test);
+    test.failNextToken('reused');
+    expect(await test.controller.handle({ type: 'capture' })).toMatchObject({
+      account: { state: 'reconnect', email: 'a@example.test', reused: true },
+    });
+    await test.controller.handle({ type: 'reconnect' });
+    await test.authorize();
+    const status = await test.drain();
+    expect(status).toMatchObject({ account: { state: 'syncing' } });
+    // Ended any other way, it doesn't say reused.
+    test.revokeFamily();
+    const ended = await test.controller.handle({ type: 'check' });
+    expect(ended).toMatchObject({ account: { state: 'reconnect' } });
+    expect((ended as { account: object }).account).not.toHaveProperty('reused');
+  });
   it('asks to reconnect when the first refresh attempt is refused', async () => {
     const test = setup();
     await test.connect();

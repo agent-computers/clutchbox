@@ -1,10 +1,11 @@
 import 'server-only';
 import { createHash } from 'node:crypto';
 import { extensionClientId, refreshReuseSeconds, syncScope } from '@clutchbox/capture';
-import { and, asc, eq, exists, gt, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, gt, gte, isNotNull, isNull, lte, ne, sql } from 'drizzle-orm';
 import { deleteCaptures, deleteCapturesIn, lockMember } from './captures';
 import type { Database } from './database';
 import { newPublicId, publicIdPattern } from './ids';
+import { logBrowserEvent } from './log';
 import { currentMember, type Member } from './organizations';
 import * as schema from './schema';
 
@@ -17,14 +18,17 @@ import * as schema from './schema';
 // The oauth_client CHECK in oauth-schema.ts names it too. Shared with the extension's client (packages/capture).
 export const EXTENSION_CLIENT_ID = extensionClientId;
 export const SYNC_SCOPE = syncScope;
-// Access token lifetime: how long a token outlives a disconnect it missed. Five minutes, as for MCP tokens; the
-// extension refreshes as needed.
+// Access token lifetime for every token but the extension's: how long an agent's token, a JWT checked by signature
+// alone, outlives a revocation it missed.
 export const ACCESS_TOKEN_SECONDS = 300;
+// The extension's access token lifetime. Every request looks the token up (syncPrincipal), so a sign-out ends it at
+// once and its lifetime bounds nothing; a day keeps rotations, each a chance to lose the answer, to about one a day.
+export const SYNC_ACCESS_TOKEN_SECONDS = 60 * 60 * 24;
 // Refresh token lifetime, unused: each refresh issues a new token with a fresh 30 days, so a browser left closed for a
 // month reconnects and one in use never does.
 export const REFRESH_TOKEN_SECONDS = 60 * 60 * 24 * 30;
 // How long a rotated refresh token still gets the same answer, so a refresh whose response was lost can retry. mcp()'s
-// default; after it, presenting a rotated token counts as theft. The extension's refresh timings derive from it.
+// default; after it, see guardExtensionRefresh. The extension's refresh timings derive from it.
 export const REFRESH_REUSE_SECONDS = refreshReuseSeconds;
 export const BROWSER_ID_PATTERN = publicIdPattern('browser');
 
@@ -410,37 +414,107 @@ export async function signOutBrowser(db: Database, userId: string, browser: numb
   if (row) await signOutFamily(db, userId, row.family, new Date());
 }
 
-// Refresh-token theft, one browser at a time. Before Better Auth sees an extension refresh, true refuses it: the
-// family is signed out, or the token was rotated more than the reuse window ago, which signs out only this family.
-// Better Auth would instead delete every family of the client for the user, so one replay would sign out every
-// browser. Anything else (unknown, expired, a retry within the window) is Better Auth's to answer.
+// Refresh-token theft, one browser at a time. Before Better Auth sees an extension refresh, the guard refuses it when
+// the family is signed out (`refused`), or when the token was rotated more than the reuse window ago and that can't be
+// a lost answer (recoverLostRotation), which signs out only this family (`reused`). Better Auth would instead delete
+// every family of the client for the user, so one replay would sign out every browser. Anything else (unknown,
+// expired, a retry within the window, a recovered rotation) is Better Auth's to answer.
 export async function guardExtensionRefresh(
   db: Database,
   { refreshToken, now = new Date() }: { refreshToken: string; now?: Date },
-) {
+): Promise<'refused' | 'reused' | undefined> {
   const refresh = schema.oauthRefreshToken;
   const [row] = await db
     .select({
+      id: refresh.id,
       userId: refresh.userId,
       clientId: refresh.clientId,
       family: refresh.authorizationCodeId,
       revoked: refresh.revoked,
+      rotatedAt: refresh.rotatedAt,
       replayUntil: refresh.rotationReplayExpiresAt,
     })
     .from(refresh)
     .where(eq(refresh.token, hashToken(refreshToken)));
-  if (!row || row.clientId !== EXTENSION_CLIENT_ID) return false;
+  if (!row || row.clientId !== EXTENSION_CLIENT_ID) return undefined;
   const family = row.family;
   if (family) {
     const [browser] = await db
       .select({ disconnectedAt: schema.connectedBrowsers.disconnectedAt })
       .from(schema.connectedBrowsers)
       .where(eq(schema.connectedBrowsers.authorizationCodeId, family));
-    if (browser?.disconnectedAt) return true;
+    if (browser?.disconnectedAt) return 'refused';
   }
-  if (!row.revoked || (row.replayUntil && row.replayUntil > now)) return false;
-  if (family) await signOutFamily(db, row.userId, family, now);
-  return true;
+  if (!row.revoked || (row.replayUntil && row.replayUntil > now)) return undefined;
+  if (!family) return 'reused';
+  const outcome = await recoverLostRotation(db, row.id, family, now);
+  if (outcome === 'answer') return undefined;
+  // Seconds since the rotation, or null for a successor revoked by a recovery.
+  const rotatedSecondsAgo = row.rotatedAt ? Math.round((now.getTime() - row.rotatedAt.getTime()) / 1000) : null;
+  if (outcome === 'recovered') {
+    logBrowserEvent('browser.rotationRecovered', { user: row.userId, rotatedSecondsAgo });
+    return undefined;
+  }
+  await signOutFamily(db, row.userId, family, now);
+  logBrowserEvent('browser.signedOutOnReuse', { user: row.userId, rotatedSecondsAgo });
+  return 'reused';
+}
+// A refresh whose answer never reached the browser (asleep, offline, its worker stopped) leaves it holding the token it
+// sent, which the server rotated. When that token's successor was never rotated, the browser most likely never got
+// it: the successor and its access tokens are revoked, with no reuse window, and the sent token is restored for Better
+// Auth to rotate again. A thief is still caught: whichever party holds the revoked
+// successor presents it on its next refresh, which is `reused` (revoked, never rotated) and signs the family out.
+// `answer`: a concurrent request restored or rotated the token meanwhile, so Better Auth answers.
+async function recoverLostRotation(
+  db: Database,
+  id: string,
+  family: string,
+  now: Date,
+): Promise<'answer' | 'recovered' | 'reused'> {
+  const refresh = schema.oauthRefreshToken;
+  return db.transaction(async tx => {
+    const [sent] = await tx
+      .select({
+        userId: refresh.userId,
+        revoked: refresh.revoked,
+        rotatedAt: refresh.rotatedAt,
+        replayUntil: refresh.rotationReplayExpiresAt,
+        expiresAt: refresh.expiresAt,
+      })
+      .from(refresh)
+      .where(eq(refresh.id, id))
+      .for('update');
+    if (!sent?.revoked || (sent.replayUntil && sent.replayUntil > now)) return 'answer';
+    if (!sent.rotatedAt || sent.expiresAt <= now) return 'reused';
+    // Better Auth stamps a rotation and the token it creates with the same second, so the family's tokens created
+    // since are the successor and any it rotated to. Only the successor, still live, means it was never used; a tie
+    // within the second reads as used, which signs out as before.
+    const since = await tx
+      .select({ id: refresh.id, revoked: refresh.revoked })
+      .from(refresh)
+      .where(
+        and(
+          extensionTokens(refresh, sent.userId),
+          eq(refresh.authorizationCodeId, family),
+          gte(refresh.createdAt, sent.rotatedAt),
+          ne(refresh.id, id),
+        ),
+      )
+      .for('update');
+    const [successor] = since;
+    if (since.length !== 1 || successor!.revoked) return 'reused';
+    await tx.update(refresh).set({ revoked: now }).where(eq(refresh.id, successor!.id));
+    const access = schema.oauthAccessToken;
+    await tx
+      .update(access)
+      .set({ revoked: now })
+      .where(and(eq(access.refreshId, successor!.id), isNull(access.revoked)));
+    await tx
+      .update(refresh)
+      .set({ revoked: null, rotatedAt: null, rotationReplayExpiresAt: null, rotationReplayResponse: null })
+      .where(eq(refresh.id, id));
+    return 'recovered';
+  });
 }
 // The client that holds a refresh token, if it is one. The revoke hook (auth.ts) uses it to keep a client from
 // revoking, or triggering family revocation with, another client's token.
