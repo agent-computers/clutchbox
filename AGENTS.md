@@ -6,6 +6,7 @@
 - Everything here is public, history included. Commit only synthetic data: no credentials, captured cookies or profiles, customer data, or internal plans, and no links to documents or issues outside this repository.
 - Run `bun run format` before committing; `bun run lint`, `bun run typecheck`, and `bun run test` must pass. Fix a lint finding rather than suppressing it; a `biome-ignore` comment says why the rule is wrong for that line.
 - Bump the extension (`apps/extension/package.json`) when extension or capture code changes, and the CLI (`packages/cli/package.json`) when what it bundles changes (`packages/cli/src`, `packages/server/src/agents.ts`). Schemes are in CONTRIBUTING.md; a push to main publishes the CLI to npm.
+- An extension bump isn't a release: the Chrome Web Store and release-origin downloads keep the last release until the Release workflow runs. After pushing one, say how far main's version is past the latest release (`gh release list -L 1`) and offer to run it (`gh workflow run release.yml --ref main`, then `gh run watch`). Run it only when asked, since it submits to the store.
 
 ## Server
 
