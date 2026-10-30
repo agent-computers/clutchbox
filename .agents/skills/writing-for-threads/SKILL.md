@@ -5,7 +5,7 @@ description: Write the text of a post or thread for Threads that hooks strangers
 
 # Writing for Threads
 
-A post does two jobs. The **hook** earns the like; the **bridge** turns the like into a follow, a star, or a sign-up. A great hook with no bridge buys likes and nothing else.
+A post does two jobs. The **hook** earns views, likes, and replies; the **bridge** turns them into a follow, a star, or a sign-up. A great hook with no bridge buys reach and nothing else: a picture and a one-line question once drew 19,418 views and 132 replies, and 1 follow.
 
 ## 1. Find the bridge
 
@@ -14,6 +14,7 @@ Before writing, name the line from this post's lesson to what you build, in one 
 ## 2. Write it
 
 - **Hook first.** The feed shows only the first post, so it carries the hook, the main claim, and the picture. Open with the surprising fact, the number, or the tension, and land it in the first 280 characters, which is also what a cross-post to X shows before "Show more".
+- **Invite replies.** Replies are what spread a post, and a question every reader has an answer to ("What's your versioning game?") draws them. Ask it after the claim and the bridge, never instead of them.
 - **Name what you build** in one clause the reader understands, inside the post: "my Chrome extension that keeps AI agents signed in", never just "our extension" or the product name alone. That clause is what sends a reader who liked the post to your profile.
 - **Casual, concise, punchy.** First person, short sentences, plain words, fragments welcome. Cut every word that doesn't earn its place. Plain text: the hook carries it, with no hashtags or emoji.
 - **One post**, up to 500 characters, when the idea fits. A thread only when it has separate beats that each pay off alone, usually 2 to 4 posts, each split at the end of a thought. Tables and long detail go in an attachment or a reply.
