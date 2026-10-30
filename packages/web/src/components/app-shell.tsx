@@ -188,27 +188,7 @@ function AppSidebar({
   };
   return (
     <Sidebar>
-      <SidebarHeader className="gap-4 px-4 pt-6 pb-4">
-        <div className="grid justify-items-start gap-0.5">
-          <Link
-            href="/app"
-            onClick={follow('/app')}
-            className="font-serif text-lg font-medium italic"
-            aria-label="Clutchbox home page"
-          >
-            clutchbox
-          </Link>
-          {shell.landing && (
-            <Link
-              className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
-              href={shell.landing.href}
-              onClick={follow(shell.landing.href)}
-            >
-              {shell.landing.label}
-              <ArrowUpRight aria-hidden className="size-3" />
-            </Link>
-          )}
-        </div>
+      <SidebarHeader className="p-3">
         <OrganizationSwitcher onCreated={() => go('/app/organization')} onJoin={() => go('/join')} />
       </SidebarHeader>
       <SidebarContent>
@@ -233,25 +213,39 @@ function AppSidebar({
       </SidebarContent>
       <SidebarFooter className="gap-3 border-t p-3">
         <UserButton user={user} />
-        {(footerLinks.length > 0 || shell.githubRepo) && (
-          <p className="flex gap-4 px-1 text-xs text-muted-foreground">
-            {footerLinks.map(({ href, label }) => (
-              <Link key={href} className="hover:text-foreground" href={href} onClick={follow(href)}>
-                {label}
-              </Link>
-            ))}
-            {shell.githubRepo && (
-              <a
+        {(shell.landing || footerLinks.length > 0 || shell.githubRepo) && (
+          <div className="grid justify-items-start gap-1 px-1 text-xs text-muted-foreground">
+            {shell.landing && (
+              <Link
                 className="inline-flex items-center gap-0.5 hover:text-foreground"
-                href={`https://github.com/${shell.githubRepo}`}
-                target="_blank"
-                rel="noopener"
+                href={shell.landing.href}
+                onClick={follow(shell.landing.href)}
               >
-                GitHub
+                {shell.landing.label}
                 <ArrowUpRight aria-hidden className="size-3" />
-              </a>
+              </Link>
             )}
-          </p>
+            {(footerLinks.length > 0 || shell.githubRepo) && (
+              <p className="flex gap-4">
+                {footerLinks.map(({ href, label }) => (
+                  <Link key={href} className="hover:text-foreground" href={href} onClick={follow(href)}>
+                    {label}
+                  </Link>
+                ))}
+                {shell.githubRepo && (
+                  <a
+                    className="inline-flex items-center gap-0.5 hover:text-foreground"
+                    href={`https://github.com/${shell.githubRepo}`}
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    GitHub
+                    <ArrowUpRight aria-hidden className="size-3" />
+                  </a>
+                )}
+              </p>
+            )}
+          </div>
         )}
       </SidebarFooter>
     </Sidebar>

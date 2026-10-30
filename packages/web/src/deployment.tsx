@@ -10,7 +10,7 @@ export type ShellIcon = keyof typeof shellIcons;
 // What a deployment adds to the signed-in app's shell. Without any, the app shows only the product's own pages, with no
 // landing page or footer links, and offers only the manual build of the extension.
 export type ShellExtras = {
-  // The deployment's landing page, linked under the wordmark.
+  // The deployment's landing page, linked in the sidebar footer.
   landing?: { href: string; label: string };
   // Sidebar pages above Settings, with an optional badge such as "Soon".
   morePages?: { href: string; label: string; icon: ShellIcon; badge?: string }[];
