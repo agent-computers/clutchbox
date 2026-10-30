@@ -87,6 +87,17 @@ describe('CDP relay', () => {
     await vi.waitFor(() => expect(chromeSockets[0]!.readyState).toBe(WebSocket.CLOSED));
   });
 
+  it('asks the client to reconnect when the server shuts down, or at once if it already has', async () => {
+    const shutdown = new AbortController();
+    const running = await setup({ stop: shutdown.signal });
+    shutdown.abort();
+    expect(await running.closed).toEqual({ code: CDP_CLOSE.reconnect, reason: 'reconnect' });
+    await vi.waitFor(() => expect(running.chromeSockets[0]!.readyState).toBe(WebSocket.CLOSED));
+    expect(running.logs).toContainEqual(expect.objectContaining({ event: 'cdp.relay_end', cause: 'shutdown' }));
+    const late = await setup({ stop: AbortSignal.abort() });
+    expect(await late.closed).toEqual({ code: CDP_CLOSE.reconnect, reason: 'reconnect' });
+  });
+
   it.each([
     ['ended', CDP_CLOSE.sessionEnded, 'session ended'],
     ['user_in_control', CDP_CLOSE.userInControl, 'user in control'],

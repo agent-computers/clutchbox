@@ -9,6 +9,7 @@ import {
 } from './computer-timing';
 import { errorLabel } from './log';
 import { RFB_FILTER_CLOSE_CODE, RfbClientFilter } from './rfb-filter';
+import { shutdownSignal } from './shutdown';
 
 // The live-view relay's pipe: it joins the browser's noVNC WebSocket to the computer's websockify
 // WebSocket. What the computer sends goes to the browser byte for byte; what the browser sends goes through the
@@ -34,7 +35,7 @@ export const RELAY_CLOSE = {
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 1024 * 1024;
 
-export type RelayEndCause = 'browser' | 'computer' | 'deadline' | 'filter' | 'text' | 'error' | 'access';
+export type RelayEndCause = 'browser' | 'computer' | 'deadline' | 'shutdown' | 'filter' | 'text' | 'error' | 'access';
 
 // What the relay logs: its own fixed words and numbers, never bytes, URLs, tokens, or a peer's close reason.
 export type RelayLog =
@@ -55,6 +56,8 @@ export type RelayOptions = {
   // When the platform cuts the connection, in `now()` milliseconds; the relay closes with 4000 'reconnect'
   // LIVE_VIEW_CLOSE_MARGIN_MS before it.
   deadlineMs: number;
+  // Aborted when the server shuts down (shutdown.ts); the relay then closes with 4000 'reconnect' at once.
+  stop?: AbortSignal;
   now?: () => number;
   log?: (entry: RelayLog) => void;
 };
@@ -69,6 +72,7 @@ export function relay({
   access,
   onDroppedInput,
   deadlineMs,
+  stop = shutdownSignal,
   now = Date.now,
   log = entry => console.log(JSON.stringify(entry)),
 }: RelayOptions): Promise<void> {
@@ -139,6 +143,10 @@ export function relay({
     () => end('deadline', RELAY_CLOSE.reconnect, 'reconnect'),
     Math.max(0, deadlineMs - LIVE_VIEW_CLOSE_MARGIN_MS - now()),
   );
+  const onStop = () => end('shutdown', RELAY_CLOSE.reconnect, 'reconnect');
+  // A connection that arrives while the server is already shutting down closes as soon as it starts.
+  if (stop.aborted) queueMicrotask(onStop);
+  else stop.addEventListener('abort', onStop, { once: true });
 
   const closed = new Promise<void>(resolve => {
     let open = 2;
@@ -162,6 +170,7 @@ export function relay({
     clearInterval(pingTimer);
     clearTimeout(deadlineTimer);
     clearTimeout(recheckTimer);
+    stop.removeEventListener('abort', onStop);
     sendUpstream(filter.release());
     for (const [socket, closeCode, closeReason] of [
       [upstream, 1000, ''],

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { nodeServer } from '@clutchbox/api/node-upgrade';
+import { nodeServer, shutDown } from '@clutchbox/api/node-upgrade';
+import { SHUTDOWN_GRACE_MS } from '@clutchbox/server/computer-timing';
 import next from 'next';
 
 // An app's production server off Vercel (self-hosted, or `bun run start` locally): Next.js's own request handling,
@@ -19,6 +20,14 @@ export async function startNodeServer({ dir, migrate }: { dir: string; migrate: 
   await app.prepare();
   const server = nodeServer(app.getRequestHandler(), { trustProxy: process.env.TRUST_PROXY === 'true' });
   server.listen(port, hostname, () => console.log(`Listening on http://${hostname}:${port}`));
-  // As the container's first process, Node gets no default handling of these signals.
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => process.exit(0));
+  // A host's stop or a deploy sends SIGTERM: relays close with their reconnect code and requests in flight finish, for
+  // at most SHUTDOWN_GRACE_MS. A second signal exits at once. As the container's first process, Node gets no default
+  // handling of these signals.
+  let stopping = false;
+  for (const signal of ['SIGINT', 'SIGTERM'] as const)
+    process.on(signal, () => {
+      if (stopping) process.exit(0);
+      stopping = true;
+      shutDown(server, { graceMs: SHUTDOWN_GRACE_MS });
+    });
 }

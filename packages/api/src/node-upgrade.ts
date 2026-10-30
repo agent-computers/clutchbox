@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createServer, type IncomingMessage, ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { beginShutdown } from '@clutchbox/server/shutdown';
 
 // WebSocket upgrades on a plain Node server, for routes that upgrade with @vercel/functions' upgradeWebSocket (the
 // live-view relay). Vercel's runtime runs such a route as an ordinary request and hands upgradeWebSocket the raw
@@ -79,4 +80,24 @@ export function nodeServer(listener: RequestListener, { trustProxy = false } = {
     webSocketUpgrade(request, socket, head);
   });
   return server;
+}
+
+// Stops the server for a host's SIGTERM: no new connections, every relay closing with its reconnect code
+// (@clutchbox/server/shutdown) so its client comes back to another instance, and requests in flight let finish. Exits
+// once the last connection ends, or after graceMs regardless.
+export function shutDown(
+  server: Server,
+  { graceMs, exit = process.exit }: { graceMs: number; exit?: (code: number) => void },
+) {
+  beginShutdown();
+  const done = () => {
+    clearTimeout(timeout);
+    clearInterval(idle);
+    exit(0);
+  };
+  const timeout = setTimeout(done, graceMs);
+  // close() ends only the keep-alive connections idle at that moment; one whose request finishes later would wait out
+  // its keep-alive timeout, so idle ones are closed as they appear.
+  const idle = setInterval(() => server.closeIdleConnections(), 100);
+  server.close(done);
 }

@@ -114,6 +114,13 @@ export const CDP_MAX_DURATION_MS = LIVE_VIEW_MAX_DURATION_MS;
 export const CDP_CLOSE_MARGIN_MS = LIVE_VIEW_CLOSE_MARGIN_MS;
 export const CDP_CLOSE_WAIT_MS = LIVE_VIEW_CLOSE_WAIT_MS;
 
+// On SIGTERM the Node server stops taking connections, has every relay close with 4000 'reconnect', and lets requests
+// in flight finish for at most this long before it exits. A judgment call: relays finish within LIVE_VIEW_CLOSE_WAIT_MS
+// and an ordinary request within a second or two, and it stays under Docker's default stop timeout of 10 s, after which
+// Docker kills the process. An MCP call can run for ROUTE_MAX_DURATION_MS, far longer, so one still running is cut and
+// its client retries.
+export const SHUTDOWN_GRACE_MS = 8_000;
+
 // How often the proxy re-reads whether the connection may go on: the API key still has the computers scope and the
 // session is open and not taken over by the user. Live view's heartbeat, so a takeover stops an agent's CDP input as
 // soon as it stops the computer session's.

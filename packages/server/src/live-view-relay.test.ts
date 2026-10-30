@@ -237,6 +237,18 @@ describe('relay', () => {
     expect(logs).toContainEqual(expect.objectContaining({ event: 'live_view.relay_end', cause: 'deadline' }));
   });
 
+  it('asks the page to reconnect when the server shuts down, or at once if it already has', async () => {
+    const shutdown = new AbortController();
+    const running = await setup({ stop: shutdown.signal });
+    shutdown.abort();
+    expect(await running.browserClosed).toEqual({ code: RELAY_CLOSE.reconnect, reason: 'reconnect' });
+    expect(await running.computer.closed).toBe(1000);
+    await running.ended();
+    expect(running.logs).toContainEqual(expect.objectContaining({ event: 'live_view.relay_end', cause: 'shutdown' }));
+    const late = await setup({ stop: AbortSignal.abort() });
+    expect(await late.browserClosed).toEqual({ code: RELAY_CLOSE.reconnect, reason: 'reconnect' });
+  });
+
   it('pings both sides', async () => {
     vi.useFakeTimers({ toFake: ['setInterval'] });
     const { browser, computer } = await setup();

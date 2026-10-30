@@ -2,6 +2,7 @@ import 'server-only';
 import type { RawData, WebSocket } from 'ws';
 import { CDP_ACCESS_RECHECK_MS, CDP_CLOSE_MARGIN_MS, CDP_CLOSE_WAIT_MS, CDP_PING_MS } from './computer-timing';
 import { errorLabel } from './log';
+import { shutdownSignal } from './shutdown';
 
 // The CDP proxy's pipe: it joins a developer's CDP client (Playwright, browser-use, Stagehand) to the fork's Chrome,
 // through the computer's CDP bridge, message for message both ways. The relay ends once the computer session may no
@@ -25,7 +26,7 @@ const LOW_WATER = 2 * 1024 * 1024;
 
 // Where the connection's computer session stands (computers.ts, computerSessionState).
 export type CdpAccess = 'open' | 'user_in_control' | 'ended';
-export type CdpRelayEndCause = 'client' | 'computer' | 'deadline' | 'error' | 'access';
+export type CdpRelayEndCause = 'client' | 'computer' | 'deadline' | 'shutdown' | 'error' | 'access';
 
 // What the relay logs: its own fixed words and numbers, never messages, URLs, tokens, or a peer's close reason.
 export type CdpRelayLog =
@@ -43,6 +44,8 @@ export type CdpRelayOptions = {
   // When the platform cuts the connection, in `now()` milliseconds; the relay closes with 4000 'reconnect'
   // CDP_CLOSE_MARGIN_MS before it.
   deadlineMs: number;
+  // Aborted when the server shuts down (shutdown.ts); the relay then closes with 4000 'reconnect' at once.
+  stop?: AbortSignal;
   now?: () => number;
   log?: (entry: CdpRelayLog) => void;
 };
@@ -56,6 +59,7 @@ export function cdpRelay({
   upstream,
   access,
   deadlineMs,
+  stop = shutdownSignal,
   now = Date.now,
   log = entry => console.log(JSON.stringify(entry)),
 }: CdpRelayOptions): Promise<void> {
@@ -96,6 +100,10 @@ export function cdpRelay({
     () => end('deadline', CDP_CLOSE.reconnect, 'reconnect'),
     Math.max(0, deadlineMs - CDP_CLOSE_MARGIN_MS - now()),
   );
+  const onStop = () => end('shutdown', CDP_CLOSE.reconnect, 'reconnect');
+  // A connection that arrives while the server is already shutting down closes as soon as it starts.
+  if (stop.aborted) queueMicrotask(onStop);
+  else stop.addEventListener('abort', onStop, { once: true });
 
   const closed = new Promise<void>(resolve => {
     let open = 2;
@@ -118,6 +126,7 @@ export function cdpRelay({
     clearInterval(accessTimer);
     clearInterval(pingTimer);
     clearTimeout(deadlineTimer);
+    stop.removeEventListener('abort', onStop);
     for (const [socket, closeCode, closeReason] of [
       [upstream, 1000, ''],
       [client, code, reason],

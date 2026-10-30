@@ -34,6 +34,7 @@
     "./rfb-filter": "./src/rfb-filter.ts",
     "./live-view-relay": "./src/live-view-relay.ts",
     "./cdp-relay": "./src/cdp-relay.ts",
+    "./shutdown": "./src/shutdown.ts",
     "./hooks": "./src/hooks.ts",
     "./members": "./src/members.ts",
     "./api-keys": "./src/api-keys.ts",
