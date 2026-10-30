@@ -6,7 +6,8 @@ import { type Capture, captureSchema } from '@clutchbox/capture';
 // framework over the session's CDP URL.
 
 export type ClientOptions = {
-  // The server's origin, such as https://www.clutchbox.dev.
+  // The server's origin, such as https://www.clutchbox.dev, or its API's when it has its own (the `api` in its
+  // /.well-known/agent-computers.json).
   server: string;
   apiKey: string;
   // Your own fetch, if not the global one.

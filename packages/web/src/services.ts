@@ -2,7 +2,7 @@ import 'server-only';
 import { type ApiExtension, createApi } from '@clutchbox/api';
 import { createAuth } from '@clutchbox/server/auth';
 import { ensureExtensionClient } from '@clutchbox/server/browsers';
-import { readConfig, signInMethods } from '@clutchbox/server/config';
+import { apiOrigin, readConfig, signInMethods } from '@clutchbox/server/config';
 import { assertDatabaseEnvironment, createDatabase } from '@clutchbox/server/database';
 import type { ServerHooks } from '@clutchbox/server/hooks';
 import { logError } from '@clutchbox/server/log';
@@ -37,6 +37,7 @@ function buildServices(hooks: ServerHooks, { extendApi }: ServicesOptions) {
       db,
       auth,
       origin: config.BETTER_AUTH_URL,
+      apiOrigin: apiOrigin(config),
       computers,
       hooks,
       extensionVersion: extensionDownloadVersion,

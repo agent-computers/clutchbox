@@ -33,6 +33,7 @@
     "./tool-calls": "./src/tool-calls.ts",
     "./rfb-filter": "./src/rfb-filter.ts",
     "./live-view-relay": "./src/live-view-relay.ts",
+    "./live-view-ticket": "./src/live-view-ticket.ts",
     "./cdp-relay": "./src/cdp-relay.ts",
     "./shutdown": "./src/shutdown.ts",
     "./hooks": "./src/hooks.ts",

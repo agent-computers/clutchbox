@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { agentAddCommands, mcpServerName } from '@clutchbox/server/agents';
 import { chromeWebStoreUrl, extensionStatus } from './extension';
-import { serverOrigin } from './server';
+import { apiOriginOf, serverOrigin } from './server';
 
 // `npx clutchbox`: adds a Clutchbox server to the agents on this machine that have a CLI, then opens the web app's
 // setup, which signs the user in and covers browser sync, the steps a terminal can't do, and the Chrome Web Store
@@ -110,7 +110,7 @@ async function main() {
     return;
   }
   const origin = serverOrigin(values.server);
-  const mcpUrl = `${origin}/api/mcp`;
+  const mcpUrl = `${await apiOriginOf(origin)}/api/mcp`;
   // An agent's shell has no terminal to answer from, so no terminal means the same as --agent.
   const forAgent = values.agent || !process.stdin.isTTY;
   const yourSteps: string[] = [];

@@ -6,6 +6,9 @@ const envSchema = z.object({
   APP_ENV: z.enum(['development', 'preview', 'production', 'test']),
   DATABASE_URL: z.url().refine(value => ['postgres:', 'postgresql:'].includes(new URL(value).protocol)),
   BETTER_AUTH_URL: z.url(),
+  // Where clients that hold long connections or call the API directly reach it (apiOrigin), when the API runs apart
+  // from the web app; BETTER_AUTH_URL otherwise.
+  API_ORIGIN: z.url().optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
   // Sign-in methods (signInMethods): each is on when its variables are set, and at least one must be.
   GOOGLE_CLIENT_ID: optional,
@@ -64,21 +67,29 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
         .map(variables => list(variables.required))
         .join('; or ')}.`,
     );
-  const origin = new URL(config.BETTER_AUTH_URL);
-  if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/')
-    throw new Error('BETTER_AUTH_URL must be an origin.');
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
-  if (
-    origin.protocol !== 'https:' &&
-    !(loopback && ['development', 'test'].includes(config.APP_ENV) && origin.protocol === 'http:')
-  )
-    throw new Error('HTTPS is required outside local development.');
+  const originOf = (name: 'BETTER_AUTH_URL' | 'API_ORIGIN', value: string) => {
+    const origin = new URL(value);
+    if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/')
+      throw new Error(`${name} must be an origin.`);
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname);
+    if (
+      origin.protocol !== 'https:' &&
+      !(loopback && ['development', 'test'].includes(config.APP_ENV) && origin.protocol === 'http:')
+    )
+      throw new Error('HTTPS is required outside local development.');
+    return origin.origin;
+  };
+  const origin = originOf('BETTER_AUTH_URL', config.BETTER_AUTH_URL);
+  const api = config.API_ORIGIN === undefined ? undefined : originOf('API_ORIGIN', config.API_ORIGIN);
   agentClientUrls(config);
   if (env.VERCEL_ENV && env.VERCEL_ENV !== config.APP_ENV) throw new Error('Deployment environment mismatch.');
   if (config.APP_ENV === 'test' && (env.VERCEL || env.NODE_ENV !== 'test'))
     throw new Error('Test configuration cannot run in a deployment.');
-  return { ...config, BETTER_AUTH_URL: origin.origin };
+  return { ...config, BETTER_AUTH_URL: origin, ...(api !== undefined && { API_ORIGIN: api }) };
 }
+// The API's origin for clients: API_ORIGIN, or the web app's own when the API runs with it.
+export const apiOrigin = (config: Pick<ServerConfig, 'API_ORIGIN' | 'BETTER_AUTH_URL'>) =>
+  config.API_ORIGIN ?? config.BETTER_AUTH_URL;
 // The client_id URLs agents may connect with (isAllowedAgentClient): the built-in ones and AGENT_CLIENT_URLS. Each
 // added one is an HTTPS URL, matched exactly, or as a prefix when it ends with a slash.
 export function agentClientUrls(config: Pick<ServerConfig, 'AGENT_CLIENT_URLS'>): string[] {

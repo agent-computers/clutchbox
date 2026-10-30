@@ -10,7 +10,7 @@ import { reusedDescription } from '@clutchbox/capture';
 import { betterAuth } from 'better-auth';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { genericOAuth, jwt, magicLink } from 'better-auth/plugins';
-import { sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import { clientHost, isAllowedAgentClient } from './agents';
 import { authInvitation, authMember, authOrganization } from './auth-schema';
 import {
@@ -24,7 +24,7 @@ import {
   SYNC_ACCESS_TOKEN_SECONDS,
   SYNC_SCOPE,
 } from './browsers';
-import { agentClientUrls, OIDC_PROVIDER_ID, type ServerConfig } from './config';
+import { agentClientUrls, apiOrigin, OIDC_PROVIDER_ID, type ServerConfig } from './config';
 import { CONNECT_SCOPE, recordConnection } from './connect';
 import type { Database } from './database';
 import { type AuthPlugins, type Limits, noAuthPlugins, noLimits, noOperatorAdmin, type OperatorAdmin } from './hooks';
@@ -39,7 +39,7 @@ import {
   organizationPlugins,
 } from './organization-auth';
 import { activeOrganizationOf, singleOrganization, type Tenancy } from './organizations';
-import { account, apikey, billingSubscriptions, rateLimit, session, user, verification } from './schema';
+import { account, apikey, billingSubscriptions, notBanned, rateLimit, session, user, verification } from './schema';
 
 // The auth adapter (and so an operator dashboard's generic adapter endpoint) reaches only auth tables, and the
 // organization plugin's fields of ours (auth-schema.ts), never captures, computers, or operations.
@@ -367,7 +367,8 @@ export function createAuth(
       mcp({
         loginPage: `${config.BETTER_AUTH_URL}/sign-in`,
         consentPage: `${config.BETTER_AUTH_URL}/consent`,
-        resource: `${config.BETTER_AUTH_URL}/api/mcp`,
+        // Where agents reach the MCP endpoint, which may be the API's own origin; sign-in and consent stay here.
+        resource: `${apiOrigin(config)}/api/mcp`,
         // `sync` is the extension's alone (browsers.ts): never advertised, and never given to agents, whose CIMD
         // registrations store the MCP scopes. The extension's client row allows only offline_access and sync.
         scopes: OAUTH_SCOPES,
@@ -470,7 +471,26 @@ export async function getPrincipal(auth: Auth, headers: Headers, refreshed?: Hea
   // An operator's ban (OperatorAdmin): the admin plugin's fields, returned at runtime but untyped.
   const { banned, banExpires } = result.user as { banned?: boolean | null; banExpires?: Date | string | null };
   if (banned && !(banExpires && new Date(banExpires) < new Date())) return null;
-  return { id: result.user.id, name: result.user.name, email: result.user.email };
+  return { id: result.user.id, name: result.user.name, email: result.user.email, sessionId: result.session.id };
+}
+// Whether a session still holds, by its ID, as getPrincipal judges one by its cookie: not signed out or expired, and
+// its person verified and not banned. For a connection opened with a ticket (live-view-ticket.ts), which has no cookie
+// to read again; Better Auth looks sessions up only by their token, which the ticket never carries.
+export async function sessionHolds(db: Pick<Database, 'select'>, sessionId: string, userId: string) {
+  const [row] = await db
+    .select({ id: session.id })
+    .from(session)
+    .innerJoin(user, eq(user.id, session.userId))
+    .where(
+      and(
+        eq(session.id, sessionId),
+        eq(session.userId, userId),
+        gt(session.expiresAt, new Date()),
+        eq(user.emailVerified, true),
+        notBanned,
+      ),
+    );
+  return !!row;
 }
 // A sign-in mid-connect other than Google's comes back to the sign-in page with the signed authorize request (an
 // agent's or the extension's; see requestGuards), and the page continues it from there. Returns the authorize URL to

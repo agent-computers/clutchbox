@@ -29,6 +29,7 @@ import { Eye, Maximize, Monitor, MousePointer2 } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  api,
   type ComputerView,
   type HeartbeatLease,
   type LiveViewStatus,
@@ -531,12 +532,16 @@ function useViewer(
       // noVNC reads window and document as it loads, so it loads here, in the browser, never on the server.
       const { default: RFB } = await import('@novnc/novnc');
       if (stopped) return;
-      const url = new URL('/api/v1/live-view', window.location.href);
-      url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
-      url.searchParams.set('lease', lease);
-      if (computer) url.searchParams.set('computer', computer);
+      // A fresh ticket for each connection, which opens the relay where the API runs; a refusal is retried like a
+      // dropped connection.
+      const ticket = await api<{ url: string }>('/live-view/ticket', 'POST', {
+        lease,
+        ...(computer && { computer }),
+      }).catch(() => null);
+      if (stopped) return;
+      if (!ticket) return retry(0);
       // Opened here rather than by noVNC, to read the close code it does not report.
-      const socket = new WebSocket(url, 'binary');
+      const socket = new WebSocket(ticket.url, 'binary');
       let code = 0;
       socket.addEventListener('close', event => {
         code = event.code;
@@ -559,17 +564,20 @@ function useViewer(
       });
       rfb.addEventListener('disconnect', () => {
         if (client.current === rfb) client.current = null;
-        if (stopped) return;
-        if (code === POLICY) return setState('refused');
-        if (code === NEEDS_RESET) return setState('needsReset');
-        // A hidden page lets its watch lapse, so retrying would only be refused until it shows again.
-        if (code === NOT_WATCHING || document.hidden) return wait();
-        const delay = code === RECONNECT_NOW ? 0 : BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
-        attempt += 1;
-        setState('reconnecting');
-        timer = setTimeout(() => (document.hidden ? wait() : void connect().catch(fail)), delay);
+        if (!stopped) retry(code);
       });
       client.current = rfb;
+    };
+    // After a connection ends with the relay's close code, or 0 for one that never opened.
+    const retry = (code: number) => {
+      if (code === POLICY) return setState('refused');
+      if (code === NEEDS_RESET) return setState('needsReset');
+      // A hidden page lets its watch lapse, so retrying would only be refused until it shows again.
+      if (code === NOT_WATCHING || document.hidden) return wait();
+      const delay = code === RECONNECT_NOW ? 0 : BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+      attempt += 1;
+      setState('reconnecting');
+      timer = setTimeout(() => (document.hidden ? wait() : void connect().catch(fail)), delay);
     };
     const fail = () => {
       if (!stopped) setState('failed');

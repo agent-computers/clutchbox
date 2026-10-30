@@ -38,6 +38,9 @@ export function useDeveloperApi() {
   let acme: string;
   let other: string;
 
+  // The API's origin as developers' clients reach it (config.ts, apiOrigin): another name for this server, so the CDP
+  // URLs the sessions hand out are shown to come from it rather than from the web app's origin.
+  const apiOrigin = () => origin.replace('127.0.0.1', 'localhost');
   // A Node request as a fetch Request, body included.
   const toRequest = async (request: IncomingMessage) => {
     const headers = new Headers();
@@ -66,7 +69,7 @@ export function useDeveloperApi() {
         ? await cdpHandler({ db, computers: fake.provider })(fetched)
         : url.startsWith('/api/auth')
           ? await auth.handler(fetched)
-          : await createApi({ db, auth, origin, computers: fake.provider }).fetch(fetched);
+          : await createApi({ db, auth, origin, apiOrigin: apiOrigin(), computers: fake.provider }).fetch(fetched);
       response.writeHead(answer.status, Object.fromEntries(answer.headers));
       response.end(Buffer.from(await answer.arrayBuffer()));
     };

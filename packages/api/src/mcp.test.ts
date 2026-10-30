@@ -117,14 +117,20 @@ async function register(clientId = `https://client.example.test/clients/${random
   });
   return clientId;
 }
-async function authorize(cookie: string, client: string, scope = 'openid offline_access mcp:tools', accept = true) {
+async function authorize(
+  cookie: string,
+  client: string,
+  scope = 'openid offline_access mcp:tools',
+  accept = true,
+  audience = resource,
+) {
   const verifier = randomBytes(48).toString('base64url');
   const query = new URLSearchParams({
     client_id: client,
     redirect_uri: 'https://client.example.test/callback',
     response_type: 'code',
     scope,
-    resource,
+    resource: audience,
     code_challenge: createHash('sha256').update(verifier).digest('base64url'),
     code_challenge_method: 'S256',
     state: randomUUID(),
@@ -154,7 +160,7 @@ async function authorize(cookie: string, client: string, scope = 'openid offline
       code: code!,
       code_verifier: verifier,
       redirect_uri: 'https://client.example.test/callback',
-      resource,
+      resource: audience,
     },
   });
   expect(tokenResponse.status).toBe(200);
@@ -265,6 +271,30 @@ describe('remote MCP OAuth boundary', () => {
     );
     expect(rejected.status).toBe(403);
   });
+  it('names the API origin as the resource when the API has its own, while sign-in and consent stay here', async () => {
+    const apiOrigin = 'http://localhost:3097';
+    const apiResource = `${apiOrigin}/api/mcp`;
+    auth = createAuth(db, { ...config, API_ORIGIN: apiOrigin }, { fetchClientMetadata });
+    endpoint = createMcpEndpoint({ db, auth, origin, apiOrigin, computers: fakeComputerProvider().provider });
+    const metadata = await (await authRequest('/.well-known/oauth-protected-resource/api/mcp')).json();
+    expect(metadata.resource).toBe(apiResource);
+    expect(metadata.authorization_servers).toEqual([`${origin}/api/auth`]);
+    const missing = await call(undefined, 'initialize', {});
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get('www-authenticate')).toContain(
+      `resource_metadata="${apiOrigin}/.well-known/oauth-protected-resource/api/mcp"`,
+    );
+    const a = await identity('a');
+    const client = await register();
+    const token = (await authorize(a.cookie, client, undefined, true, apiResource))!;
+    expect((await call(token.access_token, 'tools/list', {})).status).toBe(200);
+    // A token for the web app's origin is not one for this resource.
+    const elsewhere = createAuth(db, config, { fetchClientMetadata });
+    auth = elsewhere;
+    const local = (await authorize(a.cookie, client))!;
+    expect((await call(local.access_token, 'tools/list', {})).status).toBe(401);
+  });
+
   it('publishes OAuth metadata but requires sign-in from the first MCP request', async () => {
     const metadata = await authRequest('/.well-known/oauth-protected-resource/api/mcp');
     expect(metadata.status).toBe(200);

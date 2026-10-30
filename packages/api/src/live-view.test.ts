@@ -10,6 +10,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuth } from '../../server/src/auth';
+import { LIVE_VIEW_TICKET_MS } from '../../server/src/computer-timing';
 import type { ComputerProvider } from '../../server/src/computers';
 import { openComputerSession, takeOverComputer } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
@@ -17,9 +18,11 @@ import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
 import { heartbeat } from '../../server/src/heartbeat';
 import { noMetering } from '../../server/src/hooks';
+import { readLiveViewTicket, signLiveViewTicket } from '../../server/src/live-view-ticket';
 import { inTheOrganization } from '../../server/src/member-fixtures';
 import { currentMember } from '../../server/src/organizations';
 import * as schema from '../../server/src/schema';
+import { createApi } from './index';
 import { liveViewHandler } from './live-view';
 import { nodeServer } from './node-upgrade';
 
@@ -45,11 +48,21 @@ async function identity(id: string) {
   // Into the deployment's organization, as sign-up does.
   await inTheOrganization(db, person);
   const token = randomBytes(32).toString('base64url');
+  const sessionId = randomUUID();
   await db
     .insert(schema.session)
-    .values({ id: randomUUID(), userId: id, token, expiresAt: new Date(Date.now() + 3600_000) });
+    .values({ id: sessionId, userId: id, token, expiresAt: new Date(Date.now() + 3600_000) });
   const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
-  return `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
+  return {
+    cookie: `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`,
+    // What POST /api/v1/live-view/ticket signs for this session's page load (tested below).
+    ticket: (lease: string, computerId?: string, now?: number) =>
+      signLiveViewTicket(
+        config.BETTER_AUTH_SECRET,
+        { userId: id, sessionId, lease, ...(computerId && { computerId }) },
+        now,
+      ),
+  };
 }
 // A visible heartbeat: the page load's live watch, which the relay needs, on the main computer or a fork.
 const watch = async (userId: string, lease: string, computer?: string) =>
@@ -107,22 +120,13 @@ describe('live view relay route', () => {
     const b = await identity('b');
     const page = randomUUID();
     const connect = async (
-      lease: string | null,
-      {
-        cookie,
-        from = origin,
-        websocket = true,
-        computer,
-      }: { cookie?: string; from?: string | null; websocket?: boolean; computer?: string },
+      ticket: string | null,
+      { from = origin, websocket = true }: { from?: string | null; websocket?: boolean } = {},
       computers?: ComputerProvider,
     ) => {
-      const query = [lease === null ? null : `lease=${lease}`, computer === undefined ? null : `computer=${computer}`]
-        .filter(Boolean)
-        .join('&');
       const response = await handler(computers)(
-        new Request(`${origin}/api/v1/live-view${query ? `?${query}` : ''}`, {
+        new Request(`${origin}/api/v1/live-view${ticket === null ? '' : `?ticket=${ticket}`}`, {
           headers: {
-            ...(cookie ? { cookie } : {}),
             ...(from ? { origin: from } : {}),
             ...(websocket ? { upgrade: 'websocket', connection: 'Upgrade' } : {}),
           },
@@ -130,29 +134,33 @@ describe('live view relay route', () => {
       );
       return { status: response.status, json: await response.json() };
     };
-    expect(await connect(page, {})).toEqual({ status: 401, json: { error: 'unauthenticated' } });
+    // No ticket, an altered or expired one, or one for a session that ended.
+    const signed = a.ticket(page);
+    const altered = `${signed.slice(0, -2)}${signed.endsWith('AA') ? 'BB' : 'AA'}`;
+    const expired = a.ticket(page, undefined, Date.now() - LIVE_VIEW_TICKET_MS - 1);
+    for (const ticket of [null, '', 'x.y', altered, expired, signed.replace('.', '..')])
+      expect(await connect(ticket), String(ticket)).toEqual({ status: 401, json: { error: 'unauthenticated' } });
+    const signedOut = await identity('signed-out');
+    const theirs = signedOut.ticket(page);
+    await db.delete(schema.session).where(eq(schema.session.userId, 'signed-out'));
+    expect((await connect(theirs)).status).toBe(401);
     for (const from of ['https://evil.test', `${origin}.evil.test`, null])
-      expect(await connect(page, { cookie: a, from }), String(from)).toEqual({
+      expect(await connect(a.ticket(page), { from }), String(from)).toEqual({
         status: 403,
         json: { error: 'forbidden_origin' },
       });
-    for (const lease of [null, '', 'not-a-uuid', `${page}x`])
-      expect((await connect(lease, { cookie: a })).status, String(lease)).toBe(400);
-    expect((await connect(page, { cookie: a, websocket: false })).status).toBe(426);
+    expect((await connect(a.ticket(page), { websocket: false })).status).toBe(426);
     // No computer yet.
-    expect(await connect(page, { cookie: a })).toEqual({ status: 404, json: { error: 'not_found' } });
+    expect(await connect(a.ticket(page))).toEqual({ status: 404, json: { error: 'not_found' } });
     // A computer, but this page load holds no watch on it; another user's watch on the same lease ID does not count.
     const forkA = await open('a');
     const forkB = await open('b');
     await watch('b', page);
-    expect(await connect(page, { cookie: a })).toEqual({ status: 409, json: { error: 'not_watching' } });
-    // A fork: a malformed ID, another member's fork, and one of the user's own that this lease watches only on the
-    // main computer.
-    for (const computer of ['', 'cmp_x', `${forkA}x`])
-      expect((await connect(page, { cookie: a, computer })).status, computer).toBe(400);
-    expect(await connect(page, { cookie: a, computer: forkB })).toEqual({ status: 404, json: { error: 'not_found' } });
+    expect(await connect(a.ticket(page))).toEqual({ status: 409, json: { error: 'not_watching' } });
+    // A fork: another member's, and one of the user's own that this lease watches only on the main computer.
+    expect(await connect(a.ticket(page, forkB))).toEqual({ status: 404, json: { error: 'not_found' } });
     await watch('b', page, forkB);
-    expect(await connect(page, { cookie: a, computer: forkA })).toEqual({
+    expect(await connect(a.ticket(page, forkA))).toEqual({
       status: 409,
       json: { error: 'not_watching' },
     });
@@ -161,21 +169,64 @@ describe('live view relay route', () => {
     await watch('a', page);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const down = { ...fake.provider, connect: async () => Promise.reject(new Error('sandbox-1 token-sandbox-1')) };
-    expect(await connect(page, { cookie: a }, down)).toEqual({ status: 503, json: { error: 'service_unavailable' } });
+    expect(await connect(a.ticket(page), {}, down)).toEqual({ status: 503, json: { error: 'service_unavailable' } });
     // The stream's WebSocket refuses the connection.
     fake.setStreamUrl('ws://127.0.0.1:1/');
-    expect(await connect(page, { cookie: a })).toEqual({ status: 503, json: { error: 'service_unavailable' } });
+    expect(await connect(a.ticket(page))).toEqual({ status: 503, json: { error: 'service_unavailable' } });
     expect(fake.calls.streams).toEqual(['sandbox-1']);
     expect(logged.mock.calls.flat().join(' ')).not.toMatch(/token|127\.0\.0\.1/);
     expect(upgrade).not.toHaveBeenCalled();
     // A lapsed watch no longer connects.
     vi.useFakeTimers({ now: Date.now() + 10 * 60_000, toFake: ['Date'] });
     try {
-      expect((await connect(page, { cookie: a })).status).toBe(409);
+      expect((await connect(a.ticket(page))).status).toBe(409);
     } finally {
       vi.useRealTimers();
     }
-    expect((await connect(page, { cookie: b })).status).toBe(503);
+    expect((await connect(b.ticket(page))).status).toBe(503);
+  });
+
+  it("hands out a ticket only to a member's own page, for a well-formed lease, opening the relay at the API's origin", async () => {
+    const apiOrigin = 'http://localhost:3197';
+    const api = createApi({ db, auth, origin, apiOrigin, computers: fake.provider });
+    const a = await identity('a');
+    const page = randomUUID();
+    const ask = (body: unknown, { cookie = a.cookie, from = origin }: { cookie?: string; from?: string } = {}) =>
+      api.request(`${origin}/api/v1/live-view/ticket`, {
+        method: 'POST',
+        headers: { cookie, origin: from, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const answer = await ask({ lease: page });
+    expect(answer.status).toBe(200);
+    const { url } = await answer.json();
+    expect(url).toMatch(/^ws:\/\/localhost:3197\/api\/v1\/live-view\?ticket=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    const ticket = new URL(url).searchParams.get('ticket');
+    expect(readLiveViewTicket(config.BETTER_AUTH_SECRET, ticket)).toEqual({
+      userId: 'a',
+      sessionId: expect.any(String),
+      lease: page,
+    });
+    // The ticket opens the relay route, which then judges the lease as before: no computer yet.
+    const opened = await liveViewHandler({ db, auth, origin, computers: fake.provider })(
+      new Request(url.replace(/^ws/, 'http'), { headers: { origin, upgrade: 'websocket', connection: 'Upgrade' } }),
+    );
+    expect(opened.status).toBe(404);
+    // Only the web app's pages, signed in, as a member, for a page load's lease and one of their forks.
+    expect((await ask({ lease: page }, { from: 'https://evil.test' })).status).toBe(403);
+    expect((await ask({ lease: page }, { cookie: '' })).status).toBe(401);
+    for (const body of [{}, { lease: 'not-a-uuid' }, { lease: page, computer: 'cmp_x' }, { lease: page, extra: 1 }])
+      expect((await ask(body)).status, JSON.stringify(body)).toBe(400);
+    await db
+      .insert(schema.user)
+      .values({ id: 'loner', name: 'Loner', email: 'loner@example.test', emailVerified: true });
+    const token = randomBytes(32).toString('base64url');
+    await db
+      .insert(schema.session)
+      .values({ id: randomUUID(), userId: 'loner', token, expiresAt: new Date(Date.now() + 3600_000) });
+    const signature = createHmac('sha256', config.BETTER_AUTH_SECRET).update(token).digest('base64');
+    const loner = `${(await auth.$context).authCookies.sessionToken.name}=${encodeURIComponent(`${token}.${signature}`)}`;
+    expect((await ask({ lease: page }, { cookie: loner })).status).toBe(403);
   });
 
   // Both ways the route gets its socket: Vercel's runtime, which hands upgradeWebSocket the raw request through its
@@ -251,8 +302,8 @@ describe('live view relay route', () => {
       const page = randomUUID();
       await open('a');
       await watch('a', page);
-      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?lease=${page}`;
-      const browser = new WebSocket(url, 'binary', { headers: { cookie: a }, origin });
+      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?ticket=${a.ticket(page)}`;
+      const browser = new WebSocket(url, 'binary', { origin });
       const greeting = await new Promise<Buffer>((resolve, reject) => {
         browser.once('message', data => resolve(data as Buffer));
         browser.once('error', reject);
@@ -299,10 +350,9 @@ describe('live view relay route', () => {
       await watch('a', page, fork);
       const port = (server.address() as AddressInfo).port;
       const browser = new WebSocket(
-        `ws://127.0.0.1:${port}/api/v1/live-view?lease=${page}&computer=${fork}`,
+        `ws://127.0.0.1:${port}/api/v1/live-view?ticket=${a.ticket(page, fork)}`,
         'binary',
         {
-          headers: { cookie: a },
           origin,
         },
       );
@@ -336,8 +386,8 @@ describe('live view relay route', () => {
       const page = randomUUID();
       await open('a');
       await watch('a', page);
-      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?lease=${page}`;
-      const browser = new WebSocket(url, 'binary', { headers: { cookie: a }, origin });
+      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?ticket=${a.ticket(page)}`;
+      const browser = new WebSocket(url, 'binary', { origin });
       const closed = closeOf(browser);
       await new Promise(resolve => browser.once('message', resolve));
       // Signed out elsewhere (or revoked, or banned): the watch still runs, but the next re-read ends the relay.
@@ -352,8 +402,8 @@ describe('live view relay route', () => {
       await open('a');
       await watch('a', page);
       fake.sandboxes.get('sandbox-1')!.public = true;
-      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?lease=${page}`;
-      const browser = new WebSocket(url, 'binary', { headers: { cookie: a }, origin });
+      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?ticket=${a.ticket(page)}`;
+      const browser = new WebSocket(url, 'binary', { origin });
       expect(await closeOf(browser)).toEqual({ code: 4002, reason: 'needs reset' });
       expect(upstreamRequests).toHaveLength(0);
       expect(fake.calls.streams).toEqual([]);
@@ -373,14 +423,13 @@ describe('live view relay route', () => {
         socket.on('data', chunk => chunks.push(chunk));
         socket.write(
           [
-            `GET /api/v1/live-view?lease=${page} HTTP/1.1`,
+            `GET /api/v1/live-view?ticket=${a.ticket(page)} HTTP/1.1`,
             'Host: 127.0.0.1',
             'Upgrade: websocket',
             'Connection: Upgrade',
             `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
             'Sec-WebSocket-Version: 13',
             `Origin: ${origin}`,
-            `Cookie: ${a}`,
             '',
             '',
           ].join('\r\n'),
@@ -398,8 +447,8 @@ describe('live view relay route', () => {
     it('refuses the upgrade itself when the page load holds no watch', async () => {
       const a = await identity('a');
       await open('a');
-      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?lease=${randomUUID()}`;
-      const browser = new WebSocket(url, 'binary', { headers: { cookie: a }, origin });
+      const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1/live-view?ticket=${a.ticket(randomUUID())}`;
+      const browser = new WebSocket(url, 'binary', { origin });
       const refusal = await new Promise<IncomingMessage>(resolve =>
         browser.once('unexpected-response', (_req, res) => resolve(res)),
       );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { builtInAgentClientUrls } from './agents';
-import { agentClientUrls, readConfig, signInMethods } from './config';
+import { agentClientUrls, apiOrigin, readConfig, signInMethods } from './config';
 
 const base = {
   APP_ENV: 'test',
@@ -94,5 +94,20 @@ describe('agentClientUrls', () => {
       expect(failure({ ...base, ...google, AGENT_CLIENT_URLS: entry }), entry).toBe(
         'AGENT_CLIENT_URLS must list HTTPS client_id URLs, or prefixes ending with a slash.',
       );
+  });
+});
+
+describe('readConfig API origin', () => {
+  it("is the web app's own unless set, and must be an origin served over HTTPS like it", () => {
+    expect(apiOrigin(readConfig({ ...base, ...google }))).toBe('http://localhost:3000');
+    expect(apiOrigin(readConfig({ ...base, ...google, API_ORIGIN: 'http://localhost:3001/' }))).toBe(
+      'http://localhost:3001',
+    );
+    expect(failure({ ...base, ...google, API_ORIGIN: 'http://localhost:3001/api' })).toBe(
+      'API_ORIGIN must be an origin.',
+    );
+    expect(failure({ ...base, ...google, API_ORIGIN: 'http://api.example.test' })).toBe(
+      'HTTPS is required outside local development.',
+    );
   });
 });

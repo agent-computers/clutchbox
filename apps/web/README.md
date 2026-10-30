@@ -39,6 +39,7 @@ Claude, ChatGPT, and other agents that run in the cloud need the app on a public
 | --- | --- |
 | `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. The image builds the extension download for it, so rebuild after changing it. |
 | `APP_ENV` | `production`, which requires HTTPS and `E2B_API_KEY`. |
+| `API_ORIGIN` | Leave unset to serve the API from `BETTER_AUTH_URL`. Set it to another origin that reaches the same server, such as `https://api.agents.example.com`, to give agents, developers' CDP clients, and live view their own host: the MCP URL, CDP URLs, and live view's socket use it, while sign-in and the extension stay on `BETTER_AUTH_URL`. Agents connected before a change reconnect. |
 | `TRUST_PROXY` | `true`. Compose serves the app only on this machine, at `127.0.0.1:3000` (or `PORT`): put an HTTPS reverse proxy in front of it that overwrites `X-Forwarded-For` with the client's address, never appends to it. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in: an OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in: an OAuth app with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback URL. GitHub must have verified the email address it shares for the member. |

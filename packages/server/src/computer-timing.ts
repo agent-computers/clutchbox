@@ -86,6 +86,11 @@ export const LIVE_VIEW_CLOSE_MARGIN_MS = 10_000;
 // dropped, so a deadline close still ends inside LIVE_VIEW_CLOSE_MARGIN_MS.
 export const LIVE_VIEW_CLOSE_WAIT_MS = LIVE_VIEW_CLOSE_MARGIN_MS / 2;
 
+// A live-view ticket (live-view-ticket.ts) opens the relay for this long after the page asks for it. The page opens the
+// socket at once, so this covers one round trip on a slow network; a judgment call, short so a ticket that leaks in a
+// URL is soon worthless.
+export const LIVE_VIEW_TICKET_MS = 30_000;
+
 // The relay re-reads the user's control every HEARTBEAT_MS, and sooner when it drops input (the page took over
 // since the last read), but no more often than this, so a takeover's first input waits at most about this long
 // plus one query. A judgment call between that delay and database load.

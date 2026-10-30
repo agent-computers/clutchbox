@@ -83,6 +83,7 @@ import {
 import type { Database } from '@clutchbox/server/database';
 import { heartbeat, heartbeatSchema } from '@clutchbox/server/heartbeat';
 import { defaultServerHooks, noLimits, type ServerHooks } from '@clutchbox/server/hooks';
+import { signLiveViewTicket } from '@clutchbox/server/live-view-ticket';
 import { logError } from '@clutchbox/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@clutchbox/server/mcp';
 import {
@@ -116,6 +117,8 @@ type Principal = {
   id: string;
   name: string;
   email: string;
+  // App auth's session, which a live-view ticket names.
+  sessionId?: string;
   browser?: SyncPrincipal['browser'];
   member?: SyncPrincipal['member'];
 };
@@ -158,6 +161,7 @@ export function createApi({
   db,
   auth,
   origin,
+  apiOrigin = origin,
   computers,
   hooks = defaultServerHooks,
   extensionVersion,
@@ -168,6 +172,8 @@ export function createApi({
   db: Database;
   auth: Auth;
   origin: string;
+  // Where clients that hold long connections reach the API, when it runs apart from the web app (config.ts, apiOrigin).
+  apiOrigin?: string;
   computers: ComputerProvider;
   hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> &
     Partial<Pick<ServerHooks, 'limits' | 'providerAccount'>> & { tenancy?: Pick<Tenancy, 'canCreate'> };
@@ -470,7 +476,7 @@ export function createApi({
       },
       503,
     );
-  const cdpOrigin = origin.replace(/^http/, 'ws');
+  const cdpOrigin = apiOrigin.replace(/^http/, 'ws');
   app.post('/computers/sessions', async c => {
     const parsed = await body(
       c,
@@ -658,6 +664,23 @@ export function createApi({
     const result = await takeOverComputer(db, running, await memberOf(c), lease, { computerId });
     if ('error' in result) return computerFailure(c, result);
     return c.json(result);
+  });
+  // A ticket for this page load's live view (live-view-ticket.ts), and where to open it: the relay at the API's origin,
+  // where the session cookie isn't sent. Only the web app's pages may ask (the origin check on every change).
+  const liveViewOrigin = apiOrigin.replace(/^http/, 'ws');
+  app.post('/live-view/ticket', async c => {
+    const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
+    const { id: userId, sessionId } = c.get('principal');
+    if (!parsed.success || !sessionId) return c.json({ error: 'invalid_request' }, 400);
+    await memberOf(c);
+    const { lease, computer: computerId } = parsed.data;
+    const ticket = signLiveViewTicket((await auth.$context).secret, {
+      userId,
+      sessionId,
+      lease,
+      ...(computerId && { computerId }),
+    });
+    return c.json({ url: `${liveViewOrigin}/api/v1/live-view?ticket=${ticket}` });
   });
   app.post('/computer/hand-back', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));

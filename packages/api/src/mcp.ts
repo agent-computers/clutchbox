@@ -499,16 +499,20 @@ export function createMcpEndpoint({
   db,
   auth,
   origin,
+  apiOrigin = origin,
   computers,
   hooks = defaultServerHooks,
 }: {
   db: Database;
   auth: Auth;
+  // The web app's origin, which the tools link to; and the API's, where agents reach this endpoint (config.ts,
+  // apiOrigin), which names the resource their tokens are for.
   origin: string;
+  apiOrigin?: string;
   computers: ComputerProvider;
   hooks?: Pick<ServerHooks, 'metering' | 'operatorAdmin'> & Partial<Pick<ServerHooks, 'limits' | 'providerAccount'>>;
 }) {
-  const resource = `${origin}/api/mcp`;
+  const resource = `${apiOrigin}/api/mcp`;
   const serve = (request: Request, principal: McpPrincipal, member: Member) =>
     createMcpHandler(
       () => {
@@ -547,7 +551,7 @@ export function createMcpEndpoint({
           {
             status: 401,
             headers: {
-              'WWW-Authenticate': `Bearer error="invalid_token", resource_metadata="${origin}/.well-known/oauth-protected-resource/api/mcp"`,
+              'WWW-Authenticate': `Bearer error="invalid_token", resource_metadata="${apiOrigin}/.well-known/oauth-protected-resource/api/mcp"`,
             },
           },
         );

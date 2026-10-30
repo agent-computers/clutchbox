@@ -1,31 +1,27 @@
 import 'server-only';
-import { type Auth, getPrincipal } from '@clutchbox/server/auth';
+import { type Auth, sessionHolds } from '@clutchbox/server/auth';
 import {
   LIVE_VIEW_MAX_DURATION_MS,
   LIVE_VIEW_UPSTREAM_OPEN_MS,
   STREAM_MARGIN_MS,
   STREAM_START_MS,
 } from '@clutchbox/server/computer-timing';
-import {
-  COMPUTER_ID_PATTERN,
-  type ComputerProvider,
-  connectLiveView,
-  LEASE_PATTERN,
-  liveViewAccess,
-} from '@clutchbox/server/computers';
+import { type ComputerProvider, connectLiveView, liveViewAccess } from '@clutchbox/server/computers';
 import type { Database } from '@clutchbox/server/database';
 import { defaultServerHooks, type ServerHooks } from '@clutchbox/server/hooks';
 import { RELAY_CLOSE, relay } from '@clutchbox/server/live-view-relay';
+import { readLiveViewTicket } from '@clutchbox/server/live-view-ticket';
 import { logError } from '@clutchbox/server/log';
 import { currentMember } from '@clutchbox/server/organizations';
 import { MAX_FRAME } from '@clutchbox/server/rfb-filter';
 import { upgradeWebSocket } from '@vercel/functions';
 import { WebSocket } from 'ws';
 
-// The live-view relay route: GET /api/v1/live-view?lease=<uuid>[&computer=<fork ID>], a WebSocket from the /computer page's
-// noVNC. Everything that can refuse the connection runs before the upgrade and answers JSON: the browser does not
-// apply CORS to a WebSocket handshake, so the exact web origin is checked here (cross-site WebSocket hijacking), with
-// app auth and the lease's live watch or takeover. Then the computer is woken, its stream started, and the relay
+// The live-view relay route: GET /api/v1/live-view?ticket=<ticket>, a WebSocket from the /computer page's noVNC, at the
+// API's origin; the page gets the ticket from POST /api/v1/live-view/ticket. Everything that can refuse the connection
+// runs before the upgrade and answers JSON: the browser does not apply CORS to a WebSocket handshake, so the exact web
+// origin is checked here (cross-site WebSocket hijacking), with the ticket's session and the lease's live watch or
+// takeover. Then the computer is woken, its stream started, and the relay
 // joins the two sockets, re-checking the sign-in and the lease as it runs. A computer that must be reset first gets
 // an upgrade closed at once with RELAY_CLOSE.needsReset, the only way the page can tell. Never logs URLs, tokens, or
 // bytes.
@@ -55,19 +51,15 @@ export function liveViewHandler({
   return async (request: Request): Promise<Response> => {
     // The platform cuts the connection LIVE_VIEW_MAX_DURATION_MS after the function starts.
     const deadlineMs = Date.now() + LIVE_VIEW_MAX_DURATION_MS;
-    const principal = await getPrincipal(auth, request.headers);
-    if (!principal) return refuse('unauthenticated', 401);
+    // The page's ticket (live-view-ticket.ts), for its session, its lease, and one of the member's forks or, without
+    // one, the main computer; its session must still hold. Only the web app's pages open the socket.
+    const ticket = readLiveViewTicket((await auth.$context).secret, new URL(request.url).searchParams.get('ticket'));
+    if (!ticket || !(await sessionHolds(db, ticket.sessionId, ticket.userId))) return refuse('unauthenticated', 401);
     if (request.headers.get('origin') !== origin) return refuse('forbidden_origin', 403);
-    const params = new URL(request.url).searchParams;
-    const lease = params.get('lease');
-    if (!lease || !LEASE_PATTERN.test(lease)) return refuse('invalid_request', 400);
-    // One of the member's forks; without it, the main computer.
-    const computerId = params.get('computer') ?? undefined;
-    if (computerId !== undefined && !COMPUTER_ID_PATTERN.test(computerId)) return refuse('invalid_request', 400);
-    const target = { computerId };
+    const { userId, sessionId, lease } = ticket;
+    const target = { computerId: ticket.computerId };
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return refuse('upgrade_required', 426);
-    await hooks.operatorAdmin.recordActivity(db, principal.id);
-    const userId = principal.id;
+    await hooks.operatorAdmin.recordActivity(db, userId);
     let upstream: WebSocket;
     let access: () => Promise<'control' | 'view' | 'none'>;
     try {
@@ -75,9 +67,8 @@ export function liveViewHandler({
       const member = await currentMember(db, userId);
       if (!member) throw new Error('account has no membership');
       // The relay's periodic read: the same sign-in (not signed out, revoked, or banned since), then the lease.
-      const headers = new Headers(request.headers);
       access = async () =>
-        (await getPrincipal(auth, headers))?.id === userId
+        (await sessionHolds(db, sessionId, userId))
           ? liveViewAccess(db, member, lease, new Date(), target)
           : ('none' as const);
       // Wakes a paused computer until the holds let it pause, as the heartbeat that charged them asked.

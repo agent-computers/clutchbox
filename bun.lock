@@ -17,7 +17,7 @@
     },
     "apps/extension": {
       "name": "@clutchbox/extension",
-      "version": "26.1028.0",
+      "version": "26.1029.0",
       "dependencies": {
         "@base-ui/react": "1.9.0",
         "@clutchbox/capture": "workspace:*",
@@ -109,11 +109,12 @@
     },
     "packages/cli": {
       "name": "clutchbox",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "bin": {
         "clutchbox": "dist/clutchbox.js",
       },
       "devDependencies": {
+        "@clutchbox/capture": "workspace:*",
         "@clutchbox/server": "workspace:*",
         "@types/node": "24.19.2",
       },
