@@ -46,7 +46,6 @@ import {
 import { computerStatus } from '../lib/computer';
 import { UserButton } from './auth/user-button';
 import { OrganizationSwitcher } from './organization-switcher';
-import { StarLink } from './star-link';
 
 export type AppUser = { id: string; name: string; email: string; image?: string | null };
 const UserContext = createContext<AppUser | null>(null);
@@ -100,7 +99,6 @@ export function AppShell({ user, children }: { user: AppUser; children: ReactNod
   });
   useEffect(() => reportTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone), [reportTimeZone]);
   const guard = useRef<LeaveGuard | null>(null);
-  const home = useShell().homeHref ?? '/app';
   return (
     <UserContext value={user}>
       <GuardContext value={guard}>
@@ -110,9 +108,9 @@ export function AppShell({ user, children }: { user: AppUser; children: ReactNod
             <header className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
               <SidebarTrigger className="size-11" aria-label="Open the menu" />
               <Link
-                href={home}
+                href="/app"
                 onClick={event => {
-                  if (guard.current?.(() => router.push(home))) event.preventDefault();
+                  if (guard.current?.(() => router.push('/app'))) event.preventDefault();
                 }}
                 className="font-serif text-lg font-medium italic"
                 aria-label="Clutchbox home page"
@@ -141,10 +139,7 @@ function AppSidebar({
   const router = useRouter();
   const { setOpenMobile } = useSidebar();
   const shell = useShell();
-  const home = shell.homeHref ?? '/app';
   const footerLinks = shell.footerLinks ?? [];
-  const external = footerLinks.filter(link => link.external);
-  const internal = footerLinks.filter(link => !link.external);
   const { data: computer } = useQuery(computerQuery);
   const { data: sync } = useQuery(syncQuery);
   const syncStopped = !!sync && (sync.disconnected || !!sync.settings?.paused);
@@ -194,16 +189,25 @@ function AppSidebar({
   return (
     <Sidebar>
       <SidebarHeader className="gap-4 px-4 pt-6 pb-4">
-        <div className="flex items-center justify-between gap-2">
+        <div className="grid justify-items-start gap-0.5">
           <Link
-            href={home}
-            onClick={follow(home)}
+            href="/app"
+            onClick={follow('/app')}
             className="font-serif text-lg font-medium italic"
             aria-label="Clutchbox home page"
           >
             clutchbox
           </Link>
-          {shell.githubRepo && <StarLink repo={shell.githubRepo} className="-mr-2" />}
+          {shell.landing && (
+            <Link
+              className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+              href={shell.landing.href}
+              onClick={follow(shell.landing.href)}
+            >
+              {shell.landing.label}
+              <ArrowUpRight aria-hidden className="size-3" />
+            </Link>
+          )}
         </div>
         <OrganizationSwitcher onCreated={() => go('/app/organization')} onJoin={() => go('/join')} />
       </SidebarHeader>
@@ -229,29 +233,25 @@ function AppSidebar({
       </SidebarContent>
       <SidebarFooter className="gap-3 border-t p-3">
         <UserButton user={user} />
-        {footerLinks.length > 0 && (
-          <div className="grid justify-items-start gap-1 px-1 text-xs text-muted-foreground">
-            {external.map(({ href, label }) => (
-              <Link
-                key={href}
-                className="inline-flex items-center gap-0.5 hover:text-foreground"
-                href={href}
-                onClick={follow(href)}
-              >
+        {(footerLinks.length > 0 || shell.githubRepo) && (
+          <p className="flex gap-4 px-1 text-xs text-muted-foreground">
+            {footerLinks.map(({ href, label }) => (
+              <Link key={href} className="hover:text-foreground" href={href} onClick={follow(href)}>
                 {label}
-                <ArrowUpRight aria-hidden className="size-3" />
               </Link>
             ))}
-            {internal.length > 0 && (
-              <p className="flex gap-4">
-                {internal.map(({ href, label }) => (
-                  <Link key={href} className="hover:text-foreground" href={href} onClick={follow(href)}>
-                    {label}
-                  </Link>
-                ))}
-              </p>
+            {shell.githubRepo && (
+              <a
+                className="inline-flex items-center gap-0.5 hover:text-foreground"
+                href={`https://github.com/${shell.githubRepo}`}
+                target="_blank"
+                rel="noopener"
+              >
+                GitHub
+                <ArrowUpRight aria-hidden className="size-3" />
+              </a>
             )}
-          </div>
+          </p>
         )}
       </SidebarFooter>
     </Sidebar>

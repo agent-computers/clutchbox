@@ -7,21 +7,20 @@ import { type ComponentType, createContext, type ReactNode, useContext } from 'r
 export const shellIcons = { code: Code, creditCard: CreditCard };
 export type ShellIcon = keyof typeof shellIcons;
 
-// What a deployment adds to the signed-in app's shell. Without any, the app shows only the product's own pages, links
-// its wordmark to /app, and offers only the manual build of the extension.
+// What a deployment adds to the signed-in app's shell. Without any, the app shows only the product's own pages, with no
+// landing page or footer links, and offers only the manual build of the extension.
 export type ShellExtras = {
-  // Where the wordmark goes.
-  homeHref?: string;
+  // The deployment's landing page, linked under the wordmark.
+  landing?: { href: string; label: string };
   // Sidebar pages above Settings, with an optional badge such as "Soon".
   morePages?: { href: string; label: string; icon: ShellIcon; badge?: string }[];
-  // Sidebar footer links. External ones leave the app and get a line and an arrow each; the rest share a line.
-  footerLinks?: { href: string; label: string; external?: boolean }[];
+  // Sidebar footer links, on one line.
+  footerLinks?: { href: string; label: string }[];
   // Hashes of the old account page that /app moves on to the deployment's own pages, such as '#billing'.
   sectionPages?: Record<string, string>;
   // The extension's store listing. Without it, the app offers only the manual build.
   chromeWebStoreUrl?: string;
-  // A GitHub repository as owner/name, such as 'clutchbox-hq/clutchbox'. With it, the sidebar links to it beside the
-  // wordmark.
+  // A GitHub repository as owner/name, such as 'clutchbox-hq/clutchbox'. With it, the sidebar footer links to it.
   githubRepo?: string;
 };
 
