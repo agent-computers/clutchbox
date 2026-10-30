@@ -61,9 +61,11 @@ export function useDeveloperApi() {
       migrationsFolder: fileURLToPath(new URL('../../server/migrations', import.meta.url)),
     });
     // The framework's request listener, as Next.js runs the routes: the CDP proxy on its own route, the API's, and
-    // Better Auth's.
+    // Better Auth's. Other requests to the port, such as a local port scanner's, get a 404 without reaching them,
+    // since one can arrive before a test has set them up.
     const listener = async (request: IncomingMessage, response: ServerResponse) => {
       const url = request.url ?? '/';
+      if (!url.startsWith('/api/')) return void response.writeHead(404).end();
       const fetched = await toRequest(request);
       const answer = url.startsWith('/api/v1/cdp')
         ? await cdpHandler({ db, computers: fake.provider })(fetched)
