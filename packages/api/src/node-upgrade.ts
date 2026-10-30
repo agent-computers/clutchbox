@@ -101,3 +101,19 @@ export function shutDown(
   const idle = setInterval(() => server.closeIdleConnections(), 100);
   server.close(done);
 }
+
+// Serves until a host's stop or a deploy sends SIGTERM, then shuts down (shutDown); a second signal exits at once. As
+// the container's first process, Node gets no default handling of these signals.
+export function listenUntilStopped(
+  server: Server,
+  { hostname, port, graceMs }: { hostname: string; port: number; graceMs: number },
+) {
+  server.listen(port, hostname, () => console.log(`Listening on http://${hostname}:${port}`));
+  let stopping = false;
+  for (const signal of ['SIGINT', 'SIGTERM'] as const)
+    process.on(signal, () => {
+      if (stopping) process.exit(0);
+      stopping = true;
+      shutDown(server, { graceMs });
+    });
+}

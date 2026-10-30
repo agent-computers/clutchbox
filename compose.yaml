@@ -1,34 +1,60 @@
-# The web app for one organization with its Postgres, and Mailpit to catch sign-in emails on your machine. Your
+# The app for one organization with its Postgres, and Mailpit to catch sign-in emails on your machine. Your
 # configuration is .env beside this file (apps/web/.env.example describes every variable); this file sets the
-# database, and the defaults for running on localhost. `docker compose up --build` builds the app for BETTER_AUTH_URL
-# and applies migrations when it starts. Every port listens only on this machine: put an HTTPS reverse proxy in front
-# of the app to serve it elsewhere.
+# database, and the defaults for running on localhost. `docker compose up --build` builds the web app for
+# BETTER_AUTH_URL and its API, and both apply migrations when they start. Caddy serves them at one origin, sending the
+# API's paths to the api service and the rest to the web app. Every port listens only on this machine: put an HTTPS
+# reverse proxy in front of Caddy to serve it elsewhere.
+x-app: &app
+  env_file: .env
+  environment: &app-environment
+    DATABASE_URL: postgres://agent_computers:agent_computers@postgres:5432/agent_computers
+    APP_ENV: ${APP_ENV:-development}
+    BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+    EXTENSION_ORIGINS: ${EXTENSION_ORIGINS:-chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg,chrome-extension://bjmfpnkjkdkfimdfgbgepmdgdnodpmmi}
+    # Inside the container, behind Caddy, which sets X-Forwarded-For (below).
+    HOST: 0.0.0.0
+    PORT: 3000
+    TRUST_PROXY: "true"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+    interval: 10s
+    timeout: 5s
+    start_period: 60s
+    start_interval: 2s
+  restart: unless-stopped
+
 services:
-  app:
+  web:
+    <<: *app
     build:
       context: .
+      target: web
       args:
         BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-    env_file: .env
-    environment:
-      DATABASE_URL: postgres://agent_computers:agent_computers@postgres:5432/agent_computers
-      APP_ENV: ${APP_ENV:-development}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      EXTENSION_ORIGINS: ${EXTENSION_ORIGINS:-chrome-extension://jpkiadcbmdldnjmfdllbiioieajicacg,chrome-extension://bjmfpnkjkdkfimdfgbgepmdgdnodpmmi}
-      # Inside the container; PORT chooses the one on this machine.
-      HOST: 0.0.0.0
-      PORT: 3000
+
+  # The API, sign-in, MCP, and both relays (apps/web/api.ts).
+  api:
+    <<: *app
+    build:
+      context: .
+      target: api
+
+  # PORT chooses the one on this machine.
+  caddy:
+    image: caddy:2.11
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     ports:
-      - 127.0.0.1:${PORT:-3000}:3000
+      - 127.0.0.1:${PORT:-3000}:80
     depends_on:
-      postgres:
+      web:
         condition: service_healthy
-    healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      start_period: 60s
-      start_interval: 2s
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   postgres:
@@ -52,6 +78,24 @@ services:
     ports:
       - 127.0.0.1:8025:8025
     restart: unless-stopped
+
+configs:
+  # The API's paths (packages/web/src/api-server.ts) to the api service, the rest to the web app. Caddy overwrites
+  # X-Forwarded-For with the client's address, except from a proxy on this machine (a private address, as the port is
+  # published only here), whose own it keeps: so a reverse proxy in front must overwrite it, never append to it.
+  caddyfile:
+    content: |
+      {
+        admin off
+        servers {
+          trusted_proxies static private_ranges
+        }
+      }
+      :80 {
+        @api path /api/* /.well-known/* /oauth/*
+        reverse_proxy @api api:3000
+        reverse_proxy web:3000
+      }
 
 volumes:
   postgres:

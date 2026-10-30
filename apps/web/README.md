@@ -19,7 +19,7 @@ You need Docker with Compose, Chrome, and an [E2B API key](https://e2b.dev/dashb
    EOF
    ```
 
-2. Start it. Compose builds the app, starts Postgres beside it, and the app applies migrations before it serves <http://localhost:3000>:
+2. Start it. Compose builds the web app and its API, starts Postgres beside them, and serves both at <http://localhost:3000> through Caddy, which sends the API's paths (`/api`, `/.well-known`, `/oauth`) to the API's container and the rest to the web app's. Each applies migrations before it starts:
 
    ```sh
    docker compose up --build
@@ -40,7 +40,7 @@ Claude, ChatGPT, and other agents that run in the cloud need the app on a public
 | `BETTER_AUTH_URL` | The app's public origin, such as `https://agents.example.com`. The image builds the extension download for it, so rebuild after changing it. |
 | `APP_ENV` | `production`, which requires HTTPS and `E2B_API_KEY`. |
 | `API_ORIGIN` | Leave unset to serve the API from `BETTER_AUTH_URL`. Set it to another origin that reaches the same server, such as `https://api.agents.example.com`, to give agents, developers' CDP clients, and live view their own host: the MCP URL, CDP URLs, and live view's socket use it, while sign-in and the extension stay on `BETTER_AUTH_URL`. Agents connected before a change reconnect. |
-| `TRUST_PROXY` | `true`. Compose serves the app only on this machine, at `127.0.0.1:3000` (or `PORT`): put an HTTPS reverse proxy in front of it that overwrites `X-Forwarded-For` with the client's address, never appends to it. |
+| `PORT` | Where Compose serves the app, only on this machine: `127.0.0.1:3000` by default. Put an HTTPS reverse proxy in front of it that overwrites `X-Forwarded-For` with the client's address, never appends to it: Caddy keeps the address a proxy on this machine sends, and the apps' rate limits key on it. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in: an OAuth web client with `<BETTER_AUTH_URL>/api/auth/callback/google` as its redirect URI. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub sign-in: an OAuth app with `<BETTER_AUTH_URL>/api/auth/callback/github` as its callback URL. GitHub must have verified the email address it shares for the member. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` | Company SSO (Okta, Entra ID, Keycloak, Authentik, and others): the issuer URL, or its discovery document's, and a confidential client with `<BETTER_AUTH_URL>/api/auth/callback/oidc` as its redirect URI. The provider's ID token must carry `email` and `email_verified: true`. `OIDC_NAME` names the button, such as `Acme SSO`. |
@@ -67,7 +67,7 @@ The build makes every size. To build and use another name, set `E2B_COMPUTER_TEM
 
 ## Without Docker
 
-With [Bun](https://bun.sh), Node 24, and your own Postgres: `bun install`, copy [`apps/web/.env.example`](.env.example) to `.env.local` beside it and fill it in, `DATABASE_URL` included, load it into your shell (`set -a; . ./.env.local; set +a` there), then, from the repository root, `bun run build:web` and `MIGRATE_ON_START=true bun run start:web` (`HOST` and `PORT` choose the address; default `0.0.0.0:3000`). For development, run `bun run db:migrate` and then `bun run dev:web`, and build the extension yourself with `WXT_SERVER_ORIGIN=http://localhost:3000 bun run build:extension` and load `apps/extension/.output/chrome-mv3`; live view needs the built server.
+With [Bun](https://bun.sh), Node 24, and your own Postgres: `bun install`, copy [`apps/web/.env.example`](.env.example) to `.env.local` beside it and fill it in, `DATABASE_URL` included, load it into your shell (`set -a; . ./.env.local; set +a` there), then, from the repository root, `bun run build:web` and `MIGRATE_ON_START=true bun run start:web` (`HOST` and `PORT` choose the address; default `0.0.0.0:3000`). That serves the whole app, the API included. To run the API on its own as Compose does, `bun run start:api` on another `PORT` serves the API's paths without the pages, and needs no build; set `TRUST_PROXY=true` on both behind a proxy that routes those paths to it and overwrites `X-Forwarded-For`. For development, run `bun run db:migrate` and then `bun run dev:web`, and build the extension yourself with `WXT_SERVER_ORIGIN=http://localhost:3000 bun run build:extension` and load `apps/extension/.output/chrome-mv3`; live view needs the built server.
 
 ## Extending it
 

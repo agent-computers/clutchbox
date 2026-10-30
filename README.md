@@ -109,7 +109,7 @@ Then sign in at <http://localhost:3000>, with the link from Mailpit at <http://l
 | Package | What it does |
 | --- | --- |
 | [`apps/extension`](apps/extension) | The Chrome extension (Manifest V3) that captures the sites you authorize and syncs them to your server. |
-| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP. [`Dockerfile`](Dockerfile) and [`compose.yaml`](compose.yaml) run it with Postgres. |
+| [`apps/web`](apps/web) | The web app for one organization: the dashboard, sign-in, the API, and MCP. [`Dockerfile`](Dockerfile) and [`compose.yaml`](compose.yaml) run it with Postgres, the API in its own container behind Caddy. |
 | [`packages/cli`](packages/cli) | `npx clutchbox`: connects Claude Code and Codex to a Clutchbox server and opens setup. |
 | [`packages/sdk`](packages/sdk) | The TypeScript SDK for the developer REST API: members' latest captures, and computer sessions driven over CDP. |
 | [`packages/playwright`](packages/playwright) | Applies a capture to a Playwright browser context, a persistent context, or a Chrome attached over CDP. |
@@ -121,7 +121,7 @@ Then sign in at <http://localhost:3000>, with the link from Mailpit at <http://l
 | [`packages/ui`](packages/ui) | The web app's design system: shadcn components on Base UI, the theme, and the fonts. |
 | [`packages/server`](packages/server) | The web app's server: accounts, browser sync, captures, computers, MCP grants, and live view, on Postgres. |
 | [`packages/api`](packages/api) | The web app's HTTP API, the MCP server agents connect to, and the live-view and CDP relays. |
-| [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node server. |
+| [`packages/web`](packages/web) | The web app's product library: the dashboard, sign-in and consent pages, their route manifest, the proxy, and the Node servers: the whole app's, and the API's alone. |
 
 ## Contributing
 

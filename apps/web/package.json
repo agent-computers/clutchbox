@@ -16,6 +16,7 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "node --import tsx ../../scripts/build-extension-download.ts --out public/downloads --record .extension-download.json && next build",
     "start": "node --import tsx server.ts",
+    "start:api": "node --conditions=react-server --import tsx api.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

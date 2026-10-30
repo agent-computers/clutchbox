@@ -92,6 +92,7 @@
       "includes": [
         "packages/web/src/services.ts",
         "packages/web/src/node-server.ts",
+        "packages/web/src/api-server.ts",
         "packages/web/src/route-manifest.ts",
         "packages/web/src/routes/api.tsx",
         "packages/web/src/routes/auth.tsx",
