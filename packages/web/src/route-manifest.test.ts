@@ -44,7 +44,7 @@ describe('generate-routes', () => {
   it('writes every route into the named groups and leaves hand-written routes on other URLs alone', () => {
     writeApp(app, groups);
     expect(checkApp(app, groups)).toEqual([]);
-    expect(readFileSync(join(app, 'app/(auth)/sign-in/page.tsx'), 'utf8')).toContain('signInPage(getServices)');
+    expect(readFileSync(join(app, 'app/(auth)/sign-in/page.tsx'), 'utf8')).toContain('signInPage(pageApi)');
     expect(writeApp(app, groups)).toEqual([]);
   });
 

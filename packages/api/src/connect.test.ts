@@ -370,3 +370,87 @@ describe('Connect', () => {
     expect((await request(ownerCookie, 'DELETE', '/organization/connect-apps/nope')).status).toBe(400);
   });
 });
+
+describe("the pages' requests", () => {
+  const get = (path: string, cookie = '', instance = api()) =>
+    instance.request(`${origin}/api/v1${path}`, { headers: cookie ? { cookie } : {} });
+
+  it('tell anyone how people sign in here, none unless the deployment says', async () => {
+    const methods = { providers: ['google' as const], emailLink: true };
+    const configured = createApi({
+      db,
+      auth,
+      origin,
+      computers: fakeComputerProvider().provider,
+      signInMethods: methods,
+    });
+    const response = await get('/sign-in-methods', '', configured);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual(methods);
+    expect(await (await get('/sign-in-methods')).json()).toEqual({ providers: [], emailLink: false });
+  });
+
+  it('check a signed request before any session, refusing an altered or missing one', async () => {
+    const app = await registerApp();
+    const other = await registerApp('Other app');
+    const oauthQuery = (await authorize(await signedIn('person'), app)).location.search.slice(1);
+    const signed = await get(`/oauth/request?${oauthQuery}`);
+    expect(signed.status).toBe(200);
+    expect(await signed.json()).toEqual({ clientId: app.id });
+    for (const query of [oauthQuery.replace(app.id, other.id), '']) {
+      const refused = await get(`/oauth/request?${query}`);
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ error: 'invalid_request' });
+    }
+  });
+
+  it("show a Connect app's consent request only to a member acting in its organization, for a request the server signed", async () => {
+    const app = await registerApp();
+    const other = await registerApp('Other app');
+    const cookie = await signedIn('person');
+    const oauthQuery = (await authorize(cookie, app)).location.search.slice(1);
+    const consentView = (query = oauthQuery, as = cookie) => get(`/oauth/consent?${query}`, as);
+    expect((await consentView(oauthQuery, '')).status).toBe(401);
+    const outsider = await consentView();
+    expect(outsider.status).toBe(403);
+    expect(await outsider.json()).toEqual({ error: 'not_a_member' });
+    expect((await request(cookie, 'POST', '/connect/join', { oauthQuery })).status).toBe(200);
+    const shown = await consentView();
+    expect(shown.status).toBe(200);
+    expect(await shown.json()).toEqual({
+      client: { name: 'Fixture app', logo: null, policy: null, terms: null },
+      connect: { scope: 'connect', organization: 'App Co' },
+    });
+    expect((await consentView(oauthQuery.replace(app.id, other.id))).status).toBe(400);
+    // Acting in another organization, the grant would be for the wrong one.
+    const own = (await db.transaction(tx =>
+      createOrganization(tx, {
+        name: 'Own',
+        owner: { id: 'person', name: 'Fixture person', email: 'person@example.test' },
+      }),
+    ))!;
+    await switchTo(db, 'person', own);
+    expect((await consentView()).status).toBe(400);
+    await switchTo(db, 'person', appCo);
+    // A deleted app has no consent to give.
+    expect((await request(ownerCookie, 'DELETE', `/organization/connect-apps/${app.id}`)).status).toBe(200);
+    expect((await consentView()).status).toBe(400);
+  });
+
+  it('continue a signed authorize request only for a session that started after it', async () => {
+    const app = await registerApp();
+    const before = await signedIn('person');
+    const { location } = await authorize('', app);
+    expect(location.pathname).toBe('/sign-in');
+    const resume = async (cookie: string) => {
+      const response = await get(`/oauth/resume${location.search}`, cookie);
+      return { status: response.status, body: await response.json() };
+    };
+    expect((await resume('')).status).toBe(401);
+    expect(await resume(before)).toEqual({ status: 200, body: { href: null } });
+    const after = await signedIn('later');
+    const { body } = await resume(after);
+    expect(body.href).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
+  });
+});

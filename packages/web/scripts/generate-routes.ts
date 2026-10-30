@@ -4,8 +4,9 @@ import { parseArgs } from 'node:util';
 import { type RouteEntry, routeManifest } from '../src/route-manifest';
 
 // Writes an app's product route files from the route manifest (src/route-manifest.ts), or with --check, fails when
-// they differ from it. Each file imports its module by package name and the deployment's services by the app's own
-// '@/' alias, so the same text wires each app to its own deployment.
+// they differ from it. Each file imports its module by package name and the deployment's wiring by the app's own '@/'
+// alias, so the same text wires each app to its own deployment: a route handler gets its services, and a page or
+// layout only its way to the API (lib/page-api.ts).
 //
 //   generate-routes --app <app dir> [--group <id>=(<group>),...] [--check]
 //
@@ -22,7 +23,8 @@ export function renderRoute(entry: RouteEntry): string {
   const lines = [header];
   const imported = [...(factory ? [factory.name] : []), ...Object.values(aliases)].sort();
   if (imported.length) lines.push(`import { ${imported.join(', ')} } from ${from};`);
-  if (factory) lines.push("import { getServices } from '@/deployment/server';");
+  const wiring = entry.file === 'route.ts' ? 'getServices' : 'pageApi';
+  if (factory) lines.push(`import { ${wiring} } from '@/deployment/server';`);
   if (factory?.shell) lines.push("import { deployment } from '@/deployment/ui';");
   const config = Object.entries(segment).map(
     ([name, value]) => `export const ${name} = ${typeof value === 'string' ? `'${value}'` : value};`,
@@ -31,7 +33,7 @@ export function renderRoute(entry: RouteEntry): string {
   const body: string[] = [];
   if (reexport.length) body.push(`export { ${reexport.join(', ')} } from ${from};`);
   if (factory) {
-    const call = `${factory.name}(getServices${factory.shell ? ', deployment.shell' : ''})`;
+    const call = `${factory.name}(${wiring}${factory.shell ? ', deployment.shell' : ''})`;
     const named = Object.entries(aliases).map(([as, name]) => `${name} as ${as}`);
     if (factory.as.length === 1 && factory.as[0] === 'default' && !named.length) body.push(`export default ${call};`);
     else if (factory.as.length === 1 && !named.length) body.push(`export const ${factory.as[0]} = ${call};`);

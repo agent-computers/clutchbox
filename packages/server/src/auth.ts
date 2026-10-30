@@ -449,6 +449,13 @@ export async function signedOAuthClient(auth: Auth, oauthQuery: string) {
   if (!(await verifyOAuthQueryParams(oauthQuery, (await auth.$context).secret))) return null;
   return new URLSearchParams(oauthQuery).get('client_id');
 }
+// A client's public metadata, for the consent page; null for one that doesn't exist. Never its secret.
+export async function publicOAuthClient(auth: Auth, headers: Headers, clientId: string) {
+  return auth.api.getOAuthClientPublic({ headers, query: { client_id: clientId } }).catch(error => {
+    if (error instanceof APIError && error.status === 'NOT_FOUND') return null;
+    throw error;
+  });
+}
 // Pass `refreshed` from a route handler: getSession extends an active session past updateAge,
 // and the renewed cookie must reach the browser or it still expires 7 days after sign-in.
 // Server components cannot set cookies; their sessions are renewed through /api/v1 calls.

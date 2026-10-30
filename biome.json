@@ -37,6 +37,75 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/web/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@clutchbox/server/browsers": {
+                    "allowImportNames": ["ConnectedBrowser"],
+                    "message": "Pages and client code reach the server only through the API (lib/page-api.ts, lib/api.ts)."
+                  },
+                  "@clutchbox/server/computers": {
+                    "allowImportNames": ["ForkView", "LiveViewStatus"],
+                    "message": "Pages and client code reach the server only through the API (lib/page-api.ts, lib/api.ts)."
+                  },
+                  "@clutchbox/server/config": {
+                    "allowImportNames": ["SignInMethods", "SignInProvider"],
+                    "message": "Pages and client code reach the server only through the API (lib/page-api.ts, lib/api.ts)."
+                  },
+                  "@clutchbox/server/members": {
+                    "allowImportNames": ["Role"],
+                    "message": "Pages and client code reach the server only through the API (lib/page-api.ts, lib/api.ts)."
+                  }
+                },
+                "patterns": [
+                  {
+                    "group": [
+                      "@clutchbox/server/*",
+                      "!@clutchbox/server/agents",
+                      "!@clutchbox/server/computer-timing",
+                      "!@clutchbox/server/browsers",
+                      "!@clutchbox/server/computers",
+                      "!@clutchbox/server/config",
+                      "!@clutchbox/server/members",
+                      "@clutchbox/api",
+                      "@clutchbox/api/*",
+                      "./services",
+                      "../services"
+                    ],
+                    "message": "Pages and client code reach the server only through the API (lib/page-api.ts, lib/api.ts), so the web app can run apart from it. Types and client-safe constants the API's answers use are allowed by name."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/web/src/services.ts",
+        "packages/web/src/node-server.ts",
+        "packages/web/src/route-manifest.ts",
+        "packages/web/src/routes/api.tsx",
+        "packages/web/src/routes/auth.tsx",
+        "packages/web/src/routes/cdp.tsx",
+        "packages/web/src/routes/extension-client.tsx",
+        "packages/web/src/routes/health.tsx",
+        "packages/web/src/routes/live-view.tsx",
+        "packages/web/src/routes/mcp.tsx",
+        "packages/web/src/routes/well-known.tsx",
+        "packages/web/src/**/*.test.ts"
+      ],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    }
+  ],
   "assist": {
     "actions": {
       "source": {

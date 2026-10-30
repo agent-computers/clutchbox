@@ -20,6 +20,7 @@
 
 - Build UI from the shadcn components in `packages/ui` (see its README, including the extension's copies).
 - Fetch and change data with TanStack Query (`useQuery`, `useMutation`); queries live in `packages/web/src/lib/api.ts`.
+- Server-rendered pages read the session, config, and database only through the API, with `apiGet` and the `PageApi` their factory gets (`packages/web/src/lib/page-api.ts`), so the web app can run apart from the API server. Biome enforces it; when a page needs something new, add an API route rather than an import.
 - Add or change a product route only in the route manifest (`packages/web/src/route-manifest.ts`), then run `bun run generate-routes`. Next.js reads segment config only as literals in the route file, so the generated files carry them and CI's `--check` fails when one differs.
 - Signed-in pages live under `/app`, in its sidebar layout; the root holds sign-in and consent. When a page's address changes, redirect the old one in `moved` and update `productMatcher` (both in `packages/web/src/proxy.ts`) and each app's hand-copied `proxy.ts` matcher, since installed extensions and connected agents link to it.
 - Keep config and control out of the extension, so changes don't need a release: new tunables, lists, and settings are server data the extension clamps and falls back from, and a web app may only narrow what is captured. Add extension code only for what must run in Chrome.

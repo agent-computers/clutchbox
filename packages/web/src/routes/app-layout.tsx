@@ -1,26 +1,22 @@
-import { getPrincipal } from '@clutchbox/server/auth';
-import { currentMember } from '@clutchbox/server/organizations';
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { AppShell } from '../components/app-shell';
 import { type ShellExtras, ShellProvider } from '../deployment';
-import type { GetServices } from '../services';
+import { apiGet, type Me, type PageApi } from '../lib/page-api';
 
 export const metadata: Metadata = { robots: { index: false } };
 // The signed-in app, under /app, in the deployment's shell. Its API routes check the session and membership
 // themselves; this sends a visitor without a valid session to sign-in, and one in no organization here to /join,
 // before anything renders.
-export const appLayout = (getServices: GetServices, shell: ShellExtras = {}) =>
+export const appLayout = (api: PageApi, shell: ShellExtras = {}) =>
   async function AppLayout({ children }: { children: ReactNode }) {
-    const { auth, db } = await getServices();
-    const principal = await getPrincipal(auth, await headers());
-    if (!principal) redirect('/sign-in');
-    if (!(await currentMember(db, principal.id))) redirect('/join');
+    const me = await apiGet<Me>(api, '/me');
+    if (!me.ok) redirect('/sign-in');
+    if (!me.data.organization) redirect('/join');
     return (
       <ShellProvider shell={shell}>
-        <AppShell user={principal}>{children}</AppShell>
+        <AppShell user={me.data.user}>{children}</AppShell>
       </ShellProvider>
     );
   };

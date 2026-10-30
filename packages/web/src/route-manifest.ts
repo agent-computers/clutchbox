@@ -22,8 +22,8 @@ export type RouteEntry = {
   module: string;
   // Exports of the module the file passes on unchanged.
   reexport?: string[];
-  // An export of the module that takes the deployment's getServices (and, with shell, its shell extras) and returns
-  // the handler or component, exported under each name in `as`.
+  // An export of the module that takes the deployment's wiring (a route handler its getServices, a page or layout its
+  // pageApi; with shell, its shell extras too) and returns the handler or component, exported under each name in `as`.
   factory?: { name: string; as: string[]; shell?: true };
   // Other exports of the module, exported under another name: { OPTIONS: 'authPreflight' }.
   aliases?: Record<string, string>;

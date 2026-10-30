@@ -20,7 +20,13 @@ import {
   latestCaptureForKey,
   membersForKey,
 } from '@clutchbox/server/api-keys';
-import { type Auth, getPrincipal, signedOAuthClient } from '@clutchbox/server/auth';
+import {
+  type Auth,
+  getPrincipal,
+  publicOAuthClient,
+  resumeAuthorization,
+  signedOAuthClient,
+} from '@clutchbox/server/auth';
 import {
   BROWSER_ID_PATTERN,
   browserRemoved,
@@ -61,8 +67,11 @@ import {
   takeOverComputer,
   useComputerSession,
 } from '@clutchbox/server/computers';
+import type { SignInMethods } from '@clutchbox/server/config';
 import {
   CONNECT_APP_ID_PATTERN,
+  CONNECT_SCOPE,
+  connectApp,
   connectionsForOrganization,
   connectStatus,
   createConnectApp,
@@ -153,6 +162,7 @@ export function createApi({
   hooks = defaultServerHooks,
   extensionVersion,
   minExtensionVersion = MIN_EXTENSION_VERSION,
+  signInMethods = { providers: [], emailLink: false },
   extend,
 }: {
   db: Database;
@@ -164,6 +174,8 @@ export function createApi({
   // The extension build this deployment offers for download.
   extensionVersion?: string | undefined;
   minExtensionVersion?: string;
+  // How people sign in here, from the config, for the sign-in and settings pages.
+  signInMethods?: SignInMethods;
   extend?: ApiExtension;
 }) {
   const latest = extensionVersion ? { latestVersion: extensionVersion } : {};
@@ -209,6 +221,15 @@ export function createApi({
       'X-Content-Type-Options': 'nosniff',
     }),
   );
+  // The pages a signed-out visitor sees ask these, so they come before authentication too.
+  const unsigned = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  app.get('/sign-in-methods', c => c.json(signInMethods, 200, unsigned));
+  // Whether this server signed an authorize request it handed its pages (consent, /connect) and it has not expired,
+  // and its client. Answered before the session, so an expired link says so rather than asking to sign in.
+  app.get('/oauth/request', async c => {
+    const clientId = await signedOAuthClient(auth, new URL(c.req.url).search.slice(1));
+    return clientId ? c.json({ clientId }, 200, unsigned) : c.json({ error: 'invalid_request' }, 400, unsigned);
+  });
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'private, no-store');
     c.header('X-Content-Type-Options', 'nosniff');
@@ -372,6 +393,35 @@ export function createApi({
     if (!clientId) return c.json({ error: 'invalid_request' }, 400);
     return answer(c, await joinForConnect(db, person(c), clientId, limits));
   });
+  // The consent page's request, for the person signed in: the client's public metadata, and for a Connect app's request,
+  // its organization, which /connect switched to. Only after the signature and session, so a client's metadata is
+  // never an oracle for strangers.
+  app.get('/oauth/consent', async c => {
+    const oauthQuery = new URL(c.req.url).search.slice(1);
+    const clientId = await signedOAuthClient(auth, oauthQuery);
+    if (!clientId) return c.json({ error: 'invalid_request' }, 400);
+    const member = await memberOf(c);
+    const client = await publicOAuthClient(auth, c.req.raw.headers, clientId);
+    if (!client) return c.json({ error: 'invalid_request' }, 400);
+    const connect = new URLSearchParams(oauthQuery).get('scope')?.split(' ').includes(CONNECT_SCOPE)
+      ? await connectApp(db, clientId)
+      : null;
+    if (connect && (await organizationOf(db, member))?.id !== connect.organizationId)
+      return c.json({ error: 'invalid_request' }, 400);
+    return c.json({
+      client: {
+        name: client.client_name ?? null,
+        logo: client.logo_uri ?? null,
+        policy: client.policy_uri ?? null,
+        terms: client.tos_uri ?? null,
+      },
+      connect: connect && { scope: CONNECT_SCOPE, organization: connect.organization },
+    });
+  });
+  // Where the sign-in page continues a signed authorize request after signing in (resumeAuthorization), or null.
+  app.get('/oauth/resume', async c =>
+    c.json({ href: await resumeAuthorization(auth, c.req.raw.headers, new URL(c.req.url).searchParams) }),
+  );
   // The developer REST API, under an organization API key only.
   const keyOf = (c: Context<Env>) => {
     const key = c.get('apiKey');
