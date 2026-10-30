@@ -1,4 +1,4 @@
-import { listenUntilStopped, nodeServer } from '@clutchbox/api/node-upgrade';
+import { type ClientAddress, clientAddressFromEnv, listenUntilStopped, nodeServer } from '@clutchbox/api/node-upgrade';
 import { SHUTDOWN_GRACE_MS } from '@clutchbox/server/computer-timing';
 import { getRequestListener } from '@hono/node-server';
 import { securityHeaders } from '../next-config.mjs';
@@ -111,13 +111,13 @@ function route(getServices: GetServices): Handler {
 // The API's HTTP server: apiHandler on the Node server that also runs WebSocket upgrades through it
 // (@clutchbox/api/node-upgrade). The adapter leaves the global Request and Response alone, so Better Auth and the
 // MCP SDK see the platform's own.
-export function apiServer(getServices: GetServices, { trustProxy = false } = {}) {
-  return nodeServer(getRequestListener(apiHandler(getServices), { overrideGlobalObjects: false }), { trustProxy });
+export function apiServer(getServices: GetServices, clientAddress: ClientAddress = {}) {
+  return nodeServer(getRequestListener(apiHandler(getServices), { overrideGlobalObjects: false }), clientAddress);
 }
 
 // An app's API server, as its api.ts runs it: `node --conditions=react-server --import tsx api.ts`, with its
-// services and its migration. HOST, PORT, MIGRATE_ON_START, and TRUST_PROXY work as for the whole app's server
-// (node-server.ts), and it stops the same way.
+// services and its migration. HOST, PORT, MIGRATE_ON_START, and the client address (TRUST_PROXY, CLIENT_IP_HEADER,
+// FORWARDED_SECRET) work as for the whole app's server (node-server.ts), and it stops the same way.
 export async function startApiServer({
   getServices,
   migrate,
@@ -126,7 +126,7 @@ export async function startApiServer({
   migrate: () => Promise<boolean>;
 }) {
   if (process.env.MIGRATE_ON_START === 'true' && !(await migrate())) process.exit(1);
-  const server = apiServer(getServices, { trustProxy: process.env.TRUST_PROXY === 'true' });
+  const server = apiServer(getServices, clientAddressFromEnv());
   const hostname = process.env.HOST || '0.0.0.0';
   const port = Number(process.env.PORT || 3000);
   listenUntilStopped(server, { hostname, port, graceMs: SHUTDOWN_GRACE_MS });

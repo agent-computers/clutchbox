@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { listenUntilStopped, nodeServer } from '@clutchbox/api/node-upgrade';
+import { clientAddressFromEnv, listenUntilStopped, nodeServer } from '@clutchbox/api/node-upgrade';
 import { SHUTDOWN_GRACE_MS } from '@clutchbox/server/computer-timing';
 import next from 'next';
 
@@ -7,8 +7,9 @@ import next from 'next';
 // plus the WebSocket upgrades its server drops, which the live-view relay needs. Vercel runs the app with its own
 // runtime and never loads this. The app's server.ts calls it after `next build`, as `node --import tsx server.ts`,
 // with its directory and its migration. HOST and PORT choose the address; MIGRATE_ON_START=true applies pending
-// migrations first (the migration takes a lock, so replicas starting together are safe); TRUST_PROXY=true keeps the
-// X-Forwarded-For a reverse proxy in front sets, which it must overwrite rather than append to.
+// migrations first (the migration takes a lock, so replicas starting together are safe); TRUST_PROXY,
+// CLIENT_IP_HEADER, and FORWARDED_SECRET say where the client's address comes from (ClientAddress in
+// @clutchbox/api/node-upgrade).
 export async function startNodeServer({ dir, migrate }: { dir: string; migrate: () => Promise<boolean> }) {
   if (process.env.MIGRATE_ON_START === 'true' && !(await migrate())) process.exit(1);
   const hostname = process.env.HOST || '0.0.0.0';
@@ -18,7 +19,7 @@ export async function startNodeServer({ dir, migrate }: { dir: string; migrate: 
   // the real one.
   const app = next({ dev: false, dir, hostname, port, httpServer: createServer() });
   await app.prepare();
-  const server = nodeServer(app.getRequestHandler(), { trustProxy: process.env.TRUST_PROXY === 'true' });
+  const server = nodeServer(app.getRequestHandler(), clientAddressFromEnv());
   // A host's stop or a deploy: relays close with their reconnect code and requests in flight finish, for at most
   // SHUTDOWN_GRACE_MS.
   listenUntilStopped(server, { hostname, port, graceMs: SHUTDOWN_GRACE_MS });

@@ -14,6 +14,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { apiHandler, apiServer } from './api-server';
+import { apiGet, httpApi, type Me } from './lib/page-api';
 import { createServices } from './services';
 
 // The API's own server, built from the no-op defaults, on a PGlite database instead of the pool.
@@ -37,6 +38,12 @@ vi.mock('@clutchbox/api/cdp', async importOriginal => {
         : real.cdpHandler(deps)(request),
   };
 });
+
+// The page's request, for httpApi: the visitor's cookie and address, as the platform passes them.
+const visitor = { cookie: '', address: '' };
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers({ cookie: visitor.cookie, 'x-forwarded-for': visitor.address }),
+}));
 
 const origin = 'http://localhost:3000';
 const extension = `chrome-extension://${'a'.repeat(32)}`;
@@ -151,5 +158,19 @@ describe('the API server', () => {
     const echoed = await new Promise(resolve => socket.once('message', data => resolve(String(data))));
     expect(echoed).toBe('ping');
     socket.close();
+  });
+
+  it("serves the pages' reads over HTTP as the visitor, with their address when the secret is shared", async () => {
+    visitor.cookie = await signedIn();
+    visitor.address = '203.0.113.5, 192.0.2.1';
+    const forwardedSecret = randomBytes(32).toString('base64url');
+    server = apiServer(createServices(defaultServerHooks), { forwardedSecret });
+    await new Promise<void>(resolve => server?.listen(0, '127.0.0.1', resolve));
+    const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const me = await apiGet<Me>(httpApi(at, { forwardedSecret }), '/me');
+    expect(me.ok && me.data.user.email).toBe('a@example.test');
+    // Signed out, the page gets the status to branch on.
+    visitor.cookie = '';
+    expect(await apiGet<Me>(httpApi(at), '/me')).toEqual({ ok: false, status: 401 });
   });
 });

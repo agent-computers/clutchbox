@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -58,16 +59,51 @@ function nodeUpgrades(listener: RequestListener) {
   };
 }
 
+// Where a request's client address comes from, from the server's environment.
+export type ClientAddress = {
+  // TRUST_PROXY=true: a reverse proxy in front overwrites X-Forwarded-For with the client's address.
+  trustProxy?: boolean;
+  // CLIENT_IP_HEADER: a header the platform's own proxy sets to the client's address, which clients can't set
+  // themselves, such as Fly.io's Fly-Client-IP.
+  clientIpHeader?: string;
+  // FORWARDED_SECRET: a secret that a proxy reaching this server through the platform's, such as another host's
+  // rewrite, sends in X-Forwarded-Secret, with the client's address first in X-Forwarded-For.
+  forwardedSecret?: string;
+};
+export const clientAddressFromEnv = (env: NodeJS.ProcessEnv = process.env): ClientAddress => ({
+  trustProxy: env.TRUST_PROXY === 'true',
+  ...(env.CLIENT_IP_HEADER && { clientIpHeader: env.CLIENT_IP_HEADER.toLowerCase() }),
+  ...(env.FORWARDED_SECRET && { forwardedSecret: env.FORWARDED_SECRET }),
+});
+
+const sameSecret = (sent: string, secret: string) =>
+  sent.length === secret.length && timingSafeEqual(Buffer.from(sent), Buffer.from(secret));
+
 // The web app's HTTP server off Vercel: every request, and every WebSocket handshake, goes to the framework's listener.
 // Other upgrades (h2c) are refused: no route answers one, and an unanswered upgrade would hold its socket open.
 //
 // Better Auth keys its rate limits on X-Forwarded-For, which Vercel overwrites with the client's IP and Next.js fills
 // only when it is missing, so a client reaching this server directly could send a fresh one per request and never be
-// limited. So it is set to the connection's own address, unless trustProxy says a reverse proxy in front overwrites
-// it with the client's (one that appends to it would let clients choose again).
-export function nodeServer(listener: RequestListener, { trustProxy = false } = {}) {
+// limited. So it is set to the client's address as ClientAddress finds it: the first X-Forwarded-For entry of a
+// forwarder that proved itself with the secret, X-Forwarded-For as a trusted proxy left it (one that appends to it
+// would let clients choose again), the platform's client header, or else the connection's own address. The secret's
+// header never reaches the routes.
+export function nodeServer(
+  listener: RequestListener,
+  { trustProxy = false, clientIpHeader, forwardedSecret }: ClientAddress = {},
+) {
   const clientAddress = (request: IncomingMessage) => {
-    if (!trustProxy) request.headers['x-forwarded-for'] = request.socket.remoteAddress ?? '';
+    const sent = request.headers['x-forwarded-secret'];
+    delete request.headers['x-forwarded-secret'];
+    const forwardedFor = request.headers['x-forwarded-for'];
+    if (forwardedSecret && typeof sent === 'string' && sameSecret(sent, forwardedSecret) && forwardedFor) {
+      request.headers['x-forwarded-for'] = String(forwardedFor).split(',')[0]?.trim() ?? '';
+      return;
+    }
+    if (trustProxy) return;
+    const platform = clientIpHeader ? request.headers[clientIpHeader] : undefined;
+    request.headers['x-forwarded-for'] =
+      (typeof platform === 'string' && platform) || (request.socket.remoteAddress ?? '');
   };
   const webSocketUpgrade = nodeUpgrades(listener);
   const server = createServer((request, response) => {

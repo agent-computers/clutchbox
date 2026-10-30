@@ -7,6 +7,21 @@ import { headers } from 'next/headers';
 // the session, config, and database only through it.
 export type PageApi = (path: string, init: { headers: Headers }) => Promise<Response>;
 
+// The pages' way to an API server elsewhere (../api-server.ts), over HTTP to its origin, never cached. With
+// forwardedSecret, the visitor's address goes too, which that server then trusts (FORWARDED_SECRET), so its rate
+// limits see the visitor rather than this server.
+export function httpApi(origin: string, { forwardedSecret }: { forwardedSecret?: string } = {}): PageApi {
+  return async (path, init) => {
+    const forwarded = new Headers(init.headers);
+    const client = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
+    if (forwardedSecret && client) {
+      forwarded.set('x-forwarded-for', client);
+      forwarded.set('x-forwarded-secret', forwardedSecret);
+    }
+    return fetch(new URL(path, origin), { headers: forwarded, cache: 'no-store', redirect: 'manual' });
+  };
+}
+
 // A GET as the visitor, with their cookies, so the API sees their session: the body, or the status of a failure.
 export async function apiGet<T>(
   api: PageApi,
