@@ -219,17 +219,36 @@ describe('E2B adapter', () => {
     });
   });
   it('keeps key names and time zones off the command line unless they are plain names', async () => {
-    const run = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
-    const press = vi.fn(async () => {});
-    vi.spyOn(Sandbox, 'connect').mockResolvedValue({ commands: { run }, press } as never);
+    // Like xdotool, which ignores a key name it doesn't know with a warning, and exits 0.
+    const run = vi.fn(async (command: string) => ({
+      exitCode: 0,
+      stdout: '',
+      stderr: command.includes('Nope') ? "(symbol) No such key name 'Nope'. Ignoring it.\n" : '',
+    }));
+    vi.spyOn(Sandbox, 'connect').mockResolvedValue({ commands: { run } } as never);
     const session = await e2bComputerProvider().connect('sandbox', 1000);
-    // E2B's press runs `xdotool key <keys>` in a shell.
+    // The keys reach `xdotool key <keys>` in a shell.
     await expect(session.act({ type: 'key', keys: ['ctrl', 'a;touch /tmp/owned'] })).rejects.toThrow('key name');
     await expect(session.act({ type: 'key', keys: '$(id)' })).rejects.toThrow('key name');
-    expect(press).not.toHaveBeenCalled();
-    await session.act({ type: 'key', keys: ['ctrl', 'Page_Down'] });
-    expect(press).toHaveBeenCalledWith(['ctrl', 'Page_Down']);
+    expect(run).not.toHaveBeenCalled();
+    // Aliases in any case and single letters lowercased; xdotool's own names keep their case, which it needs.
+    for (const [keys, sent] of [
+      ['Return', 'Return'],
+      ['enter', 'Return'],
+      ['ESC', 'Escape'],
+      [['ctrl', 'A'], 'Control_L+a'],
+      [['ctrl', 'Page_Down'], 'Control_L+Page_Down'],
+      [['shift', 'f5'], 'Shift_L+F5'],
+      ['KP_Enter', 'KP_Enter'],
+      ['Prior', 'Prior'],
+    ] as const) {
+      await session.act({ type: 'key', keys: keys as string | string[] });
+      expect(run).toHaveBeenLastCalledWith(`xdotool key ${sent}`, expect.objectContaining({ envs: { DISPLAY: ':0' } }));
+    }
+    // A key xdotool ignores fails the action rather than pressing nothing.
+    await expect(session.act({ type: 'key', keys: ['ctrl', 'Nope'] })).rejects.toThrow('Unknown key name');
     // Run as root on a path built from the name.
+    run.mockClear();
     await expect(session.setTimeZone('../../../etc/shadow')).rejects.toThrow('time zone');
     expect(run).not.toHaveBeenCalled();
     await session.setTimeZone('America/Los_Angeles');

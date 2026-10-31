@@ -454,9 +454,56 @@ export const writeHelpers = () =>
       `echo ${Buffer.from(content).toString('base64')} | base64 -d > ${HELPER_DIR}/${name}.new && chmod ${mode} ${HELPER_DIR}/${name}.new && mv -f ${HELPER_DIR}/${name}.new ${HELPER_DIR}/${name}`,
   ).join(' && ');
 
+// Common names agents use for keys, any case, as xdotool's keysyms. Any other name passes through as given: keysyms
+// are case-sensitive (Return, KP_Enter, Prior), and xdotool ignores one it doesn't know, exiting 0, so act fails on its
+// warning instead. E2B's press lowercased every name outside its own list, so "Return" pressed nothing.
+const KEY_ALIASES: Record<string, string> = {
+  alt: 'Alt_L',
+  backspace: 'BackSpace',
+  cmd: 'Super_L',
+  command: 'Super_L',
+  control: 'Control_L',
+  ctrl: 'Control_L',
+  del: 'Delete',
+  delete: 'Delete',
+  down: 'Down',
+  end: 'End',
+  enter: 'Return',
+  esc: 'Escape',
+  escape: 'Escape',
+  home: 'Home',
+  insert: 'Insert',
+  left: 'Left',
+  meta: 'Meta_L',
+  option: 'Alt_L',
+  page_down: 'Page_Down',
+  page_up: 'Page_Up',
+  pagedown: 'Page_Down',
+  pageup: 'Page_Up',
+  return: 'Return',
+  right: 'Right',
+  shift: 'Shift_L',
+  space: 'space',
+  super: 'Super_L',
+  tab: 'Tab',
+  up: 'Up',
+  win: 'Super_L',
+};
+// A key name as xdotool's keysym: an alias, F1-F24 in any case, or a single character lowercased, as a chord's letter
+// is (ctrl+A is ctrl+a, not ctrl+shift+a); otherwise unchanged.
+export const keysym = (key: string) => {
+  const lower = key.toLowerCase();
+  if (lower in KEY_ALIASES) return KEY_ALIASES[lower]!;
+  if (/^f([1-9]|1\d|2[0-4])$/.test(lower)) return lower.toUpperCase();
+  return key.length === 1 ? lower : key;
+};
+
 function session(sandbox: Sandbox): ComputerSession {
+  // Resolves with xdotool's warnings (stderr), which name a key it ignored.
+  const run = async (args: string) =>
+    (await sandbox.commands.run(`xdotool ${args}`, { envs: { DISPLAY: ':0' }, timeoutMs: XDOTOOL_MS })).stderr;
   const xdotool = async (args: string) => {
-    await sandbox.commands.run(`xdotool ${args}`, { envs: { DISPLAY: ':0' }, timeoutMs: XDOTOOL_MS });
+    await run(args);
   };
   const ensureChrome = (timeoutMs = ENSURE_CHROME_MS) =>
     sandbox.commands.run(`${HELPER_DIR}/ensure-chrome.sh`, { timeoutMs });
@@ -501,10 +548,14 @@ function session(sandbox: Sandbox): ComputerSession {
           );
         case 'type':
           return sandbox.write(action.text, { chunkSize: 50, delayInMs: TYPE_KEY_DELAY_MS });
-        case 'key':
-          // E2B's press runs `xdotool key <keys>` unquoted, so a key name must not reach it unchecked.
-          if (![action.keys].flat().every(key => keyNamePattern.test(key))) throw new Error('Invalid key name');
-          return sandbox.press(action.keys);
+        case 'key': {
+          // The keys reach a command line unquoted, so a key name must not reach it unchecked.
+          const keys = [action.keys].flat();
+          if (!keys.every(key => keyNamePattern.test(key))) throw new Error('Invalid key name');
+          if ((await run(`key ${keys.map(keysym).join('+')}`)).includes('No such key name'))
+            throw new Error('Unknown key name');
+          return;
+        }
         case 'wait':
           return sandbox.wait(action.ms);
       }

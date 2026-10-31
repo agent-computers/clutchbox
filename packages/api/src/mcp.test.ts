@@ -851,6 +851,7 @@ describe('main computer tools', () => {
     ).toEqual({ width: 1280, height: 1024 });
     const kept = (await open({ session_id: tall.session_id })).structuredContent;
     expect(kept.display).toEqual({ width: 1280, height: 1024 });
+    expect(kept).not.toHaveProperty('screen_unchanged');
     expect(fake.calls.screens).toEqual(['1440x900', '1280x1024']);
     // Only the presets.
     expect(await open({ session_id: kept.session_id, screen: '1024x768' })).toMatchObject({ isError: true });

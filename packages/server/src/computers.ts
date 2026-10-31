@@ -673,7 +673,8 @@ export async function openComputerSession(
       applyProfiles(db, caller, computer, handle.session, started.profile, profiles, deadline),
       screen
         ? applyScreen(handle.session, screen)
-        : started.created &&
+        : // A new fork starts at the member's choice; the agent asked for no screen, so there is nothing to report.
+          !started.created ||
           chosenScreen(db, caller)
             .then(chosen => applyScreen(handle.session, chosen))
             .then(() => true),

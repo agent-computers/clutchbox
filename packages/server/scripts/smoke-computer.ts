@@ -136,6 +136,19 @@ try {
   await timed('actType', () => session.act({ type: 'type', text: 'clutchbox' }));
   await timed('actKey', () => session.act({ type: 'key', keys: 'Escape' }));
   await timed('actScroll', () => session.act({ type: 'scroll', x: 640, y: 400, direction: 'down', amount: 3 }));
+  // Return, as agents name it, submits the address bar. The wait gives the bar time to take focus.
+  await session.act({ type: 'key', keys: ['ctrl', 'l'] });
+  await session.act({ type: 'wait', ms: 500 });
+  await session.act({ type: 'type', text: 'https://example.com/#return' });
+  await session.act({ type: 'key', keys: 'Return' });
+  await session.act({ type: 'wait', ms: 1000 });
+  checks.returnNavigates = JSON.parse(
+    await session.cdp({
+      method: 'Runtime.evaluate',
+      params: { expression: 'location.href', returnByValue: true },
+      targetId: page?.targetId,
+    }),
+  ).result?.result?.value;
   await writeFile(join(out, 'computer-smoke.png'), await timed('screenshot', () => session.screenshot()));
   // Screens: the computer starts at the default, and switches to each with Chrome still maximized across it (the window
   // manager resizes it a moment after the switch).
@@ -440,9 +453,10 @@ const expected: Record<string, unknown> = {
   screens: Object.fromEntries(
     SCREEN_ORDER.map(screen => [screen, { set: true, screenshot: screen, chromeFills: true }]),
   ),
-  statePreservedAfterResume: 'https://example.com/',
+  returnNavigates: 'https://example.com/#return',
+  statePreservedAfterResume: 'https://example.com/#return',
   forkFoundByMetadata: true,
-  forkKeepsPage: 'https://example.com/',
+  forkKeepsPage: 'https://example.com/#return',
   forkKeepsFile: 'a,b\n1,2\n',
   snapshotDeleted: true,
   fileAfterResume: 'a,b\n1,2\n',
