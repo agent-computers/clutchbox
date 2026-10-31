@@ -16,11 +16,35 @@ Before writing, name the line from this post's lesson to what you build, in one 
 - **Hook first.** The feed shows only the first post, so it carries the hook, the main claim, and the picture. Open with the surprising fact, the number, or the tension, and land it in the first 280 characters, which is also what a cross-post to X shows before "Show more".
 - **Invite replies.** Replies are what spread a post, and a question every reader has an answer to ("What's your versioning game?") draws them. Ask it after the claim and the bridge, never instead of them.
 - **Name what you build** in one clause the reader understands, inside the post: "my Chrome extension that keeps AI agents signed in", never just "our extension" or the product name alone. That clause is what sends a reader who liked the post to your profile.
-- **Casual, concise, punchy.** First person, short sentences, plain words, fragments welcome. Cut every word that doesn't earn its place. Plain text: the hook carries it, with no hashtags or emoji.
-- **One post**, up to 500 characters, when the idea fits. A thread only when it has separate beats that each pay off alone, usually 2 to 4 posts, each split at the end of a thought. Tables and long detail go in an attachment or a reply.
+- **Write like a text to a friend.** See the voice below. Plain text: the hook carries it, with no hashtags or emoji.
+- **One post** when the idea fits in three short paragraphs. A thread only when it has separate beats that each pay off alone, usually 2 to 4 posts, each split at the end of a thought. Tables and long detail go in an attachment or a reply.
 - **Link-free.** Links go in your first reply, so the post itself stays a post.
 - **Accurate.** Every claim matches a source you can point to; casual never means overstated.
 - **Public.** Write only what you'd show a stranger: no private repo names, internal hostnames, secrets, customer or user data, or your provider costs and margins.
+
+### Voice
+
+- **At most 3 paragraphs per post**, each ideally one sentence. If the hook, claim, bridge, and question don't fit, cut or make it a thread.
+- **At most 20 words per sentence.** Fragments welcome.
+- **No periods.** A line break ends the sentence. Question marks stay.
+- **Drop what the reader fills in:** articles ("the", "a"), "I'm", "it's", and capitals. Keep capitals only where they carry meaning, like acronyms and code.
+- First person, plain words, no hedging.
+
+Before:
+
+```text
+Our setup docs told people to run `claude mcp add`. Turns out it defaults to local scope: the server only exists in the folder you ran it from. Open Claude Code anywhere else and it's gone.
+```
+
+After:
+
+```text
+our setup docs said `claude mcp add`, which defaults to local scope
+
+server only exists in the folder you ran it from
+
+add `--scope user` and it works in every project
+```
 
 ## 3. Pick where
 
