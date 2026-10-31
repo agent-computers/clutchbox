@@ -30,6 +30,7 @@ import {
   openComputerSession,
   resetOrganizationComputers,
   SESSION_ID_PATTERN,
+  setComputerScreen,
   setComputerSize,
   setLiveViewClipboard,
   sweepForks,
@@ -1866,6 +1867,33 @@ describe('live view', () => {
     expect(fake.calls.pause).toBe(1);
     expect(sandbox()).toMatchObject({ paused: true });
     expect(await used(a)).toEqual([['2026-10-20', 40]]);
+  });
+  it("switches the main computer to the member's screen when a watch wakes it, and retries a failure", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    at('2026-10-20T12:00:00Z');
+    const a = await user('a');
+    const page = lease();
+    // A new main computer already runs the default screen.
+    await beat(a, page, 'visible');
+    await beat(a, page, 'released');
+    expect(fake.calls.screens).toEqual([]);
+    expect(await setComputerScreen(db, { provider: fake.provider }, a, '1920x1200')).toBe('saved');
+    expect((await mainSandbox()).screen).toEqual({ width: 1440, height: 900 });
+    at('2026-10-20T12:01:00Z');
+    fake.failScreen();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await beat(a, page, 'visible');
+    expect(error).toHaveBeenCalled();
+    expect((await mainRow()).screen).toBeNull();
+    await beat(a, page, 'released');
+    fake.failScreen(false);
+    at('2026-10-20T12:02:00Z');
+    expect(await beat(a, lease(), 'visible')).toMatchObject({ computer: 'running', watching: true });
+    expect((await mainSandbox()).screen).toEqual({ width: 1920, height: 1200 });
+    expect((await mainRow()).screen).toBe('1920x1200');
+    // A fork made now starts at it too.
+    const agent = await open(a);
+    expect((await sandboxOf(agent.computer.id)).screen).toEqual({ width: 1920, height: 1200 });
   });
   it('wakes a paused fork for a watch, keeps it running past an agent close, and lapses a hidden page', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });

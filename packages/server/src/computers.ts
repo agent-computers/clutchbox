@@ -7,6 +7,7 @@ import {
   type ComputerProvider,
   type ComputerSession,
   type ComputerSize,
+  DEFAULT_SCREEN,
   FIRST_PROFILE,
   ProviderAccountRefused,
   pngSize,
@@ -626,7 +627,7 @@ const profileNotFound: ComputerFailure = {
 // forks' IDs it reopens that fork, as it does the fork of the caller's own session when given only that session's ID.
 // `profile` names a profile by its browser's public ID; without it, the fork keeps the profile its last session used
 // (pickProfile). `screen` switches the fork's screen; without it, the fork keeps its own, and a new one starts at the
-// main computer's. A session holding control of the fork means `busy`, unless it is the caller's own live sessionId,
+// member's choice (memberships.computerScreen). A session holding control of the fork means `busy`, unless it is the caller's own live sessionId,
 // which this replaces. Callers must already have verified the live MCP grant and pass a guard that re-checks it.
 export async function openComputerSession(
   db: Database,
@@ -670,7 +671,12 @@ export async function openComputerSession(
     await refreshComputer(db, computers.provider, computer, handle.session);
     const [sync, screenSet] = await Promise.all([
       applyProfiles(db, caller, computer, handle.session, started.profile, profiles, deadline),
-      screen ? applyScreen(handle.session, screen) : true,
+      screen
+        ? applyScreen(handle.session, screen)
+        : started.created &&
+          chosenScreen(db, caller)
+            .then(chosen => applyScreen(handle.session, chosen))
+            .then(() => true),
       applyTimeZone(db, computer.id, handle.session),
     ]);
     return {
@@ -1731,6 +1737,44 @@ async function refreshComputer(
   }
 }
 
+// The screen size the member chose for their computers.
+async function chosenScreen(db: Database, member: Member) {
+  const [row] = await db
+    .select({ screen: schema.memberships.computerScreen })
+    .from(schema.memberships)
+    .where(eq(schema.memberships.id, member.membershipId));
+  return row?.screen ?? DEFAULT_SCREEN;
+}
+
+// The member's screen choice on their main computer, switched only when it changed since the last switch
+// (computers.screen). A desktop too small to switch is marked and never tried again; a failure is retried at the next
+// wake. Returns whether the computer runs the choice, `fixed` for a desktop too small.
+async function applyMainScreen(db: Database, computerId: number, session: ComputerSession, now: Date) {
+  const [row] = await db
+    .select({
+      chosen: schema.memberships.computerScreen,
+      screen: schema.computers.screen,
+      fixedAt: schema.computers.screenFixedAt,
+    })
+    .from(schema.computers)
+    .innerJoin(schema.memberships, eq(schema.memberships.id, schema.computers.membershipId))
+    .where(eq(schema.computers.id, computerId));
+  if (!row) return false;
+  if (row.fixedAt) return 'fixed';
+  if (row.chosen === (row.screen ?? DEFAULT_SCREEN)) return true;
+  try {
+    const set = await session.setScreen(row.chosen);
+    await db
+      .update(schema.computers)
+      .set(set ? { screen: row.chosen } : { screenFixedAt: now })
+      .where(eq(schema.computers.id, computerId));
+    return set || 'fixed';
+  } catch (error) {
+    logError('main screen', error);
+    return false;
+  }
+}
+
 // Whether the computer now runs `screen`. A failure leaves the computer at its own screen, which screenshots show
 // (pngSize), rather than failing the open.
 async function applyScreen(session: ComputerSession, screen: ScreenSize) {
@@ -2032,14 +2076,16 @@ async function extendHolds(
       .catch(error => logError('live view wake', error));
     // A computer this created has had no computer session, so it gets the latest capture as a new one would on
     // computer_open; watching an existing computer applies nothing.
+    // Any wake switches main to the member's screen choice, which changed while it was paused.
     const working = !!live || liveCalls(computer.callsInFlight, now).length > 0;
-    return session && created && !working ? { session, row: computer } : null;
+    return session ? { session, row: computer, fresh: created && !working } : null;
   });
   if (!woken) return;
   try {
     await Promise.all([
-      applyForLiveView(db, member, woken.row, woken.session, deadline),
-      applyTimeZone(db, woken.row.id, woken.session),
+      !woken.row.forkOf && applyMainScreen(db, woken.row.id, woken.session, now),
+      woken.fresh && applyForLiveView(db, member, woken.row, woken.session, deadline),
+      woken.fresh && applyTimeZone(db, woken.row.id, woken.session),
     ]);
   } catch (error) {
     logError('live view apply', error);
@@ -2269,6 +2315,7 @@ export async function computerView(
         id: schema.computers.id,
         status: schema.computers.status,
         size: schema.computers.size,
+        screenFixedAt: schema.computers.screenFixedAt,
         // When main last applied any of its profiles' captures.
         appliedCaptureAt:
           sql<Date | null>`(select max(${schema.computerProfiles.appliedCaptureAt}) from ${schema.computerProfiles} where ${schema.computerProfiles.computerId} = ${schema.computers.id})`.mapWith(
@@ -2279,7 +2326,7 @@ export async function computerView(
       .from(schema.computers)
       .where(mainOf(member)),
     db
-      .select({ computerSize: schema.memberships.computerSize })
+      .select({ computerSize: schema.memberships.computerSize, computerScreen: schema.memberships.computerScreen })
       .from(schema.memberships)
       .where(eq(schema.memberships.id, member.membershipId)),
     captureView(db, member),
@@ -2319,6 +2366,8 @@ export async function computerView(
     capture,
     // The size the member chose, which the main computer runs at once it is created.
     size: membership?.computerSize ?? '1x',
+    // The screen size the member chose for their computers.
+    screen: membership?.computerScreen ?? DEFAULT_SCREEN,
     // Where the member's computers run.
     account: accountOf(!!own),
     // The billing period, with the running time of the member's computers in it, forks included, rounded up to the
@@ -2343,6 +2392,8 @@ export async function computerView(
       ? {
           status: row.status,
           size: row.size,
+          // From before screen sizes: it keeps its own screen until reset.
+          screenFixed: !!row.screenFixedAt,
           appliedCaptureAt: row.appliedCaptureAt?.toISOString() ?? null,
           busy: live.some(session => holdsControl(session, now)),
           // The user holds a takeover of the main computer in live view.
@@ -2362,6 +2413,36 @@ export async function setComputerSize(db: Database, providers: Providers, member
     .where(eq(schema.memberships.id, member.membershipId));
   const [main] = await db.select({ size: schema.computers.size }).from(schema.computers).where(mainOf(member));
   return !!main && main.size !== size && (await deleteMainComputer(db, providers, member));
+}
+
+// Chooses the screen size of the member's computers. A running main computer switches now, a paused one when it next
+// wakes for live view, and each new fork starts at it. `fixed`: the main computer is from before screen sizes and keeps
+// its own until reset; `saved`: it switches later, or there is none yet.
+export async function setComputerScreen(db: Database, providers: Providers, member: Member, screen: ScreenSize) {
+  await db
+    .update(schema.memberships)
+    .set({ computerScreen: screen, updatedAt: new Date() })
+    .where(eq(schema.memberships.id, member.membershipId));
+  const { provider } = await providerFor(providers, db, member.organizationId);
+  const now = new Date();
+  const main = await db.transaction(async tx => {
+    const computer = await lockLiveView(tx, member, now, {});
+    if (!computer) return null;
+    if (!running(computer, now)) return { id: computer.id, session: null };
+    const until = pauseAt(computer, await liveSession(tx, computer.id), now);
+    const timeoutMs = Math.max(1, until.getTime() - Date.now());
+    return { id: computer.id, session: await provider.connect(computer.sandboxId!, timeoutMs) };
+  });
+  if (!main) return 'saved';
+  if (main.session) {
+    const applied = await applyMainScreen(db, main.id, main.session, now);
+    return applied === true ? 'switched' : applied || 'saved';
+  }
+  const [row] = await db
+    .select({ fixedAt: schema.computers.screenFixedAt })
+    .from(schema.computers)
+    .where(eq(schema.computers.id, main.id));
+  return row?.fixedAt ? 'fixed' : 'saved';
 }
 
 // Also resets the computer: deletes the main computer, its forks, and their snapshots, so the next computer_open creates

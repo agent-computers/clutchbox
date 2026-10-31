@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { builtInVerifiedServers } from '@clutchbox/capture';
 import { databaseSchema } from '@clutchbox/server/database-schema';
 import { PGlite } from '@electric-sql/pglite';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -129,6 +129,7 @@ describe('API routes', () => {
       ['DELETE', '/computer'],
       ['POST', '/computer/reset'],
       ['PUT', '/computer/size'],
+      ['PUT', '/computer/screen'],
       ['POST', '/computer/takeover'],
       ['POST', '/computer/hand-back'],
       ['POST', '/computer/clipboard'],
@@ -581,6 +582,76 @@ describe('API routes', () => {
       size: '2x',
       reset: true,
     });
+  });
+
+  it("Screen size chooses the computers' screen, switching a running main computer without a reset, for the caller only", async () => {
+    const request = client();
+    const a = await identity('a');
+    const b = await identity('b');
+    const choose = async (screen: unknown, cookie = a) =>
+      (await request('PUT', '/computer/screen', { cookie, body: { screen } })).json();
+    for (const body of [null, {}, { screen: '1024x768' }, { screen: '1440x900', member: 'other' }])
+      expect((await request('PUT', '/computer/screen', { cookie: a, body })).status).toBe(400);
+    // Before a computer exists, only the choice changes.
+    expect(await choose('1280x1024')).toEqual({ screen: '1280x1024', result: 'saved' });
+    // New forks start at the member's choice; another member's at the default.
+    const forks = [];
+    for (const userId of ['a', 'b'])
+      forks.push(
+        await openComputerSession(
+          db,
+          { provider: fake.provider, metering: noMetering },
+          { ...(await member(userId)), clientId: 'agent-client' },
+        ),
+      );
+    const sandboxOf = async (where: ReturnType<typeof and>) => {
+      const [row] = await db.select({ sandboxId: schema.computers.sandboxId }).from(schema.computers).where(where);
+      return fake.sandboxes.get(row!.sandboxId!)!;
+    };
+    const forkScreens = await Promise.all(
+      forks.map(async opened => {
+        if ('error' in opened) throw new Error(opened.error);
+        return (await sandboxOf(eq(schema.computers.publicId, opened.computer.id))).screen;
+      }),
+    );
+    expect(forkScreens).toEqual([
+      { width: 1280, height: 1024 },
+      { width: 1440, height: 900 },
+    ]);
+    const mainOfA = and(
+      eq(schema.computers.membershipId, (await member('a')).membershipId),
+      isNull(schema.computers.forkOf),
+    );
+    const main = await sandboxOf(mainOfA);
+    // A paused main computer switches when it next wakes.
+    await db.update(schema.computers).set({ runsUntil: null }).where(mainOfA);
+    expect(await choose('1920x1200')).toEqual({ screen: '1920x1200', result: 'saved' });
+    expect(main.screen).toEqual({ width: 1440, height: 900 });
+    // A running one switches now, and only when the choice changed.
+    await db
+      .update(schema.computers)
+      .set({ runsUntil: new Date(Date.now() + 60_000) })
+      .where(mainOfA);
+    expect(await choose('1920x1200')).toEqual({ screen: '1920x1200', result: 'switched' });
+    expect(main.screen).toEqual({ width: 1920, height: 1200 });
+    const switches = fake.calls.screens.length;
+    expect(await choose('1920x1200')).toEqual({ screen: '1920x1200', result: 'switched' });
+    expect(fake.calls.screens).toHaveLength(switches);
+    expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
+      screen: '1920x1200',
+      computer: { screenFixed: false },
+    });
+    expect(await (await request('GET', '/computer', { cookie: b })).json()).toMatchObject({ screen: '1440x900' });
+    // A main computer from before screen sizes keeps its own until reset, and is not tried again.
+    Object.assign(main, { screen: { width: 1280, height: 800 }, desktop: { width: 1280, height: 800 } });
+    expect(await choose('1440x900')).toEqual({ screen: '1440x900', result: 'fixed' });
+    expect(await choose('1280x1024')).toEqual({ screen: '1280x1024', result: 'fixed' });
+    expect(fake.calls.screens).toHaveLength(switches + 1);
+    expect(await (await request('GET', '/computer', { cookie: a })).json()).toMatchObject({
+      computer: { screenFixed: true },
+    });
+    await db.update(schema.computers).set({ runsUntil: null }).where(mainOfA);
+    expect(await choose('1440x900')).toEqual({ screen: '1440x900', result: 'fixed' });
   });
 
   it('report the computer, busy only while an agent holds one of its forks', async () => {

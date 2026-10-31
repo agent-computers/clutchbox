@@ -838,7 +838,7 @@ describe('main computer tools', () => {
     const a = await identity('a');
     const token = (await authorize(a.cookie, await register()))!.access_token;
     const open = async (args: Record<string, unknown>) => (await tool(token, 'computer_open', args)).result;
-    // A new computer starts at the default screen, untouched.
+    // A new computer starts at the user's screen choice, the default here.
     const opened = (await open({})).structuredContent;
     expect(opened.display).toEqual({ width: 1440, height: 900 });
     expect(opened).not.toHaveProperty('screen_unchanged');
@@ -851,10 +851,10 @@ describe('main computer tools', () => {
     ).toEqual({ width: 1280, height: 1024 });
     const kept = (await open({ session_id: tall.session_id })).structuredContent;
     expect(kept.display).toEqual({ width: 1280, height: 1024 });
-    expect(fake.calls.screens).toEqual(['1280x1024']);
+    expect(fake.calls.screens).toEqual(['1440x900', '1280x1024']);
     // Only the presets.
     expect(await open({ session_id: kept.session_id, screen: '1024x768' })).toMatchObject({ isError: true });
-    expect(fake.calls.screens).toEqual(['1280x1024']);
+    expect(fake.calls.screens).toEqual(['1440x900', '1280x1024']);
     // A computer from before screen sizes keeps its own, and the agent is told.
     const sandbox = [...fake.sandboxes.values()].find(each => each.computerId === opened.computer_id)!;
     Object.assign(sandbox, { screen: { width: 1280, height: 800 }, desktop: { width: 1280, height: 800 } });

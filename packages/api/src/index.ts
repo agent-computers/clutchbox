@@ -65,6 +65,7 @@ import {
   SCREEN_NAMES,
   SESSION_ID_PATTERN,
   type SessionHandle,
+  setComputerScreen,
   setComputerSize,
   setLiveViewClipboard,
   takeOverComputer,
@@ -689,6 +690,16 @@ export function createApi({
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const reset = await setComputerSize(db, running, await memberOf(c), parsed.data.size);
     return c.json({ size: parsed.data.size, reset });
+  });
+  // The screen size of the member's computers, switched without a reset (setComputerScreen says when).
+  app.put('/computer/screen', async c => {
+    const parsed = z
+      .object({ screen: z.enum(SCREEN_NAMES) })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const result = await setComputerScreen(db, running, await memberOf(c), parsed.data.screen);
+    return c.json({ screen: parsed.data.screen, result });
   });
   // Live view. The page's heartbeat: each lease it holds goes to its kind's handler
   // (heartbeat.ts), which answers with the lease's status.

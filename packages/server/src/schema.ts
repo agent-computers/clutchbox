@@ -1,4 +1,4 @@
-import { COMPUTER_SIZE_NAMES } from '@clutchbox/computer';
+import { COMPUTER_SIZE_NAMES, DEFAULT_SCREEN, SCREEN_NAMES } from '@clutchbox/computer';
 import { relations, sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -195,6 +195,9 @@ export const memberships = pgTable(
     // The size the member's next main computer is created at (COMPUTER_SIZES). Changing it resets the main computer,
     // since a computer keeps its size.
     computerSize: text('computer_size', { enum: COMPUTER_SIZE_NAMES }).notNull().default('1x'),
+    // The screen size the member chose for their computers (SCREENS): the main computer switches to it without a
+    // reset, and each new fork starts at it.
+    computerScreen: text('computer_screen', { enum: SCREEN_NAMES }).notNull().default(DEFAULT_SCREEN),
     ...timestamps(),
   },
   table => [
@@ -202,6 +205,7 @@ export const memberships = pgTable(
     index('memberships_user_idx').on(table.userId),
     check('memberships_role', oneOf(table.role, MEMBER_ROLES)),
     check('memberships_computer_size', oneOf(table.computerSize, COMPUTER_SIZE_NAMES)),
+    check('memberships_computer_screen', oneOf(table.computerScreen, SCREEN_NAMES)),
   ],
 );
 export const INVITATION_STATUSES = ['pending', 'accepted', 'rejected', 'canceled'] as const;
@@ -307,6 +311,11 @@ export const computers = pgTable(
       .default(sql`'{}'::jsonb`),
     // The system time zone last set on the computer (computers.ts, applyTimeZone); null is the template's UTC.
     timeZone: text('time_zone'),
+    // Main: the member's screen choice last switched to (computers.ts, applyMainScreen); null is the template's
+    // DEFAULT_SCREEN. screenFixedAt: when a switch found the desktop too small, as on a computer from before screen
+    // sizes, which then keeps its own screen until reset.
+    screen: text('screen', { enum: SCREEN_NAMES }),
+    screenFixedAt: time('screen_fixed_at'),
     // The helper revision the computer was last brought to (computers.ts, refreshComputer); null until an open
     // checks it. Lets an open skip the check once the computer is current.
     revision: text('revision'),
@@ -334,6 +343,7 @@ export const computers = pgTable(
     index('computers_snapshot_idx').on(table.snapshotId),
     check('computers_status', oneOf(table.status, COMPUTER_STATUSES)),
     check('computers_size', oneOf(table.size, COMPUTER_SIZE_NAMES)),
+    check('computers_screen', oneOf(table.screen, SCREEN_NAMES)),
     check('computers_label', sql`char_length(${table.label}) BETWEEN 1 AND 100`),
     check(
       'computers_fork',

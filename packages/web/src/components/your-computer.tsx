@@ -1,5 +1,12 @@
 'use client';
-import { COMPUTER_SIZE_NAMES, type ComputerSize, sizeName } from '@clutchbox/computer';
+import {
+  COMPUTER_SIZE_NAMES,
+  type ComputerSize,
+  SCREEN_NAMES,
+  SCREENS,
+  type ScreenSize,
+  sizeName,
+} from '@clutchbox/computer';
 import { Alert, AlertDescription } from '@clutchbox/ui/components/alert';
 import { Button } from '@clutchbox/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clutchbox/ui/components/card';
@@ -13,7 +20,7 @@ import { AppPage } from './app-shell';
 import { LiveViewPanel } from './live-view';
 
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-// The Computer page: status and usage, live view in place, size, and reset.
+// The Computer page: status and usage, live view in place, size, screen size, and reset.
 export function YourComputer() {
   const { data: view, isError } = useQuery(computerQuery);
   return (
@@ -37,6 +44,7 @@ export function YourComputer() {
             }
           />
           <ComputerSizeCard view={view} />
+          <ScreenSizeCard view={view} />
           {view.computer && <ResetComputer />}
         </>
       ) : (
@@ -168,6 +176,74 @@ function ComputerSizeCard({ view }: { view: ComputerView }) {
               </Button>
             </div>
           </div>
+        )}
+        {change.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{change.error.message}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const screenNames: Record<ScreenSize, string> = {
+  '1440x900': 'Standard',
+  '1280x1024': 'Taller',
+  '1920x1200': 'Largest',
+};
+const pixels = (screen: ScreenSize) => `${SCREENS[screen].width} × ${SCREENS[screen].height}`;
+
+// Chooses the screen size of the member's computers. Unlike the size, it changes without a reset: the computer switches
+// now if it runs, or when it next wakes. A computer from before screen sizes keeps 1280 × 800 until reset.
+function ScreenSizeCard({ view }: { view: ComputerView }) {
+  const queryClient = useQueryClient();
+  const change = useMutation({
+    mutationFn: (screen: ScreenSize) =>
+      api<{ screen: ScreenSize; result: 'switched' | 'saved' | 'fixed' }>('/computer/screen', 'PUT', { screen }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: computerQuery.queryKey }),
+  });
+  const shown = change.isPending ? change.variables : view.screen;
+  const fixed = view.computer?.screenFixed || change.data?.result === 'fixed';
+  return (
+    <Card id="screen" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>
+          <h2>Screen size</h2>
+        </CardTitle>
+        <CardDescription>
+          The screen of your computer and of each new computer an agent gets. A bigger screen shows more of a page, and
+          each screenshot costs an agent more tokens. Agents can still switch their own.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <ToggleGroup
+          aria-label="Screen size"
+          variant="outline"
+          spacing={0}
+          value={[shown]}
+          disabled={change.isPending}
+          onValueChange={([next]) => {
+            if (next && next !== shown) change.mutate(next as ScreenSize);
+          }}
+        >
+          {SCREEN_NAMES.map(screen => (
+            <ToggleGroupItem key={screen} value={screen} className="h-auto flex-col items-start gap-0 px-4 py-2">
+              <span className="font-medium">{screenNames[screen]}</span>
+              <span className="text-xs text-muted-foreground">{pixels(screen)}</span>
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        {fixed ? (
+          <p className="text-sm text-muted-foreground">
+            Your computer is from before screen sizes, so it and the computers agents get from it stay 1280 × 800. Reset
+            it to use this size.
+          </p>
+        ) : (
+          change.data?.result === 'saved' &&
+          view.computer && (
+            <p className="text-sm text-muted-foreground">Your computer switches the next time it wakes.</p>
+          )
         )}
         {change.isError && (
           <Alert variant="destructive">

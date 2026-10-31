@@ -1,5 +1,5 @@
 import type { SyncChange, SyncSettings } from '@clutchbox/capture';
-import type { ComputerSize } from '@clutchbox/computer';
+import type { ComputerSize, ScreenSize } from '@clutchbox/computer';
 import type { AgentKind } from '@clutchbox/server/agents';
 import type { ConnectedBrowser } from '@clutchbox/server/browsers';
 import { HEARTBEAT_MS } from '@clutchbox/server/computer-timing';
@@ -27,11 +27,15 @@ export type ComputerView = {
   period: { start: string; end: string; minutes: number; mcpCalls: number };
   // The size the member chose; the main computer runs at its own, which a change of size resets onto the new one.
   size: ComputerSize;
+  // The screen size the member chose, which the main computer switches to and new forks start at.
+  screen: ScreenSize;
   // Where the member's computers run: the organization's own provider account, or the deployment's.
   account: 'organization' | 'deployment';
   computer: {
     status: string;
     size: ComputerSize;
+    // From before screen sizes: it keeps its own screen until reset.
+    screenFixed: boolean;
     busy: boolean;
     inLiveView: boolean;
     appliedCaptureAt: string | null;
