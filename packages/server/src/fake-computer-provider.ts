@@ -1,6 +1,6 @@
 import type { CdpCookieParam } from '@clutchbox/apply';
 import { siteOfHost } from '@clutchbox/capture';
-import { type ComputerSize, DEFAULT_SCREEN, FIRST_PROFILE, SCREENS } from '@clutchbox/computer';
+import { type ClipboardContent, type ComputerSize, DEFAULT_SCREEN, FIRST_PROFILE, SCREENS } from '@clutchbox/computer';
 import type { ComputerAction, ComputerProvider } from './computers';
 
 const cookieHost = (cookie: CdpCookieParam) => cookie.domain ?? new URL(cookie.url!).hostname;
@@ -28,8 +28,8 @@ type FakeSandbox = {
   // Created before computers were private, so live view refuses it.
   public?: boolean;
   timeZone?: string;
-  // The text live view's paste last set as the clipboard.
-  clipboard?: string;
+  // What live view's paste last set as the clipboard.
+  clipboard?: ClipboardContent;
   // The helper revision it runs: the provider's when it was created, like a current template.
   revision: string;
   // The snapshot it was made from, for a fork.
@@ -268,9 +268,9 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
             headers: { 'e2b-traffic-access-token': `token-${sandboxId}`, origin: 'agent-computers-relay' },
           };
         },
-        async setClipboard(text) {
+        async setClipboard(content) {
           if (clipboardFails) throw new Error('setClipboard failed in fake');
-          sandbox.clipboard = text;
+          sandbox.clipboard = content;
         },
         async syncCookies({ profile, clearSites, cookies, budgetMs }) {
           calls.sync++;

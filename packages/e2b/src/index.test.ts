@@ -353,6 +353,19 @@ describe('E2B adapter', () => {
     await failed.catch((error: Error) => expect(error.message).not.toContain('secret'));
     expect(remove).toHaveBeenCalledWith((write.mock.calls[1] as unknown as [string])[0], expect.anything());
   });
+  it("sets an image with this revision's helper, inline, so an older one never serves it as text (E2B adapter)", async () => {
+    const write = vi.fn(async () => ({}));
+    const run = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    vi.spyOn(Sandbox, 'connect').mockResolvedValue({ commands: { run }, files: { write, remove: vi.fn() } } as never);
+    const session = await e2bComputerProvider().connect('sandbox', 1000);
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    await session.setClipboard({ png }, 10_000);
+    const [[file, data]] = write.mock.calls as unknown as [[string, Blob]];
+    expect(new Uint8Array(await data.arrayBuffer())).toEqual(png);
+    const [command] = run.mock.calls[0] as unknown as [string];
+    expect(command).toMatch(new RegExp(`^python3 -c ".*" ${file} image/png$`));
+    expect(command).not.toContain('/opt/agent-computers/set-clipboard.py');
+  });
   it('fails within its budget on a stalled computer, removal included (E2B adapter)', async () => {
     vi.useFakeTimers();
     // A stalled computer: each call runs to its own timeout.

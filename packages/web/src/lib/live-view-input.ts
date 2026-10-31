@@ -89,6 +89,50 @@ export function decodeCutText(text: string) {
   }
 }
 
+// What a paste puts on the computer: the clipboard's text, or with none, its first image. Text wins because apps that
+// copy text often add a picture of it (Word and Excel do), which the user didn't mean to paste. A screenshot, or an
+// image copied from a page, comes with no text.
+export type Pasted = string | Blob;
+type ClipboardEntry = { type: string; read: () => Promise<Blob | string | null> };
+export async function pastedContent(entries: ClipboardEntry[]): Promise<Pasted> {
+  for (const entry of entries)
+    if (entry.type === 'text/plain') {
+      const value = await entry.read();
+      const text = value instanceof Blob ? await value.text() : (value ?? '');
+      if (text) return text;
+    }
+  for (const entry of entries)
+    if (entry.type.startsWith('image/')) {
+      const image = await entry.read();
+      if (image instanceof Blob) return image;
+    }
+  return '';
+}
+// The entries of a paste event's clipboard, read while the event runs, since the browser empties it after; and of the
+// async Clipboard API's, which some browsers need instead.
+export const eventEntries = (data: DataTransfer | null): ClipboardEntry[] =>
+  [...(data?.items ?? [])].map(item => {
+    const value = item.kind === 'file' ? item.getAsFile() : data!.getData(item.type);
+    return { type: item.type, read: async () => value };
+  });
+export const clipboardEntries = (items: ClipboardItem[]): ClipboardEntry[] =>
+  items.flatMap(item => item.types.map(type => ({ type, read: () => item.getType(type) })));
+
+// The image as a PNG, which is what the computer's clipboard offers apps: browsers hand over screenshots and copied
+// images as PNG already, and anything else the browser can decode is drawn and encoded again. Null if it can't be.
+export async function asPng(image: Blob): Promise<Blob | null> {
+  if (image.type === 'image/png') return image;
+  try {
+    const bitmap = await createImageBitmap(image);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return await canvas.convertToBlob({ type: 'image/png' });
+  } catch {
+    return null;
+  }
+}
+
 // Keeps the computer's keys in the order the user pressed them while a paste waits on our server: steps run one at a
 // time, and while one runs, a keydown waits behind it as a step too, with its keyup, so text typed after Cmd+V lands
 // after the pasted text. A step that throws drops those behind it and goes to fail. A keyup whose keydown already

@@ -68,6 +68,9 @@ export const RELEASED_LEASE_MS = HOLD_LAPSE_MS;
 // with an error the page shows rather than leaving the user's Cmd+V hanging. A judgment call. The adapter keeps its
 // CLIPBOARD_CLEANUP_MS of it for removing the text's file after a failed run.
 export const CLIPBOARD_SET_MS = 10_000;
+// The same for an image, which first crosses to the computer: up to 15 MB (MAX_CLIPBOARD_IMAGE_BYTES), so this allows
+// 1 MB/s on top of the text's budget. A judgment call; the helper itself took 48 ms to take the clipboard with 14 MB.
+export const CLIPBOARD_IMAGE_SET_MS = CLIPBOARD_SET_MS + 15_000;
 
 // --- Live view relay (live-view-relay.ts) ---
 
@@ -86,9 +89,10 @@ export const LIVE_VIEW_CLOSE_MARGIN_MS = 10_000;
 // dropped, so a deadline close still ends inside LIVE_VIEW_CLOSE_MARGIN_MS.
 export const LIVE_VIEW_CLOSE_WAIT_MS = LIVE_VIEW_CLOSE_MARGIN_MS / 2;
 
-// A live-view ticket (live-view-ticket.ts) opens the relay for this long after the page asks for it. The page opens the
-// socket at once, so this covers one round trip on a slow network; a judgment call, short so a ticket that leaks in a
-// URL is soon worthless.
+// A live-view ticket (live-view-ticket.ts) opens the relay, or sends a paste, for this long after the page asks for it.
+// The page opens the socket or starts the upload at once, and the ticket is checked when the request starts, before its
+// body arrives, so this covers one round trip on a slow network; a judgment call, short so a ticket that leaks in a URL
+// is soon worthless.
 export const LIVE_VIEW_TICKET_MS = 30_000;
 
 // The relay re-reads the user's control every HEARTBEAT_MS, and sooner when it drops input (the page took over

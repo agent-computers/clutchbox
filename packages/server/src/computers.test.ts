@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { FIRST_PROFILE, ProviderAccountRefused } from '@clutchbox/computer';
+import { type ClipboardContent, FIRST_PROFILE, ProviderAccountRefused } from '@clutchbox/computer';
 import { PGlite } from '@electric-sql/pglite';
 import { desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -26,6 +26,7 @@ import {
   liveViewHeartbeat,
   liveViewStatus,
   MAX_CLIPBOARD_BYTES,
+  MAX_CLIPBOARD_IMAGE_BYTES,
   openComputerSession,
   resetOrganizationComputers,
   SESSION_ID_PATTERN,
@@ -2052,14 +2053,20 @@ describe('live view', () => {
     await beat(a, pages[0]!, 'visible');
     expect(Object.keys((await mainRow()).liveViewWatches).sort()).toEqual([...pages].sort());
   });
-  it("sets the computer's clipboard only for the lease holding a live takeover, up to 1 MiB of UTF-8", async () => {
+  it("sets the computer's clipboard only for the lease holding a live takeover, to text or a PNG image", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     at('2026-10-20T12:00:00Z');
     const a = await user('a');
     const b = await user('b');
     const page = lease();
-    const paste = (member: Member, id: string, text: string) =>
-      setLiveViewClipboard(db, { provider: fake.provider }, member, id, text);
+    const paste = (member: Member, id: string, content: ClipboardContent) =>
+      setLiveViewClipboard(db, { provider: fake.provider }, member, id, content);
+    // A PNG's signature and header, then zeros.
+    const png = (size: number) => {
+      const bytes = new Uint8Array(size);
+      bytes.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]);
+      return bytes;
+    };
     expect(await paste(a, page, 'x')).toBe('not_in_control');
     await beat(a, page, 'visible');
     // Watching is not control.
@@ -2078,10 +2085,17 @@ describe('live view', () => {
     fake.failClipboard();
     await expect(paste(a, page, 'x')).rejects.toThrow('setClipboard failed');
     fake.failClipboard(false);
+    // An image up to MAX_CLIPBOARD_IMAGE_BYTES; a larger one, or one that isn't a PNG, never reaches the computer.
+    const image = png(MAX_CLIPBOARD_IMAGE_BYTES);
+    expect(await paste(a, page, { png: image })).toBe('set');
+    expect((sandbox().clipboard as { png: Uint8Array }).png).toBe(image);
+    expect(await paste(a, page, { png: png(MAX_CLIPBOARD_IMAGE_BYTES + 1) })).toBe('too_large');
+    expect(await paste(a, page, { png: new TextEncoder().encode('GIF89a not a png') })).toBe('not_png');
+    expect(await paste(a, lease(), { png: image })).toBe('not_in_control');
     // A lapsed takeover is no longer control.
     at('2026-10-20T12:05:00Z');
     expect(await paste(a, page, 'late')).toBe('not_in_control');
-    expect(sandbox().clipboard).toBe('日本語 🎉');
+    expect((sandbox().clipboard as { png: Uint8Array }).png).toBe(image);
   });
   it('refuses live view on a computer that accepts public traffic until it is reset', async () => {
     const a = await user('a');

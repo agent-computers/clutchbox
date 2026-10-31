@@ -5,6 +5,7 @@ import {
   type KeyEventLike,
   keyAction,
   keyQueue,
+  pastedContent,
   XK_CONTROL_L,
   XK_SHIFT_L,
 } from './live-view-input';
@@ -210,5 +211,30 @@ describe('keyQueue', () => {
     // The dropped keys' keyups reach noVNC, which ignores a release it never pressed.
     key('keyup', 'KeyC');
     expect(sent).toEqual(['KeyC up']);
+  });
+});
+
+describe('pastedContent', () => {
+  const entry = (type: string, value: Blob | string | null) => ({ type, read: async () => value });
+  const image = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+
+  it('pastes the text when the clipboard also holds a picture of it, as Word and Excel copy', async () => {
+    expect(
+      await pastedContent([entry('image/png', image), entry('text/html', '<b>hi</b>'), entry('text/plain', 'hi')]),
+    ).toBe('hi');
+    // The async Clipboard API hands text over as a Blob.
+    expect(await pastedContent([entry('text/plain', new Blob(['日本語'])), entry('image/png', image)])).toBe('日本語');
+  });
+
+  it('pastes the image when there is no text, as with a screenshot or an image copied from a page', async () => {
+    expect(await pastedContent([entry('image/png', image)])).toBe(image);
+    expect(
+      await pastedContent([entry('text/plain', ''), entry('text/html', '<img>'), entry('image/jpeg', image)]),
+    ).toBe(image);
+  });
+
+  it('pastes nothing from a clipboard with neither', async () => {
+    expect(await pastedContent([])).toBe('');
+    expect(await pastedContent([entry('text/html', '<p></p>'), entry('image/png', null)])).toBe('');
   });
 });

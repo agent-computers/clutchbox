@@ -16,6 +16,7 @@ import { bundle, cookie } from '../src/capture-fixtures';
 import {
   CALL_HOLD_MS,
   CDP_ENDPOINT_MS,
+  CLIPBOARD_IMAGE_SET_MS,
   CLIPBOARD_SET_MS,
   PROFILE_SWITCH_BUDGET_MS,
   REFRESH_BUDGET_MS,
@@ -379,6 +380,17 @@ try {
     (await evaluate('(v => v.length + ":" + v.slice(-12))(document.querySelector("textarea").value)')) ===
     `${large.length}:${large.slice(-12)}`;
   checks.largeEchoes = (await cutTexts()).length - echoed;
+  // An image pastes into a page as image/png, byte for byte, and x11vnc gets no text of it (set-clipboard.py).
+  const beforeImage = cuts.length;
+  const image = new Uint8Array(await session.screenshot());
+  await evaluate(
+    'window.pastedImage = null; document.onpaste = e => { const f = e.clipboardData.files[0]; window.pastedImage = f ? f.type : "none"; f?.arrayBuffer().then(b => { window.pastedImage += ":" + b.byteLength; }); }',
+  );
+  await timed('setClipboardImage', () => session.setClipboard({ png: image }, CLIPBOARD_IMAGE_SET_MS));
+  await session.act({ type: 'key', keys: ['ctrl', 'v'] });
+  await sleep(2500);
+  checks.pastedImage = (await evaluate('window.pastedImage')) === `image/png:${image.length}`;
+  checks.imageEchoes = (await cutTexts()).length - beforeImage;
   // Overlapping pastes both take the clipboard, one after the other, and leave one helper serving it.
   checks.overlapping = (
     await Promise.allSettled(['one', 'two'].map(text => session.setClipboard(text, CLIPBOARD_SET_MS)))
@@ -446,6 +458,8 @@ const expected: Record<string, unknown> = {
   copied: 'copied ✓ 日本',
   pastedLarge: true,
   largeEchoes: 0,
+  pastedImage: true,
+  imageEchoes: 0,
   overlapping: ['fulfilled', 'fulfilled'],
   helpers: '1',
   cdpBridge: true,

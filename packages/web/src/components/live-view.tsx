@@ -37,7 +37,19 @@ import {
   useLiveViewClipboard,
   useLiveViewControl,
 } from '../lib/api';
-import { chord, decodeCutText, isMac, keyAction, keyQueue, keysymOf, MODIFIER_CODES } from '../lib/live-view-input';
+import {
+  chord,
+  clipboardEntries,
+  decodeCutText,
+  eventEntries,
+  isMac,
+  keyAction,
+  keyQueue,
+  keysymOf,
+  MODIFIER_CODES,
+  type Pasted,
+  pastedContent,
+} from '../lib/live-view-input';
 import { agentName } from './agent-connections';
 import { useLeaveGuard } from './app-shell';
 
@@ -490,7 +502,7 @@ function useViewer(
   connectable: boolean,
   inControl: boolean,
   beatAt: number,
-  setClipboard: (text: string) => Promise<unknown>,
+  setClipboard: (content: Pasted) => Promise<unknown>,
 ) {
   const screen = useRef<HTMLDivElement>(null);
   const client = useRef<RFB | null>(null);
@@ -610,13 +622,13 @@ function useViewer(
 
 // Keyboard shortcuts and pasting while in control (lib/live-view-input.ts). A capture listener on noVNC's container
 // sees each keydown before noVNC's own listener on its canvas, and hides from noVNC the ones the page handles. A paste
-// sets the computer's clipboard through our server, because its VNC server takes the clipboard only once and only as
-// Latin-1, then presses Ctrl+V there; keys pressed meanwhile wait behind it (keyQueue) and reach noVNC afterwards,
-// replayed on its canvas. Returns the cleanup.
+// sets the computer's clipboard to its text or image through our server, because its VNC server takes the clipboard
+// only once and only as Latin-1 text, then presses Ctrl+V there; keys pressed meanwhile wait behind it (keyQueue) and
+// reach noVNC afterwards, replayed on its canvas. Returns the cleanup.
 function attachInput(
   target: HTMLElement,
   client: { current: RFB | null },
-  paste: { current: (text: string) => Promise<unknown> },
+  paste: { current: (content: Pasted) => Promise<unknown> },
   setProblem: (problem: string | null) => void,
   epoch: { current: number },
 ) {
@@ -624,8 +636,8 @@ function attachInput(
   // The modifiers the user holds that noVNC sent, so chords leave them to noVNC.
   const held = new Set<string>();
   let stopped = false;
-  // The pastes waiting for the browser's paste event to carry their text, oldest first.
-  const takers: ((text: string | null) => void)[] = [];
+  // The pastes waiting for the browser's paste event to carry what they paste, oldest first.
+  const takers: ((content: Pasted | null | Promise<Pasted | null>) => void)[] = [];
   const live = () => {
     const rfb = client.current;
     return rfb && !rfb.viewOnly ? rfb : null;
@@ -664,20 +676,26 @@ function attachInput(
   };
   const startPaste = (shift: boolean) => {
     const at = epoch.current;
-    let take!: (text: string | null) => void;
-    const text = new Promise<string | null>(resolve => {
+    let take!: (content: Pasted | null | Promise<Pasted | null>) => void;
+    const content = new Promise<Pasted | null>(resolve => {
       take = resolve;
     });
     const forget = () => {
       const index = takers.indexOf(taker);
       if (index >= 0) takers.splice(index, 1);
     };
-    // Some browsers fire no paste event on a canvas, so read the clipboard after a while instead.
+    // Some browsers fire no paste event on a canvas, so read the clipboard after a while instead: all of it, or in a
+    // browser without read(), its text. Null when the user or the browser refuses.
     const timer = setTimeout(() => {
       forget();
-      navigator.clipboard.readText().then(take, () => take(null));
+      take(
+        (navigator.clipboard.read
+          ? navigator.clipboard.read().then(items => pastedContent(clipboardEntries(items)))
+          : navigator.clipboard.readText()
+        ).catch(() => null),
+      );
     }, PASTE_EVENT_MS);
-    const taker = (value: string | null) => {
+    const taker = (value: Pasted | null | Promise<Pasted | null>) => {
       clearTimeout(timer);
       forget();
       take(value);
@@ -687,7 +705,7 @@ function attachInput(
       const current = () => {
         if (stopped || epoch.current !== at || !live()) throw LOST;
       };
-      const value = await text;
+      const value = await content;
       current();
       if (value === null) throw new Error('Allow clipboard access for this site to paste on your computer.');
       if (!value) return;
@@ -732,7 +750,7 @@ function attachInput(
     const taker = takers[0];
     if (!taker) return;
     event.preventDefault();
-    taker(event.clipboardData?.getData('text/plain') ?? '');
+    taker(pastedContent(eventEntries(event.clipboardData)));
   };
   target.addEventListener('keydown', onKeyDown, true);
   target.addEventListener('keyup', onKeyUp, true);

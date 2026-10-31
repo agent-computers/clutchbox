@@ -12,8 +12,9 @@ import { connectBrowser, saveFromBrowser, type Tokens } from '../../server/src/b
 import { ensureExtensionClient } from '../../server/src/browsers';
 import { bundle, cookie, siteBundle } from '../../server/src/capture-fixtures';
 import { adoptSyncSettings, captureView, syncView } from '../../server/src/captures';
+import { LIVE_VIEW_TICKET_MS } from '../../server/src/computer-timing';
 import type { ComputerProvider } from '../../server/src/computers';
-import { openComputerSession, useComputerSession } from '../../server/src/computers';
+import { MAX_CLIPBOARD_IMAGE_BYTES, openComputerSession, useComputerSession } from '../../server/src/computers';
 import type { ServerConfig } from '../../server/src/config';
 import type { Database } from '../../server/src/database';
 import { fakeComputerProvider } from '../../server/src/fake-computer-provider';
@@ -131,6 +132,7 @@ describe('API routes', () => {
       ['POST', '/computer/takeover'],
       ['POST', '/computer/hand-back'],
       ['POST', '/computer/clipboard'],
+      ['POST', '/computer/clipboard/ticket'],
       ['POST', '/heartbeat'],
       ['POST', '/captures'],
       ['DELETE', '/captures'],
@@ -744,6 +746,109 @@ describe('API routes', () => {
     fake.failClipboard(false);
     await request('POST', '/computer/hand-back', { cookie: a, body: { lease: page } });
     expect((await paste(a, { lease: page, text })).status).toBe(409);
+  });
+
+  it("paste a PNG at the API's origin by ticket, only from the web app's pages, for the page load in control", async () => {
+    const apiOrigin = 'http://localhost:3197';
+    const request = client(fake.provider, { apiOrigin });
+    const api = createApi({ db, auth, origin, apiOrigin, computers: fake.provider });
+    const a = await identity('a');
+    const b = await identity('b');
+    const page = randomUUID();
+    // The ticket comes from the web app's own origin, with the session, like any change.
+    const ticket = async (user: string, lease = page) => {
+      const response = await request('POST', '/computer/clipboard/ticket', { cookie: user, body: { lease } });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { url: string }).url;
+    };
+    const url = await ticket(a);
+    expect(url).toMatch(/^http:\/\/localhost:3197\/api\/v1\/computer\/clipboard\/image\?ticket=[\w-]+\.[\w-]+$/);
+    for (const body of [{}, { lease: 'not-a-uuid' }, { lease: page, computer: 'cmp_x' }, { lease: page, extra: 1 }])
+      expect((await request('POST', '/computer/clipboard/ticket', { cookie: a, body })).status).toBe(400);
+    // A PNG's signature and header, then its bytes.
+    const png = (size: number) => {
+      const bytes = new Uint8Array(size).fill(7);
+      bytes.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1]);
+      return bytes;
+    };
+    // The page's upload: no cookie reaches the API's origin, so the ticket alone says who sends it.
+    const send = async (
+      to: string,
+      body: Uint8Array<ArrayBuffer> | string = png(64),
+      { from = origin, type = 'image/png' }: { from?: string | null; type?: string } = {},
+    ) => {
+      const response = await api.request(to, {
+        method: 'POST',
+        headers: { ...(from ? { origin: from } : {}), 'content-type': type },
+        body,
+      });
+      return {
+        status: response.status,
+        json: await response.json(),
+        cors: response.headers.get('access-control-allow-origin'),
+      };
+    };
+    // A preflight answers only the web app's origin.
+    const preflight = (from: string) =>
+      api.request(url, {
+        method: 'OPTIONS',
+        headers: {
+          origin: from,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type',
+        },
+      });
+    const allowed = await preflight(origin);
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(origin);
+    expect(allowed.headers.get('access-control-allow-credentials')).toBeNull();
+    expect((await preflight('https://evil.test')).headers.get('access-control-allow-origin')).toBeNull();
+    // No takeover yet.
+    expect(await send(url)).toEqual({ status: 409, json: { error: 'not_in_control' }, cors: origin });
+    await request('POST', '/computer/takeover', { cookie: a, body: { lease: page } });
+    const image = png(4096);
+    expect(await send(url, image)).toEqual({ status: 200, json: {}, cors: origin });
+    const sandbox = () => [...fake.sandboxes.values()][0]!;
+    expect(sandbox().clipboard).toEqual({ png: image });
+    // Refused: no ticket, an altered one, the relay's, one from another page load or user, from another origin, and
+    // anything but a PNG.
+    const ticketOf = (to: string) => new URL(to).searchParams.get('ticket')!;
+    const relay = await request('POST', '/live-view/ticket', { cookie: a, body: { lease: page } });
+    const relayTicket = ticketOf(((await relay.json()) as { url: string }).url.replace(/^ws/, 'http'));
+    const at = (value: string) => `${apiOrigin}/api/v1/computer/clipboard/image?ticket=${value}`;
+    expect((await send(at(''))).status).toBe(401);
+    expect((await send(`${apiOrigin}/api/v1/computer/clipboard/image`)).status).toBe(401);
+    expect((await send(at(`${ticketOf(url)}x`))).status).toBe(401);
+    expect((await send(at(relayTicket))).status).toBe(401);
+    expect((await send(await ticket(a, randomUUID()))).status).toBe(409);
+    expect((await send(await ticket(b))).status).toBe(409);
+    expect(await send(url, png(64), { from: 'https://evil.test' })).toMatchObject({
+      status: 403,
+      json: { error: 'forbidden_origin' },
+    });
+    expect((await send(url, png(64), { from: null })).status).toBe(403);
+    expect((await send(url, png(64), { type: 'image/jpeg' })).status).toBe(400);
+    expect((await send(url, 'GIF89a, not a PNG')).status).toBe(400);
+    expect(await send(url, png(MAX_CLIPBOARD_IMAGE_BYTES + 1))).toMatchObject({
+      status: 413,
+      json: { error: 'too_large' },
+    });
+    expect(sandbox().clipboard).toEqual({ png: image });
+    // A computer that cannot take it is a 503.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    fake.failClipboard();
+    expect((await send(url)).status).toBe(503);
+    fake.failClipboard(false);
+    // A ticket lapses, and stops working once its session ends.
+    vi.useFakeTimers({ now: Date.now() + LIVE_VIEW_TICKET_MS + 1000, toFake: ['Date'] });
+    try {
+      expect((await send(url)).status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+    const fresh = await ticket(a);
+    await db.delete(schema.session).where(eq(schema.session.userId, 'a'));
+    expect((await send(fresh)).status).toBe(401);
   });
 
   it("list agents' running forks, and watch, take over, paste on, and hand back one by its ID", async () => {

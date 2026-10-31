@@ -93,6 +93,8 @@ export type ExecResult = {
   truncated: boolean;
   timedOut: boolean;
 };
+// What live view's paste puts on the computer's clipboard: text, or a PNG image.
+export type ClipboardContent = string | { png: Uint8Array<ArrayBuffer> };
 
 export interface ComputerSession {
   screenshot(): Promise<Uint8Array>;
@@ -136,9 +138,9 @@ export interface ComputerSession {
   // stream() does for live view: the headers carry the provider's traffic token, so they never leave the server.
   // Refuses a computer that accepts public traffic. Done within budgetMs.
   cdpEndpoint(budgetMs: number): Promise<{ url: string; headers: Record<string, string> }>;
-  // Makes `text` the computer's clipboard, owned anew, so the next paste there gets it (live view's paste). Done, or
+  // Makes `content` the computer's clipboard, owned anew, so the next paste there gets it (live view's paste). Done, or
   // failed, within budgetMs.
-  setClipboard(text: string, budgetMs: number): Promise<void>;
+  setClipboard(content: ClipboardContent, budgetMs: number): Promise<void>;
   // Whether the computer refuses traffic without the provider's token. One created before that accepts
   // public traffic until it is reset, and live view refuses it.
   readonly isPrivate: boolean;

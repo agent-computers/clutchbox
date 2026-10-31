@@ -25,6 +25,7 @@ import {
   getPrincipal,
   publicOAuthClient,
   resumeAuthorization,
+  sessionHolds,
   signedOAuthClient,
 } from '@clutchbox/server/auth';
 import {
@@ -59,6 +60,7 @@ import {
   deleteMainComputer,
   handBackComputer,
   issueCdpToken,
+  MAX_CLIPBOARD_IMAGE_BYTES,
   openComputerSession,
   SCREEN_NAMES,
   SESSION_ID_PATTERN,
@@ -84,7 +86,7 @@ import {
 import type { Database } from '@clutchbox/server/database';
 import { heartbeat, heartbeatSchema } from '@clutchbox/server/heartbeat';
 import { defaultServerHooks, noLimits, type ServerHooks } from '@clutchbox/server/hooks';
-import { signLiveViewTicket } from '@clutchbox/server/live-view-ticket';
+import { readLiveViewTicket, signLiveViewTicket, type TicketUse } from '@clutchbox/server/live-view-ticket';
 import { logError } from '@clutchbox/server/log';
 import { listMcpGrants, revokeMcpGrant, revokeMcpGrants } from '@clutchbox/server/mcp';
 import {
@@ -237,6 +239,45 @@ export function createApi({
     const clientId = await signedOAuthClient(auth, new URL(c.req.url).search.slice(1));
     return clientId ? c.json({ clientId }, 200, unsigned) : c.json({ error: 'invalid_request' }, 400, unsigned);
   });
+  // Live view's image paste: the page sends a PNG here, raw, then Ctrl+V through the relay, while the ticket's page load
+  // holds the takeover (POST /computer/clipboard/ticket). It goes to the API's origin, where the session cookie isn't
+  // sent, so it comes before authentication: the ticket stands in for the session, as the relay's does. CORS and the
+  // Origin check admit only the web app's pages. A JSON body would grow the image by a third; this one is the bytes.
+  app.use(
+    '/computer/clipboard/image',
+    cors({
+      origin: from => (from === origin ? from : null),
+      allowMethods: ['POST'],
+      allowHeaders: ['content-type'],
+      maxAge: 600,
+    }),
+  );
+  app.post(
+    '/computer/clipboard/image',
+    bodyLimit({ maxSize: MAX_CLIPBOARD_IMAGE_BYTES, onError: c => c.json({ error: 'too_large' }, 413, unsigned) }),
+    async c => {
+      const ticket = readLiveViewTicket(
+        (await auth.$context).secret,
+        c.req.query('ticket') ?? null,
+        Date.now(),
+        'paste',
+      );
+      if (!ticket || !(await sessionHolds(db, ticket.sessionId, ticket.userId)))
+        return c.json({ error: 'unauthenticated' }, 401, unsigned);
+      if (c.req.header('origin') !== origin) return c.json({ error: 'forbidden_origin' }, 403, unsigned);
+      if (c.req.header('content-type') !== 'image/png') return c.json({ error: 'invalid_request' }, 400, unsigned);
+      const member = await currentMember(db, ticket.userId);
+      if (!member) return c.json({ error: 'not_a_member' }, 403, unsigned);
+      await operatorAdmin.recordActivity(db, ticket.userId);
+      const png = new Uint8Array(await c.req.arrayBuffer());
+      const target = { computerId: ticket.computerId };
+      const result = await setLiveViewClipboard(db, running, member, ticket.lease, { png }, target);
+      if (result === 'too_large') return c.json({ error: 'too_large' }, 413, unsigned);
+      if (result === 'not_png') return c.json({ error: 'invalid_request' }, 400, unsigned);
+      if (result === 'not_in_control') return c.json({ error: 'not_in_control' }, 409, unsigned);
+      return c.json({}, 200, unsigned);
+    },
+  );
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'private, no-store');
     c.header('X-Content-Type-Options', 'nosniff');
@@ -669,23 +710,25 @@ export function createApi({
     if ('error' in result) return computerFailure(c, result);
     return c.json(result);
   });
-  // A ticket for this page load's live view (live-view-ticket.ts), and where to open it: the relay at the API's origin,
-  // where the session cookie isn't sent. Only the web app's pages may ask (the origin check on every change).
-  const liveViewOrigin = apiOrigin.replace(/^http/, 'ws');
-  app.post('/live-view/ticket', async c => {
+  // A ticket for this page load's live view (live-view-ticket.ts), and where to use it at the API's origin, where the
+  // session cookie isn't sent: the relay, or for a paste, the image paste route. Only the web app's pages may ask (the
+  // origin check on every change).
+  const ticketRoute = (use: TicketUse, at: string) => async (c: Context<Env>) => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     const { id: userId, sessionId } = c.get('principal');
     if (!parsed.success || !sessionId) return c.json({ error: 'invalid_request' }, 400);
     await memberOf(c);
     const { lease, computer: computerId } = parsed.data;
-    const ticket = signLiveViewTicket((await auth.$context).secret, {
-      userId,
-      sessionId,
-      lease,
-      ...(computerId && { computerId }),
-    });
-    return c.json({ url: `${liveViewOrigin}/api/v1/live-view?ticket=${ticket}` });
-  });
+    const ticket = signLiveViewTicket(
+      (await auth.$context).secret,
+      { userId, sessionId, lease, ...(computerId && { computerId }) },
+      Date.now(),
+      use,
+    );
+    return c.json({ url: `${at}?ticket=${ticket}` });
+  };
+  app.post('/live-view/ticket', ticketRoute('relay', `${apiOrigin.replace(/^http/, 'ws')}/api/v1/live-view`));
+  app.post('/computer/clipboard/ticket', ticketRoute('paste', `${apiOrigin}/api/v1/computer/clipboard/image`));
   app.post('/computer/hand-back', async c => {
     const parsed = leaseBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);

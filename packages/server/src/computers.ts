@@ -3,11 +3,13 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { cookieChanges, expiredCdpCookie, toCdpCookie } from '@clutchbox/apply';
 import { siteOfCookie } from '@clutchbox/capture';
 import {
+  type ClipboardContent,
   type ComputerProvider,
   type ComputerSession,
   type ComputerSize,
   FIRST_PROFILE,
   ProviderAccountRefused,
+  pngSize,
   type ScreenSize,
 } from '@clutchbox/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
@@ -24,6 +26,7 @@ import {
 import {
   CALL_BUDGET_MS,
   CALL_HOLD_MS,
+  CLIPBOARD_IMAGE_SET_MS,
   CLIPBOARD_SET_MS,
   CREATE_STALE_MS,
   FORK_UNUSED_MS,
@@ -2219,19 +2222,26 @@ export async function connectLiveView(
 // The most text live view's paste sets on the computer's clipboard, in UTF-8 bytes: the same as the relay allows RFB cut
 // text (MAX_CUT_TEXT in rfb-filter.ts), which is how pasting worked before.
 export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
+// The largest PNG live view's paste sets. The computer's helper puts the whole image in one X request, and Xvfb allows
+// 16,777,212 bytes in one (measured on the template, October 2026); this stays under it, header included, and holds a
+// full-screen screenshot from a 5K display.
+export const MAX_CLIPBOARD_IMAGE_BYTES = 15_000_000;
 
-// Live view's paste: makes the user's text the computer's clipboard, for the page to send Ctrl+V after through the relay.
-// Only while this lease holds the user's live takeover, so it is running. Connects under the computer row lock, as
-// connectLiveView does, but sets the clipboard after it, since that is a command on the computer.
+// Live view's paste: makes the user's text or PNG image the computer's clipboard, for the page to send Ctrl+V after
+// through the relay. Only while this lease holds the user's live takeover, so it is running. Connects under the
+// computer row lock, as connectLiveView does, but sets the clipboard after it, since that is a command on the computer.
 export async function setLiveViewClipboard(
   db: Database,
   providers: Providers,
   member: Member,
   lease: string,
-  text: string,
+  content: ClipboardContent,
   target: LiveViewTarget = {},
-): Promise<'set' | 'not_in_control' | 'too_large'> {
-  if (Buffer.byteLength(text, 'utf8') > MAX_CLIPBOARD_BYTES) return 'too_large';
+): Promise<'set' | 'not_in_control' | 'too_large' | 'not_png'> {
+  if (typeof content === 'string') {
+    if (Buffer.byteLength(content, 'utf8') > MAX_CLIPBOARD_BYTES) return 'too_large';
+  } else if (content.png.length > MAX_CLIPBOARD_IMAGE_BYTES) return 'too_large';
+  else if (!pngSize(content.png)) return 'not_png';
   if (!LEASE_PATTERN.test(lease)) return 'not_in_control';
   const { provider } = await providerFor(providers, db, member.organizationId);
   const session = await db.transaction(async tx => {
@@ -2242,7 +2252,7 @@ export async function setLiveViewClipboard(
     return provider.connect(computer.sandboxId!, Math.max(1, until.getTime() - Date.now()));
   });
   if (!session) return 'not_in_control';
-  await session.setClipboard(text, CLIPBOARD_SET_MS);
+  await session.setClipboard(content, typeof content === 'string' ? CLIPBOARD_SET_MS : CLIPBOARD_IMAGE_SET_MS);
   return 'set';
 }
 

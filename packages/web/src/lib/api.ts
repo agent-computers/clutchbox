@@ -7,6 +7,7 @@ import type { ForkView, LiveViewStatus } from '@clutchbox/server/computers';
 import type { Role } from '@clutchbox/server/members';
 import { type QueryClient, queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
+import { asPng, type Pasted } from './live-view-input';
 
 export type ComputerView = {
   // Null without a credit (the metering hook), whose words it carries: the month's cost, the credit and what is left,
@@ -259,20 +260,37 @@ function useLeaseMutation(path: string, lease: string, computer: string | undefi
   });
 }
 
-// Sets the computer's clipboard to text, for pasting there, while this lease holds the takeover (POST
-// /computer/clipboard). Its errors carry a message to show.
+// Sets the computer's clipboard to text or an image, for pasting there, while this lease holds the takeover. Text goes
+// to POST /computer/clipboard. An image goes as a PNG, with a ticket, to the API's origin (POST
+// /computer/clipboard/image), since the web app's platform may refuse a body that large (a Vercel Function over
+// 4.5 MB). Its errors carry a message to show.
 export function useLiveViewClipboard(lease: string, computer: string | undefined) {
   return useMutation({
-    mutationFn: (text: string) =>
-      api<Record<string, never>>('/computer/clipboard', 'POST', { ...leaseOn(lease, computer), text }).catch(error => {
-        const status = error instanceof ApiError ? error.status : 0;
-        throw new Error(
-          status === 413
-            ? 'Your clipboard holds more text than live view can paste (1 MB).'
-            : status === 409
-              ? 'Switch to Control to paste on the computer.'
-              : 'Your clipboard could not reach the computer. Try again.',
-        );
-      }),
+    mutationFn: async (content: Pasted) => {
+      if (typeof content === 'string')
+        return api('/computer/clipboard', 'POST', { ...leaseOn(lease, computer), text: content }).catch(error => {
+          throw pasteError(error, 'Your clipboard holds more text than live view can paste (1 MB).');
+        });
+      const png = await asPng(content);
+      if (!png) throw new Error("Live view can't paste this kind of image. Copy it as a PNG.");
+      return (async () => {
+        const { url } = await api<{ url: string }>('/computer/clipboard/ticket', 'POST', leaseOn(lease, computer));
+        const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'image/png' }, body: png });
+        if (!response.ok) throw new ApiError(response.status, undefined, '');
+      })().catch(error => {
+        throw pasteError(error, 'This image is larger than live view can paste (15 MB).');
+      });
+    },
   });
+}
+// Why a paste failed, worded for the page: too large (tooLarge says what), not in control, or anything else.
+function pasteError(error: unknown, tooLarge: string) {
+  const status = error instanceof ApiError ? error.status : 0;
+  return new Error(
+    status === 413
+      ? tooLarge
+      : status === 409
+        ? 'Switch to Control to paste on the computer.'
+        : 'Your clipboard could not reach the computer. Try again.',
+  );
 }

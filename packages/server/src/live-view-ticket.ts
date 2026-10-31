@@ -9,6 +9,9 @@ import { LIVE_VIEW_TICKET_MS } from './computer-timing';
 // session by ID, never its token, so the relay re-checks the session (sessionHolds) but the ticket can't stand in for
 // it. Not single-use: within LIVE_VIEW_TICKET_MS it opens only the same page load's relay again, which the lease's watch
 // governs as before.
+// A paste ticket is the same for live view's image paste, which goes to the API's origin too, since the web app's
+// platform may cap request bodies (a Vercel Function at 4.5 MB). Within LIVE_VIEW_TICKET_MS it sets the clipboard only
+// while the same page load holds the takeover.
 const payloadSchema = z
   .object({
     userId: z.string(),
@@ -20,20 +23,27 @@ const payloadSchema = z
   .strict();
 export type LiveViewTicket = Omit<z.infer<typeof payloadSchema>, 'exp'>;
 
-// Its own key, derived from the deployment's secret, so a ticket's signature is good for nothing else.
-const sign = (secret: string, payload: string) =>
-  createHmac('sha256', createHmac('sha256', secret).update('live-view-ticket').digest()).update(payload).digest();
+// Each use has its own key, derived from the deployment's secret, so a ticket's signature is good for nothing else.
+export type TicketUse = 'relay' | 'paste';
+const KEYS: Record<TicketUse, string> = { relay: 'live-view-ticket', paste: 'live-view-paste-ticket' };
+const sign = (secret: string, use: TicketUse, payload: string) =>
+  createHmac('sha256', createHmac('sha256', secret).update(KEYS[use]).digest()).update(payload).digest();
 
-export function signLiveViewTicket(secret: string, ticket: LiveViewTicket, now = Date.now()) {
+export function signLiveViewTicket(secret: string, ticket: LiveViewTicket, now = Date.now(), use: TicketUse = 'relay') {
   const payload = Buffer.from(JSON.stringify({ ...ticket, exp: now + LIVE_VIEW_TICKET_MS })).toString('base64url');
-  return `${payload}.${sign(secret, payload).toString('base64url')}`;
+  return `${payload}.${sign(secret, use, payload).toString('base64url')}`;
 }
 
-// The ticket's contents, or null for one that is malformed, altered, or expired.
-export function readLiveViewTicket(secret: string, value: string | null, now = Date.now()): LiveViewTicket | null {
+// The ticket's contents, or null for one that is malformed, altered, expired, or for another use.
+export function readLiveViewTicket(
+  secret: string,
+  value: string | null,
+  now = Date.now(),
+  use: TicketUse = 'relay',
+): LiveViewTicket | null {
   const [payload, signature, extra] = value?.split('.') ?? [];
   if (!payload || !signature || extra !== undefined) return null;
-  const expected = sign(secret, payload);
+  const expected = sign(secret, use, payload);
   const given = Buffer.from(signature, 'base64url');
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   let parsed: z.infer<typeof payloadSchema>;

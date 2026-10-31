@@ -266,10 +266,11 @@ exit 1
 `;
 // Live view's paste, through libX11 with ctypes, since the template has no xclip or xsel.
 // x11vnc's own paste (RFB cut text) takes the clipboard only once, so Chrome keeps pasting the first text, and carries
-// Latin-1 only. Run as `user` with DISPLAY=:0.
-export const SET_CLIPBOARD = `# Live view's paste: sets the X CLIPBOARD (not PRIMARY) to the UTF-8 text in argv[1], which it deletes, and serves it from
-# a background process until another app takes the clipboard or HOLD_SECONDS pass. Exits 0 once it owns the
-# clipboard, 2 when the text is too large for one X request, 1 otherwise. Run as the desktop's user with DISPLAY set.
+// Latin-1 only, and no images. Run as `user` with DISPLAY=:0.
+export const SET_CLIPBOARD = `# Live view's paste: sets the X CLIPBOARD (not PRIMARY) to the file argv[1], which it deletes: UTF-8 text, or a PNG
+# image when argv[2] is image/png. Serves it from a background process until another app takes the clipboard or
+# HOLD_SECONDS pass. Exits 0 once it owns the clipboard, 2 when the value is too large for one X request, 1 otherwise.
+# Run as the desktop's user with DISPLAY set.
 import ctypes, fcntl, os, select, signal, sys, time
 
 OWN_SECONDS = ${CLIPBOARD_OWN_MS / 1000}
@@ -283,9 +284,12 @@ STRING_MAX = 131072
 os.makedirs(os.path.dirname(PIDFILE), exist_ok=True)
 
 path = sys.argv[1]
+image = sys.argv[2:] == ['image/png']
 try:
     with open(path, 'rb') as file:
-        data = file.read().decode('utf-8', 'replace').encode('utf-8')
+        data = file.read()
+    if not image:
+        data = data.decode('utf-8', 'replace').encode('utf-8')
 finally:
     try:
         os.unlink(path)
@@ -351,14 +355,20 @@ if not display:
 # A requestor that vanishes mid-reply raises an X error; the default handler would exit.
 ignore = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_void_p)(lambda *_: 0)
 X.XSetErrorHandler(ignore)
-# One ChangeProperty request carries the whole text, with room for its header.
+# One ChangeProperty request carries the whole value, with room for its header: no INCR transfer. Xvfb allows 16 MiB
+# (BIG-REQUESTS), above the largest image the server sends.
 if len(data) > (X.XExtendedMaxRequestSize(display) or X.XMaxRequestSize(display)) * 4 - 64:
     answer(b'2')
 atom = lambda name: X.XInternAtom(display, name.encode(), 0)
-CLIPBOARD, TARGETS, UTF8, STRING, TEXT, PLAIN = (atom(name) for name in ('CLIPBOARD', 'TARGETS', 'UTF8_STRING', 'STRING', 'TEXT', 'text/plain;charset=utf-8'))
-served = [TARGETS, UTF8, TEXT, PLAIN] + ([STRING] if len(data) <= STRING_MAX else [])
+CLIPBOARD, TARGETS, UTF8, STRING, TEXT, PLAIN, PNG = (atom(name) for name in ('CLIPBOARD', 'TARGETS', 'UTF8_STRING', 'STRING', 'TEXT', 'text/plain;charset=utf-8', 'image/png'))
+# An image is served as image/png alone: x11vnc asks only for STRING, so it gets nothing and never sends the image's
+# bytes to viewers as text, which the page would write over the user's own clipboard.
+if image:
+    served = [TARGETS, PNG]
+else:
+    served = [TARGETS, UTF8, TEXT, PLAIN] + ([STRING] if len(data) <= STRING_MAX else [])
 targets = (C.c_ulong * len(served))(*served)
-text = C.create_string_buffer(data, len(data) + 1)
+value = C.create_string_buffer(data, len(data) + 1)
 window = X.XCreateSimpleWindow(display, X.XDefaultRootWindow(display), 0, 0, 1, 1, 0, 0, 0)
 # Overlapping runs take the clipboard one at a time, so another run can't take it between this one's take and check.
 lock = os.open(LOCK, os.O_WRONLY | os.O_CREAT, 0o600)
@@ -396,7 +406,7 @@ def reply(request):
         # STRING gets UTF-8 too, as Chrome answers it: x11vnc reads STRING and passes the bytes to the page, which
         # decodes them as UTF-8.
         kind = UTF8 if request.target == TEXT else request.target
-        X.XChangeProperty(display, request.requestor, prop, kind, 8, 0, text, len(data))
+        X.XChangeProperty(display, request.requestor, prop, kind, 8, 0, value, len(data))
     else:
         prop = 0
     event = Event()
@@ -687,10 +697,11 @@ function session(sandbox: Sandbox): ComputerSession {
         headers: { 'e2b-traffic-access-token': token, origin: STREAM_ORIGIN },
       };
     },
-    // The text goes in a file, never argv, which the helper deletes once read; a failed run removes it here. A computer
-    // not yet refreshed to a revision with the helper runs it inline. Errors never carry the text. The write and the
-    // run leave the removal its share of the budget, so a stalled computer fails within it.
-    async setClipboard(text, budgetMs) {
+    // The text or image goes in a file, never argv, which the helper deletes once read; a failed run removes it here. A
+    // computer not yet refreshed to a revision with the helper runs it inline, and an image always does, since an older
+    // helper would serve its bytes as text. Errors never carry the content. The write and the run leave the removal its
+    // share of the budget, so a stalled computer fails within it.
+    async setClipboard(content, budgetMs) {
       const cleanupMs = Math.min(CLIPBOARD_CLEANUP_MS, budgetMs / 2);
       const end = Date.now() + budgetMs - cleanupMs;
       const left = () => {
@@ -701,9 +712,16 @@ function session(sandbox: Sandbox): ComputerSession {
       const file = `${STREAM_DIR}/clipboard-${randomUUID()}`;
       const helper = `${HELPER_DIR}/set-clipboard.py`;
       const inline = `python3 -c "$(echo ${Buffer.from(SET_CLIPBOARD).toString('base64')} | base64 -d)"`;
+      const command =
+        typeof content === 'string'
+          ? `if [ -f ${helper} ]; then python3 ${helper} ${file}; else ${inline} ${file}; fi`
+          : `${inline} ${file} image/png`;
       try {
-        await sandbox.files.write(file, text, { user: 'user', requestTimeoutMs: left() });
-        await sandbox.commands.run(`if [ -f ${helper} ]; then python3 ${helper} ${file}; else ${inline} ${file}; fi`, {
+        await sandbox.files.write(file, typeof content === 'string' ? content : new Blob([content.png]), {
+          user: 'user',
+          requestTimeoutMs: left(),
+        });
+        await sandbox.commands.run(command, {
           user: 'user',
           envs: { DISPLAY: ':0' },
           timeoutMs: left(),
