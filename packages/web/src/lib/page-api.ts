@@ -3,7 +3,7 @@ import type { SignInMethods } from '@clutchbox/server/config';
 import { headers } from 'next/headers';
 
 // How a server-rendered page reaches the API: a GET to an /api/v1 path, answered by the deployment's own API in this
-// process, or by a separate API server over HTTP. Each app's deployment/server.ts passes one to its pages, which read
+// process, or by a separate API server over HTTP. Each app's deployment/pages.ts passes one to its pages, which read
 // the session, config, and database only through it.
 export type PageApi = (path: string, init: { headers: Headers }) => Promise<Response>;
 

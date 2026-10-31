@@ -1,7 +1,7 @@
 // Generated from the route manifest in @clutchbox/web (src/route-manifest.ts) by its
 // generate-routes script. Change the manifest and regenerate rather than editing this file.
 import { joinPage } from '@clutchbox/web/routes/join';
-import { pageApi } from '@/deployment/server';
+import { pageApi } from '@/deployment/pages';
 
 export const dynamic = 'force-dynamic';
 

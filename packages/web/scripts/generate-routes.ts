@@ -5,8 +5,9 @@ import { type RouteEntry, routeManifest } from '../src/route-manifest';
 
 // Writes an app's product route files from the route manifest (src/route-manifest.ts), or with --check, fails when
 // they differ from it. Each file imports its module by package name and the deployment's wiring by the app's own '@/'
-// alias, so the same text wires each app to its own deployment: a route handler gets its services, and a page or
-// layout only its way to the API (lib/page-api.ts).
+// alias, so the same text wires each app to its own deployment: a route handler gets its services from
+// deployment/server, and a page or layout only its way to the API (lib/page-api.ts) from deployment/pages, which a
+// separate API server never loads.
 //
 //   generate-routes --app <app dir> [--group <id>=(<group>),...] [--check]
 //
@@ -23,8 +24,8 @@ export function renderRoute(entry: RouteEntry): string {
   const lines = [header];
   const imported = [...(factory ? [factory.name] : []), ...Object.values(aliases)].sort();
   if (imported.length) lines.push(`import { ${imported.join(', ')} } from ${from};`);
-  const wiring = entry.file === 'route.ts' ? 'getServices' : 'pageApi';
-  if (factory) lines.push(`import { ${wiring} } from '@/deployment/server';`);
+  const [wiring, wiringModule] = entry.file === 'route.ts' ? ['getServices', 'server'] : ['pageApi', 'pages'];
+  if (factory) lines.push(`import { ${wiring} } from '@/deployment/${wiringModule}';`);
   if (factory?.shell) lines.push("import { deployment } from '@/deployment/ui';");
   const config = Object.entries(segment).map(
     ([name, value]) => `export const ${name} = ${typeof value === 'string' ? `'${value}'` : value};`,
