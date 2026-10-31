@@ -4,6 +4,7 @@ import type { Auth } from '@clutchbox/server/auth';
 import type { Profile } from '@clutchbox/server/captures';
 import {
   ACT_ACTION_ESTIMATE_MS,
+  ACT_KEY_SETTLE_MS,
   ACT_MAX_WAIT_MS,
   CALL_BUDGET_MS,
   EXEC_MAX_SECONDS,
@@ -418,12 +419,15 @@ function registerComputerTools(
         let completed = 0;
         let failed: string | undefined;
         let stopped: string | undefined;
-        for (const action of actions) {
-          if (Date.now() + actCost(action) > deadline) {
+        for (const [index, action] of actions.entries()) {
+          // Typing right after a key that moves focus (ctrl+l) waits for the focus to land first (computer-timing.ts).
+          const settle = action.type === 'type' && actions[index - 1]?.type === 'key';
+          if (Date.now() + actCost(action) + (settle ? ACT_KEY_SETTLE_MS : 0) > deadline) {
             stopped = 'Time budget reached; send the unexecuted actions in a new call.';
             break;
           }
           try {
+            if (settle) await handle.session.act({ type: 'wait', ms: ACT_KEY_SETTLE_MS });
             await handle.session.act(action);
             completed++;
           } catch {

@@ -175,6 +175,10 @@ export const ACT_MAX_WAIT_MS = 30_000;
 // computer_act's run-time estimate for any action but `type` and `wait`. Rough: an xdotool round trip to
 // E2B takes well under a second.
 export const ACT_ACTION_ESTIMATE_MS = 1_000;
+// computer_act's pause before typing right after a key action. A key like ctrl+l moves focus, and a busy Chrome can
+// move it after the typed keys have already gone to the page: just after computer_open, all 9 characters typed after
+// ctrl+l were lost. A judgment call, as long as BROWSER_SETTLE_MS; typing after a click needs no pause.
+export const ACT_KEY_SETTLE_MS = 500;
 // After the browser tool clicks, types, or selects, how long it lets the page react before reading it: long enough for
 // most client-side updates and for a navigation to start, short enough that a call stays quick.
 export const BROWSER_SETTLE_MS = 500;

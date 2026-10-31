@@ -647,9 +647,18 @@ describe('main computer tools', () => {
         { type: 'click', x: 10, y: 20 },
         { type: 'type', text: 'hello' },
         { type: 'key', keys: ['ctrl', 'l'] },
+        { type: 'type', text: 'example.com' },
       ],
     });
-    expect(acted.result.structuredContent).toMatchObject({ session_id: id, completed: 3, unexecuted: 0 });
+    expect(acted.result.structuredContent).toMatchObject({ session_id: id, completed: 4, unexecuted: 0 });
+    // Typing after a key waits for the focus it moved; typing after a click doesn't.
+    expect([...fake.sandboxes.values()].find(sandbox => sandbox.computerId === computerId)?.actions).toEqual([
+      { type: 'click', x: 10, y: 20, button: 'left', double: false },
+      { type: 'type', text: 'hello' },
+      { type: 'key', keys: ['ctrl', 'l'] },
+      { type: 'wait', ms: 500 },
+      { type: 'type', text: 'example.com' },
+    ]);
     expect(
       (await tool(claude.access_token, 'computer_exec', { session_id: id, command: 'ls' })).result.structuredContent,
     ).toMatchObject({ session_id: id, exit_code: 0, stdout: 'ran: ls' });
