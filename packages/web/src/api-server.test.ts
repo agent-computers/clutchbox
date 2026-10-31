@@ -126,7 +126,9 @@ describe('the API server', () => {
     const wrong = await request('/api/health', { method: 'DELETE' });
     expect([wrong.status, wrong.headers.get('allow')]).toEqual([405, 'GET, HEAD, OPTIONS']);
     expect((await request('/api/health', { method: 'OPTIONS' })).status).toBe(204);
-    for (const path of ['/', '/app', '/sign-in', '/downloads/agent-computers-extension.zip'])
+    const root = await request('/');
+    expect([root.status, root.headers.get('location')]).toEqual([302, '/api/health']);
+    for (const path of ['/app', '/sign-in', '/downloads/agent-computers-extension.zip'])
       expect((await request(path)).status, path).toBe(404);
   });
 

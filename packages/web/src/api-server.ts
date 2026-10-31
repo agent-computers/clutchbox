@@ -80,7 +80,8 @@ function withSecurityHeaders(response: Response) {
 
 // Every API route's requests, as one handler. Like Next.js, a path tries named segments before dynamic ones, HEAD
 // runs GET without its body, OPTIONS without a handler of its own answers with the methods allowed, and every
-// response carries the security headers.
+// response carries the security headers. / reaches it only where the API has its own origin, and points at its
+// health check.
 export function apiHandler(getServices: GetServices): Handler {
   const handle = route(getServices);
   return async request => withSecurityHeaders(await handle(request));
@@ -92,6 +93,8 @@ function route(getServices: GetServices): Handler {
     .sort((a, b) => Number(a.entry.dir.includes('[')) - Number(b.entry.dir.includes('[')));
   return async request => {
     const path = new URL(request.url).pathname.split('/').filter(Boolean);
+    if (path.length === 0 && (request.method === 'GET' || request.method === 'HEAD'))
+      return new Response(null, { status: 302, headers: { Location: '/api/health', 'Cache-Control': 'no-store' } });
     const route = routes.find(candidate => candidate.matches(path));
     if (!route) return Response.json({ error: 'not_found' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
     const { byMethod } = route;
