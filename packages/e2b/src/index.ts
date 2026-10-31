@@ -101,8 +101,10 @@ ${HELPER_DIR}/ensure-chrome.sh 9>&-
 // `set-screen.sh <width> <height>`: switches the screen to that size, adding it as a RandR mode on first use, and
 // exits 0 once it runs at that size, 3 when the desktop started smaller (Xvfb can't grow past its start size), or 2
 // for a bad argument. xfwm4 keeps maximized windows maximized across the switch, and x11vnc (-xrandr) tells viewers.
-// Xvfb resets when its last client disconnects, which drops added modes, so it runs only once the desktop's own
-// clients are connected. Run as the desktop's user with DISPLAY set.
+// The dock's auto-hide stops hiding after a switch, covering the bottom of the page, so each auto-hiding panel's setting
+// is turned off and back on, which wakes it, once the panel has moved. Xvfb resets when its last client disconnects,
+// which drops added modes, so it runs only once the desktop's own clients are connected. Run as the desktop's user with
+// DISPLAY set.
 export const SET_SCREEN = `#!/bin/sh
 case "$1" in ''|*[!0-9]*) exit 2 ;; esac
 case "$2" in ''|*[!0-9]*) exit 2 ;; esac
@@ -112,7 +114,12 @@ set -- "$1" "$2" $(echo "$s" | sed -n 's/.*maximum \\([0-9]*\\) x \\([0-9]*\\).*
 [ "$1" -le "$3" ] && [ "$2" -le "$4" ] || exit 3
 xrandr --newmode "$1x$2" 0 "$1" 0 0 0 "$2" 0 0 0 2>/dev/null
 xrandr --addmode screen "$1x$2" 2>/dev/null
-xrandr --output screen --mode "$1x$2"
+xrandr --output screen --mode "$1x$2" || exit 1
+sleep 0.5
+for p in $(xfconf-query -c xfce4-panel -l 2>/dev/null | grep '/autohide-behavior$'); do
+  v=$(xfconf-query -c xfce4-panel -p "$p") && [ "$v" != 0 ] && xfconf-query -c xfce4-panel -p "$p" -s 0 && xfconf-query -c xfce4-panel -p "$p" -s "$v"
+done
+exit 0
 `;
 // The size Xvfb starts at: wide and tall enough for every screen (SCREENS), so a computer can switch to any of them.
 const DESKTOP = {
