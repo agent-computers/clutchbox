@@ -131,12 +131,12 @@
       "name": "@clutchbox/e2b",
       "version": "0.1.0",
       "dependencies": {
+        "@clutchbox/apply": "workspace:*",
         "@clutchbox/computer": "workspace:*",
         "@e2b/desktop": "2.4.0",
         "e2b": "2.55.0",
       },
       "devDependencies": {
-        "@clutchbox/apply": "workspace:*",
         "@clutchbox/capture": "workspace:*",
         "@types/node": "24.19.2",
       },

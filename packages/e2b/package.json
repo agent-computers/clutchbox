@@ -32,12 +32,12 @@
     "build-template": "node --import tsx scripts/build-template.ts"
   },
   "dependencies": {
+    "@clutchbox/apply": "workspace:*",
     "@clutchbox/computer": "workspace:*",
     "@e2b/desktop": "2.4.0",
     "e2b": "2.55.0"
   },
   "devDependencies": {
-    "@clutchbox/apply": "workspace:*",
     "@clutchbox/capture": "workspace:*",
     "@types/node": "24.19.2"
   }
