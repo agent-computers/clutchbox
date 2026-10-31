@@ -253,6 +253,8 @@ describe('main computer', () => {
       profiles: {},
       paused: false,
       revision: fake.provider.revision,
+      screen: { width: 1440, height: 900 },
+      desktop: { width: 1920, height: 1200 },
     });
     expect(await opening).toMatchObject({ sessionId: expect.stringMatching(SESSION_ID_PATTERN) });
     expect(fake.calls.kill).toBe(1);

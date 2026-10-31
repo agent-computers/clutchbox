@@ -14,6 +14,7 @@ import {
   PROFILE_FILE,
   REVISION,
   REVISION_FILE,
+  SET_SCREEN,
   STREAM_ORIGIN,
   SYNC_CORE,
 } from './index';
@@ -233,6 +234,58 @@ describe('E2B adapter', () => {
     expect(run).not.toHaveBeenCalled();
     await session.setTimeZone('America/Los_Angeles');
     expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('switches the screen only to a size the desktop holds, adding its mode once (E2B adapter)', async () => {
+    // set-screen.sh against a stand-in xrandr that logs its arguments and, queried with none, reports a desktop started
+    // at 1920x1200 that runs at 1440x900.
+    const dir = mkdtempSync(join(tmpdir(), 'set-screen-'));
+    writeFileSync(join(dir, 'set-screen.sh'), SET_SCREEN, { mode: 0o755 });
+    writeFileSync(
+      join(dir, 'xrandr'),
+      `#!/bin/sh\necho "$@" >> ${dir}/calls\n[ $# -eq 0 ] && echo 'Screen 0: minimum 1 x 1, current 1440 x 900, maximum 1920 x 1200'\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    const setScreen = (...args: string[]) => {
+      rmSync(join(dir, 'calls'), { force: true });
+      const { status } = spawnSync(join(dir, 'set-screen.sh'), args, {
+        env: { PATH: `${dir}:${process.env.PATH}` },
+        timeout: 10_000,
+      });
+      const calls = spawnSync('cat', [join(dir, 'calls')], { encoding: 'utf8' })
+        .stdout.trim()
+        .split('\n');
+      return { status, switched: calls.filter(Boolean) };
+    };
+    expect(setScreen('1440', '900')).toEqual({ status: 0, switched: [] });
+    expect(setScreen('1280', '1024')).toEqual({
+      status: 0,
+      switched: [
+        '--newmode 1280x1024 0 1280 0 0 0 1024 0 0 0',
+        '--addmode screen 1280x1024',
+        '--output screen --mode 1280x1024',
+      ],
+    });
+    expect(setScreen('2560', '1600')).toEqual({ status: 3, switched: [] });
+    expect(setScreen('1280', '1200')).toEqual({ status: 0, switched: expect.any(Array) });
+    expect(setScreen('1280', '1300')).toEqual({ status: 3, switched: [] });
+    expect(setScreen('1280;id', '900')).toEqual({ status: 2, switched: [] });
+    expect(setScreen('1280')).toEqual({ status: 2, switched: [] });
+    rmSync(dir, { recursive: true, force: true });
+    // The adapter runs it as the desktop's user, and reads exit 3 as a desktop too small.
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+      .mockRejectedValueOnce(new CommandExitError({ exitCode: 3, error: 'exit status 3', stdout: '', stderr: '' }))
+      .mockRejectedValueOnce(new CommandExitError({ exitCode: 1, error: 'exit status 1', stdout: '', stderr: '' }));
+    vi.spyOn(Sandbox, 'connect').mockResolvedValue({ commands: { run } } as never);
+    const session = await e2bComputerProvider().connect('sandbox', 1000);
+    expect(await session.setScreen('1920x1200')).toBe(true);
+    expect(run).toHaveBeenLastCalledWith(
+      '/opt/agent-computers/set-screen.sh 1920 1200',
+      expect.objectContaining({ user: 'user', envs: { DISPLAY: ':0' } }),
+    );
+    expect(await session.setScreen('1920x1200')).toBe(false);
+    await expect(session.setScreen('1920x1200')).rejects.toThrow(CommandExitError);
   });
   it('creates private computers and starts live view only on one with a traffic token (E2B adapter)', async () => {
     const run = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));

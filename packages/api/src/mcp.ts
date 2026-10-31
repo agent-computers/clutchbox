@@ -20,9 +20,10 @@ import {
   type ComputerProvider,
   type Computers,
   closeComputerSession,
-  DISPLAY,
   listForks,
   openComputerSession,
+  pngSize,
+  SCREEN_NAMES,
   type SessionHandle,
   type SyncSummary,
   sizeName,
@@ -266,7 +267,7 @@ function registerComputerTools(
     'computer_open',
     {
       title: 'Open a computer',
-      description: `Start a computer session on a remote desktop computer with the user's newest browser sign-ins applied. Without computer_id, creates a new computer for you, a copy of the user's own; with the computer_id of one of the account's computers (from an earlier computer_open), reopens it as it was left, resuming it if paused. The session uses one of the user's browser profiles: the one named by profile, else the one the computer had, else the browser the user synced last. Returns session_id, which every other computer tool requires, computer_id, the profile used and all profiles, the account's other computers, and a screenshot. Pass your current session_id to replace it with a fresh session on the same computer without losing control, for example to apply a sign-in the user just synced, and use the new session_id from then on; without it, another active session on that computer (even your own) makes this return busy until its idle minute ends. To open a page, use browser with action navigate. Call computer_close when the task is done. ${remote} ${signInHelp}`,
+      description: `Start a computer session on a remote desktop computer with the user's newest browser sign-ins applied. Without computer_id, creates a new computer for you, a copy of the user's own; with the computer_id of one of the account's computers (from an earlier computer_open), reopens it as it was left, resuming it if paused. The session uses one of the user's browser profiles: the one named by profile, else the one the computer had, else the browser the user synced last. Returns session_id, which every other computer tool requires, computer_id, the profile used and all profiles, the account's other computers, display (the screen's size, whose pixels screenshots and coordinates use), and a screenshot. Pass your current session_id to replace it with a fresh session on the same computer without losing control, for example to apply a sign-in the user just synced, and use the new session_id from then on; without it, another active session on that computer (even your own) makes this return busy until its idle minute ends. To open a page, use browser with action navigate. Call computer_close when the task is done. ${remote} ${signInHelp}`,
       inputSchema: z
         .object({
           session_id: sessionId.optional().describe('Your current session_id, if you have one.'),
@@ -287,12 +288,18 @@ function registerComputerTools(
             .describe(
               "For a new computer: a short name for its task, shown in later computer_open results' computers.",
             ),
+          screen: z
+            .enum(SCREEN_NAMES)
+            .optional()
+            .describe(
+              "The screen size in pixels: 1440x900, a new computer's; 1280x1024 for more of a page's height; or 1920x1200 for more of both. Switches the computer to it, and it stays until changed; omit it to keep the computer's own. Larger screenshots cost more tokens, and a model that shrinks large images clicks less precisely on them.",
+            ),
         })
         .strict(),
       annotations: full,
       _meta: security,
     },
-    recorded('computer_open', async ({ session_id, computer_id, label, profile }) => {
+    recorded('computer_open', async ({ session_id, computer_id, label, profile, screen }) => {
       let handle: SessionHandle | undefined;
       try {
         const opened = await openComputerSession(db, computers, caller, {
@@ -300,6 +307,7 @@ function registerComputerTools(
           computerId: computer_id,
           label,
           profile,
+          screen,
         });
         if ('error' in opened) return failure(opened);
         handle = opened;
@@ -319,7 +327,13 @@ function registerComputerTools(
           profile: opened.profile && profileOf(opened.profile),
           profiles: opened.profiles.map(profileOf),
           ...handBack(opened),
-          display: DISPLAY,
+          display: pngSize(png),
+          ...(opened.screenUnchanged
+            ? {
+                screen_unchanged:
+                  "The screen could not change size, as on a computer from before screen sizes; display is the computer's own.",
+              }
+            : {}),
           idle_pause_seconds: IDLE_PAUSE_MS / 1000,
           account_id: principal.userId,
           account_email: principal.email,
@@ -418,9 +432,10 @@ function registerComputerTools(
           }
         }
         markToolStep('screenshot');
-        return image(await handle.session.screenshot(), {
+        const png = await handle.session.screenshot();
+        return image(png, {
           ...state(handle),
-          display: DISPLAY,
+          display: pngSize(png),
           completed,
           unexecuted: actions.length - completed - (failed ? 1 : 0),
           ...(failed ? { failed } : {}),

@@ -8,6 +8,7 @@ import {
   type ComputerSize,
   FIRST_PROFILE,
   ProviderAccountRefused,
+  type ScreenSize,
 } from '@clutchbox/computer';
 import { and, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, isNull, lt, min, or, sql } from 'drizzle-orm';
 import { type AgentKind, agentOf, clientHost } from './agents';
@@ -64,9 +65,11 @@ export {
   type ComputerProvider,
   type ComputerSession,
   type ComputerSize,
-  DISPLAY,
   type ExecResult,
   ProviderAccountRefused,
+  pngSize,
+  SCREEN_NAMES,
+  type ScreenSize,
   sizeName,
 } from '@clutchbox/computer';
 
@@ -587,12 +590,14 @@ async function startCall(
 }
 
 // What computer_open hands back: the session, the fork it runs on, the profile it uses (null with none) among the
-// member's profiles, and how that profile's latest capture applied.
+// member's profiles, and how that profile's latest capture applied. screenUnchanged: the screen asked for could not be
+// set, as on a computer from before screen sizes.
 export type OpenedSession = SessionHandle & {
   sync: SyncSummary;
   computer: { id: string; label: string | null; created: boolean; size: ComputerSize; account: ComputerAccount };
   profile: Profile | null;
   profiles: Profile[];
+  screenUnchanged?: true;
 };
 type Started = {
   id: number;
@@ -617,7 +622,8 @@ const profileNotFound: ComputerFailure = {
 // first. Without computerId it creates a new fork from the main computer's latest snapshot; with one of the member's
 // forks' IDs it reopens that fork, as it does the fork of the caller's own session when given only that session's ID.
 // `profile` names a profile by its browser's public ID; without it, the fork keeps the profile its last session used
-// (pickProfile). A session holding control of the fork means `busy`, unless it is the caller's own live sessionId,
+// (pickProfile). `screen` switches the fork's screen; without it, the fork keeps its own, and a new one starts at the
+// main computer's. A session holding control of the fork means `busy`, unless it is the caller's own live sessionId,
 // which this replaces. Callers must already have verified the live MCP grant and pass a guard that re-checks it.
 export async function openComputerSession(
   db: Database,
@@ -628,11 +634,13 @@ export async function openComputerSession(
     computerId,
     label,
     profile,
+    screen,
   }: {
     sessionId?: string | undefined;
     computerId?: string | undefined;
     label?: string | undefined;
     profile?: string | undefined;
+    screen?: ScreenSize | undefined;
   } = {},
 ): Promise<OpenedSession | ComputerFailure> {
   const deadline = Date.now() + SYNC_DEADLINE_MS;
@@ -657,8 +665,9 @@ export async function openComputerSession(
     markToolStep('sync');
     // Before the apply, which needs the browser this may restart.
     await refreshComputer(db, computers.provider, computer, handle.session);
-    const [sync] = await Promise.all([
+    const [sync, screenSet] = await Promise.all([
       applyProfiles(db, caller, computer, handle.session, started.profile, profiles, deadline),
+      screen ? applyScreen(handle.session, screen) : true,
       applyTimeZone(db, computer.id, handle.session),
     ]);
     return {
@@ -676,6 +685,7 @@ export async function openComputerSession(
       profiles,
       done,
       ...(started.userHadControl ? { userHadControl: true } : {}),
+      ...(screenSet ? {} : { screenUnchanged: true }),
     };
   } catch (error) {
     await done?.();
@@ -1715,6 +1725,17 @@ async function refreshComputer(
     await db.update(schema.computers).set({ revision: provider.revision }).where(eq(schema.computers.id, computer.id));
   } catch (error) {
     logError('computer refresh', error);
+  }
+}
+
+// Whether the computer now runs `screen`. A failure leaves the computer at its own screen, which screenshots show
+// (pngSize), rather than failing the open.
+async function applyScreen(session: ComputerSession, screen: ScreenSize) {
+  try {
+    return await session.setScreen(screen);
+  } catch (error) {
+    logError('screen', error);
+    return false;
   }
 }
 

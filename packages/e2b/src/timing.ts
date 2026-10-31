@@ -52,6 +52,10 @@ export const XDOTOOL_MS = 20_000;
 // Setting the system time zone: a symlink and a one-line file, which take well under a second.
 export const TIME_ZONE_MS = 10_000;
 
+// Switching the screen (set-screen.sh): a few xrandr requests, which take well under a second (5 ms at the size
+// already, measured October 2026).
+export const SCREEN_MS = 10_000;
+
 // The CDP helper's own reply timeout, inside the command's. Baked into the helper (CDP_HELPER).
 export const CDP_REPLY_MS = 30_000;
 // The command running the CDP helper: its reply timeout plus 10 s for node start-up and the round trip.

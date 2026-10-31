@@ -4,12 +4,13 @@ import {
   type ComputerProvider,
   type ComputerSession,
   type ComputerSize,
-  DISPLAY,
+  DEFAULT_SCREEN,
   type ExecResult,
   FIRST_PROFILE,
   keyNamePattern,
   PROFILE_PATTERN,
   ProviderAccountRefused,
+  SCREENS,
 } from '@clutchbox/computer';
 import { Sandbox } from '@e2b/desktop';
 import { AuthenticationError, Sandbox as BaseSandbox, CommandExitError, SandboxError, TimeoutError } from 'e2b';
@@ -25,6 +26,7 @@ import {
   PROFILE_STOP_MS,
   PROVIDER_REQUEST_MS,
   REFRESH_STEP_MS,
+  SCREEN_MS,
   SNAPSHOT_REQUEST_MS,
   STREAM_MARGIN_MS,
   STREAM_START_MS,
@@ -96,14 +98,37 @@ if [ "${currentProfile}" != "$1" ]; then
 fi
 ${HELPER_DIR}/ensure-chrome.sh 9>&-
 `;
+// `set-screen.sh <width> <height>`: switches the screen to that size, adding it as a RandR mode on first use, and
+// exits 0 once it runs at that size, 3 when the desktop started smaller (Xvfb can't grow past its start size), or 2
+// for a bad argument. xfwm4 keeps maximized windows maximized across the switch, and x11vnc (-xrandr) tells viewers.
+// Xvfb resets when its last client disconnects, which drops added modes, so it runs only once the desktop's own
+// clients are connected. Run as the desktop's user with DISPLAY set.
+export const SET_SCREEN = `#!/bin/sh
+case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+case "$2" in ''|*[!0-9]*) exit 2 ;; esac
+s=$(xrandr) || exit 1
+echo "$s" | grep -q "current $1 x $2," && exit 0
+set -- "$1" "$2" $(echo "$s" | sed -n 's/.*maximum \\([0-9]*\\) x \\([0-9]*\\).*/\\1 \\2/p')
+[ "$1" -le "$3" ] && [ "$2" -le "$4" ] || exit 3
+xrandr --newmode "$1x$2" 0 "$1" 0 0 0 "$2" 0 0 0 2>/dev/null
+xrandr --addmode screen "$1x$2" 2>/dev/null
+xrandr --output screen --mode "$1x$2"
+`;
+// The size Xvfb starts at: wide and tall enough for every screen (SCREENS), so a computer can switch to any of them.
+const DESKTOP = {
+  width: Math.max(...Object.values(SCREENS).map(screen => screen.width)),
+  height: Math.max(...Object.values(SCREENS).map(screen => screen.height)),
+};
 // The template's start command: E2B snapshots the desktop with Chrome already running, so a new
 // computer skips Chrome's cold first launch (~10-28s on a lazily loaded disk). Mirrors @e2b/desktop's
-// own Xvfb and XFCE start, which create therefore skips.
+// own Xvfb and XFCE start, which create therefore skips. The screen switches to DEFAULT_SCREEN once XFCE runs and
+// before Chrome starts, so Chrome opens maximized at that size.
 export const START_DESKTOP = `#!/bin/sh
-Xvfb :0 -ac -screen 0 ${DISPLAY.width}x${DISPLAY.height}x24 -retro -dpi 96 -nolisten tcp -nolisten unix >/tmp/xvfb.log 2>&1 &
+Xvfb :0 -ac -screen 0 ${DESKTOP.width}x${DESKTOP.height}x24 -retro -dpi 96 -nolisten tcp -nolisten unix >/tmp/xvfb.log 2>&1 &
 for i in $(seq 1 40); do xdpyinfo -display :0 >/dev/null 2>&1 && break; sleep 0.25; done
 DISPLAY=:0 startxfce4 >/tmp/xfce.log 2>&1 &
 for i in $(seq 1 120); do pgrep -x xfce4-session >/dev/null && pgrep -x xfwm4 >/dev/null && pgrep -x xfdesktop >/dev/null && break; sleep 0.5; done
+DISPLAY=:0 ${HELPER_DIR}/set-screen.sh ${SCREENS[DEFAULT_SCREEN].width} ${SCREENS[DEFAULT_SCREEN].height}
 ${HELPER_DIR}/ensure-chrome.sh
 wait
 `;
@@ -161,8 +186,9 @@ process.exit(0);
 // serialized (flock), so concurrent relays start one of each; exits 0 once the socket and the port are up.
 // Probed on the template: x11vnc 0.9.16, and websockify 0.12.0 vendored with noVNC in /opt/noVNC.
 // -noprimary: x11vnc sends viewers only CLIPBOARD, not PRIMARY, so merely selecting text on the computer does not
-// overwrite the user's own clipboard. An x11vnc started before the flag is replaced once it has exited, so one serves
-// the display (vnc lists the running ones; a zombie's cmdline is empty). Pasting goes through SET_CLIPBOARD instead.
+// overwrite the user's own clipboard. -xrandr: it follows the screen's size (SET_SCREEN) and tells viewers. An x11vnc
+// started before -xrandr, the newest flag, is replaced once it has exited, so one serves the display (vnc lists the
+// running ones; a zombie's cmdline is empty). Pasting goes through SET_CLIPBOARD instead.
 export const STREAM_PORT = 6080;
 const STREAM_DIR = '/tmp/live-view';
 // The traffic token guards the port only from outside: inside, any page the computer's Chrome visits can open a
@@ -176,14 +202,14 @@ end=$(($(date +%s) + ${STREAM_START_MS / 1000}))
 mkdir -p $D && exec 9>$D/lock && flock -w ${STREAM_START_MS / 1000} 9 || exit 1
 listening() { ss -Hltn "sport = :${STREAM_PORT}" | grep -q .; }
 vnc() { for p in $(pgrep -u "$(id -u)" -x x11vnc); do a=$(tr '\\0' ' ' </proc/$p/cmdline 2>/dev/null) && [ -n "$a" ] && echo "$p $a"; done; }
-old=$(vnc | grep -v -- ' -noprimary ' | cut -d' ' -f1)
+old=$(vnc | grep -v -- ' -xrandr ' | cut -d' ' -f1)
 if [ -n "$old" ]; then
   kill $old
-  while vnc | grep -qv -- ' -noprimary ' && [ "$(date +%s)" -le "$end" ]; do sleep 0.1; done
+  while vnc | grep -qv -- ' -xrandr ' && [ "$(date +%s)" -le "$end" ]; do sleep 0.1; done
 fi
-if ! vnc | grep -q -- ' -noprimary '; then
+if ! vnc | grep -q -- ' -xrandr '; then
   rm -f $D/vnc.sock
-  (setsid nohup x11vnc -display :0 -rfbport 0 -rfbportv6 -1 -unixsock $D/vnc.sock -noprimary -forever -shared -nopw -quiet >$D/x11vnc.log 2>&1 </dev/null 9>&- &)
+  (setsid nohup x11vnc -display :0 -rfbport 0 -rfbportv6 -1 -unixsock $D/vnc.sock -xrandr -noprimary -forever -shared -nopw -quiet >$D/x11vnc.log 2>&1 </dev/null 9>&- &)
 fi
 listening || (cd /opt/noVNC/utils/websockify && setsid nohup ./run --auth-plugin ExpectOrigin --auth-source ${STREAM_ORIGIN} --unix-target=$D/vnc.sock 0.0.0.0:${STREAM_PORT} >$D/websockify.log 2>&1 </dev/null 9>&- &)
 while [ "$(date +%s)" -le "$end" ]; do [ -S $D/vnc.sock ] && listening && exit 0; sleep 0.25; done
@@ -396,6 +422,7 @@ export const HELPERS = [
   { name: 'use-profile.sh', content: USE_PROFILE, mode: '755' },
   { name: 'cdp.mjs', content: CDP_HELPER, mode: '644' },
   { name: 'start-desktop.sh', content: START_DESKTOP, mode: '755' },
+  { name: 'set-screen.sh', content: SET_SCREEN, mode: '755' },
   { name: 'live-view-stream.sh', content: LIVE_VIEW_STREAM, mode: '755' },
   { name: 'cdp-bridge.sh', content: CDP_BRIDGE, mode: '755' },
   { name: 'set-clipboard.py', content: SET_CLIPBOARD, mode: '644' },
@@ -547,6 +574,21 @@ function session(sandbox: Sandbox): ComputerSession {
         `test -f ${zone} && ln -sf ${zone} /etc/localtime && echo ${quote(timeZone)} > /etc/timezone`,
         { user: 'root', timeoutMs: TIME_ZONE_MS },
       );
+    },
+    // As the desktop user, an X client like the desktop's own. Exit 3 is a desktop started smaller (SET_SCREEN).
+    async setScreen(screen) {
+      const { width, height } = SCREENS[screen];
+      try {
+        await sandbox.commands.run(`${HELPER_DIR}/set-screen.sh ${width} ${height}`, {
+          user: 'user',
+          envs: { DISPLAY: ':0' },
+          timeoutMs: SCREEN_MS,
+        });
+        return true;
+      } catch (error) {
+        if (error instanceof CommandExitError && error.exitCode === 3) return false;
+        throw error;
+      }
     },
     // As the desktop user, whose Chrome it stops. A computer whose refresh has not yet brought the helper runs Chrome on
     // FIRST_PROFILE, as its older helpers do, and refuses any other: the helper and ensure-chrome.sh that follows the

@@ -63,7 +63,7 @@ All under `/api/v1`, with `Authorization: Bearer <key>`:
 | --- | --- |
 | `GET /members` | The organization's members. |
 | `GET /members/<id>/capture?profile=` | A member's latest capture, the default profile's or `profile`'s (`captures`). |
-| `POST /computers/sessions` | `{ member, computer?, session?, label?, profile? }`: opens a session (`computers`). Answers `{ session, computer, cdpUrl, liveViewUrl, profile, profiles, sync, idlePauseSeconds }`. |
+| `POST /computers/sessions` | `{ member, computer?, session?, label?, profile?, screen? }`: opens a session (`computers`), switching the computer's screen to `screen` (`1440x900`, `1280x1024`, or `1920x1200`) when given. Answers `{ session, computer, cdpUrl, liveViewUrl, profile, profiles, sync, idlePauseSeconds }`, plus `screenUnchanged` when the computer predates screen sizes and keeps its own. |
 | `GET /computers/sessions/<id>` | `{ state }`: `open`, `user_in_control`, or `ended`. |
 | `POST /computers/sessions/<id>/exec` | `{ command, cwd?, timeoutSeconds? }`: `{ exitCode, stdout, stderr, truncated, timedOut }`. |
 | `DELETE /computers/sessions/<id>` | Closes the session. |

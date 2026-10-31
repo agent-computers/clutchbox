@@ -1,6 +1,6 @@
 import type { CdpCookieParam } from '@clutchbox/apply';
 import { siteOfHost } from '@clutchbox/capture';
-import { type ComputerSize, FIRST_PROFILE } from '@clutchbox/computer';
+import { type ComputerSize, DEFAULT_SCREEN, FIRST_PROFILE, SCREENS } from '@clutchbox/computer';
 import type { ComputerAction, ComputerProvider } from './computers';
 
 const cookieHost = (cookie: CdpCookieParam) => cookie.domain ?? new URL(cookie.url!).hostname;
@@ -34,9 +34,26 @@ type FakeSandbox = {
   revision: string;
   // The snapshot it was made from, for a fork.
   snapshotId?: string;
+  // The screen's size, and the desktop's, which the screen can't outgrow: the largest screen's, or for a computer
+  // from before screen sizes, its 1280x800.
+  screen: Size;
+  desktop: Size;
 };
+type Size = { width: number; height: number };
 // What a snapshot keeps of its computer: the browser's state and the system's.
-type FakeSnapshot = Pick<FakeSandbox, 'tabs' | 'profile' | 'cookies' | 'profiles' | 'revision' | 'timeZone' | 'public'>;
+type FakeSnapshot = Pick<
+  FakeSandbox,
+  'tabs' | 'profile' | 'cookies' | 'profiles' | 'revision' | 'timeZone' | 'public' | 'screen' | 'desktop'
+>;
+// A PNG's signature and header chunk, all of a screenshot that pngSize reads.
+const fakePng = ({ width, height }: Size) => {
+  const png = new Uint8Array(33);
+  png.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+  const view = new DataView(png.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return png;
+};
 // In-memory provider for tests. It records calls and keeps a Chrome-like cookie jar per computer;
 // it is NOT evidence about E2B or Chrome.
 // `account` prefixes its IDs, so two fakes, as two provider accounts, never share one.
@@ -65,6 +82,8 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
     cdpEndpoints: [] as string[],
     syncBudgets: [] as (number | undefined)[],
     timeZones: [] as string[],
+    // Each setScreen, with the screen asked for.
+    screens: [] as string[],
     // Refreshes, profile switches, and cookie syncs, in order.
     steps: [] as ('refresh' | 'profile' | 'sync')[],
     // Each useProfile, with the sandbox and the profile asked for: the profile each session ran on.
@@ -77,6 +96,7 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
   let setTimeoutFails = false;
   let closeTabsFails = false;
   let timeZoneFails = false;
+  let screenFails = false;
   let refreshFails = false;
   let clipboardFails = false;
   let snapshotFails = false;
@@ -117,6 +137,8 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
         profiles: {},
         paused: false,
         revision,
+        screen: { ...SCREENS[DEFAULT_SCREEN] },
+        desktop: { ...SCREENS['1920x1200'] },
       });
       return id;
     },
@@ -145,7 +167,7 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
       // Like E2B: a paused computer is resumed to take it.
       sandbox.paused = false;
       const id = `${account}snapshot-${calls.snapshot}`;
-      const { tabs, profile, cookies, profiles, revision: helpers, timeZone, public: open } = sandbox;
+      const { tabs, profile, cookies, profiles, revision: helpers, timeZone, public: open, screen, desktop } = sandbox;
       snapshots.set(
         id,
         structuredClone({
@@ -154,6 +176,8 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
           cookies,
           profiles,
           revision: helpers,
+          screen,
+          desktop,
           ...(timeZone ? { timeZone } : {}),
           ...(open ? { public: open } : {}),
         }),
@@ -173,7 +197,7 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
       sandbox.paused = false;
       return {
         isPrivate: !sandbox.public,
-        screenshot: async () => new Uint8Array([137, 80, 78, 71]),
+        screenshot: async () => fakePng(sandbox.screen),
         act: async action => {
           sandbox.actions.push(action);
         },
@@ -215,6 +239,14 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
           delete sandbox.profiles[profile];
           sandbox.profile = profile;
           sandbox.tabs = ['about:blank'];
+        },
+        async setScreen(screen) {
+          calls.screens.push(screen);
+          if (screenFails) throw new Error('setScreen failed in fake');
+          const size = SCREENS[screen];
+          if (size.width > sandbox.desktop.width || size.height > sandbox.desktop.height) return false;
+          sandbox.screen = { ...size };
+          return true;
         },
         async setTimeZone(timeZone) {
           calls.timeZones.push(timeZone);
@@ -299,6 +331,9 @@ export function fakeComputerProvider({ account = '' }: { account?: string } = {}
     },
     failTimeZone: (fails = true) => {
       timeZoneFails = fails;
+    },
+    failScreen: (fails = true) => {
+      screenFails = fails;
     },
     // A provider update: computers made before it are behind.
     setRevision: (next: string) => {

@@ -31,7 +31,7 @@ export const RELAY_CLOSE = {
 
 // Pause the sending side once this much waits to go out on the other, and resume once below LOW_WATER, so a slow
 // browser slows the computer's stream instead of filling the function's memory. Bytes, not time, so they live
-// here: a few uncompressed screens of the computer's 1280x800 desktop.
+// here: a few uncompressed screens of the computer's desktop, 1920x1200 at most.
 const HIGH_WATER = 8 * 1024 * 1024;
 const LOW_WATER = 1024 * 1024;
 

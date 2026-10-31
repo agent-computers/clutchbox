@@ -9,7 +9,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { toCdpCookie } from '@clutchbox/apply';
-import { FIRST_PROFILE } from '@clutchbox/computer';
+import { DEFAULT_SCREEN, FIRST_PROFILE, pngSize, SCREEN_NAMES, SCREENS } from '@clutchbox/computer';
 import { e2bComputerProvider, HELPER_DIR, REVISION, REVISION_FILE } from '@clutchbox/e2b';
 import { WebSocket } from 'ws';
 import { bundle, cookie } from '../src/capture-fixtures';
@@ -39,6 +39,8 @@ const timed = async <T>(name: string, work: () => Promise<T>) => {
   }
 };
 const checks: Record<string, unknown> = {};
+// Every screen, ending at the default, which the rest of the run expects.
+const SCREEN_ORDER = [...SCREEN_NAMES.filter(name => name !== DEFAULT_SCREEN), DEFAULT_SCREEN];
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const computerId = randomUUID();
 const forkComputerId = randomUUID();
@@ -134,6 +136,29 @@ try {
   await timed('actKey', () => session.act({ type: 'key', keys: 'Escape' }));
   await timed('actScroll', () => session.act({ type: 'scroll', x: 640, y: 400, direction: 'down', amount: 3 }));
   await writeFile(join(out, 'computer-smoke.png'), await timed('screenshot', () => session.screenshot()));
+  // Screens: the computer starts at the default, and switches to each with Chrome still maximized across it (the window
+  // manager resizes it a moment after the switch).
+  const screenOf = async () => {
+    const size = pngSize(await session.screenshot());
+    return size && `${size.width}x${size.height}`;
+  };
+  const chromeFills = async (width: number) => {
+    const window = await session.exec({
+      command: `export DISPLAY=:0; w=$(xdotool search --onlyvisible --class google-chrome | head -1); for i in $(seq 1 20); do g=$(xdotool getwindowgeometry "$w"); case "$g" in *"Geometry: ${width}x"*) break ;; esac; sleep 0.25; done; xprop -id "$w" _NET_WM_STATE; echo "$g"`,
+      timeoutSeconds: 15,
+    });
+    return window.stdout.includes('MAXIMIZED_VERT') && window.stdout.includes(`Geometry: ${width}x`);
+  };
+  checks.screenAtStart = await screenOf();
+  checks.screens = {};
+  for (const screen of SCREEN_ORDER) {
+    const set = await timed(`setScreen ${screen}`, () => session.setScreen(screen));
+    (checks.screens as Record<string, unknown>)[screen] = {
+      set,
+      screenshot: await screenOf(),
+      chromeFills: await chromeFills(SCREENS[screen].width),
+    };
+  }
   const exec = await timed('exec', () =>
     session.exec({
       command: 'mkdir -p ~/Downloads && printf "a,b\\n1,2\\n" > ~/Downloads/smoke.csv && whoami && pwd',
@@ -263,7 +288,7 @@ try {
       session.useProfile(FIRST_PROFILE, PROFILE_SWITCH_BUDGET_MS).then(() => true),
     );
   }
-  // Live view. The stream replaces an x11vnc started without -noprimary, as computers ran it before.
+  // Live view. The stream replaces an x11vnc started without -xrandr, as computers ran it before.
   await session.exec({
     command:
       'mkdir -p /tmp/live-view && (setsid nohup x11vnc -display :0 -rfbport 0 -rfbportv6 -1 -unixsock /tmp/live-view/vnc.sock -forever -shared -nopw -quiet >/dev/null 2>&1 </dev/null &); sleep 1',
@@ -399,6 +424,10 @@ const expected: Record<string, unknown> = {
   exec: { exitCode: 0, stdout: ['user', '/home/user'] },
   execFailure: 3,
   execTimeout: true,
+  screenAtStart: DEFAULT_SCREEN,
+  screens: Object.fromEntries(
+    SCREEN_ORDER.map(screen => [screen, { set: true, screenshot: screen, chromeFills: true }]),
+  ),
   statePreservedAfterResume: 'https://example.com/',
   forkFoundByMetadata: true,
   forkKeepsPage: 'https://example.com/',
@@ -408,7 +437,7 @@ const expected: Record<string, unknown> = {
   tabsAfterClose: ['about:blank'],
   killed: true,
   x11vncArgs:
-    'x11vnc -display :0 -rfbport 0 -rfbportv6 -1 -unixsock /tmp/live-view/vnc.sock -noprimary -forever -shared -nopw -quiet',
+    'x11vnc -display :0 -rfbport 0 -rfbportv6 -1 -unixsock /tmp/live-view/vnc.sock -xrandr -noprimary -forever -shared -nopw -quiet',
   greeting: 'RFB 003.008\n',
   pasted: ['café “quoted” 日本語', 'second ✓ 🎉 — done'],
   helperServing: true,

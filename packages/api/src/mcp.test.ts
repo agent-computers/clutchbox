@@ -665,7 +665,7 @@ describe('main computer tools', () => {
     // A sign-in on the host never reaches a computer session; the agent reopens with its session to apply it.
     await saveFromBrowser(db, await member(a.id), bundle([cookie()]));
     const shot = (await tool(claude.access_token, 'computer_act', { session_id: id })).result.structuredContent;
-    expect(shot).toEqual({ session_id: id, display: { width: 1280, height: 800 }, completed: 0, unexecuted: 0 });
+    expect(shot).toEqual({ session_id: id, display: { width: 1440, height: 900 }, completed: 0, unexecuted: 0 });
     expect(fake.calls.sync).toBe(0);
     // Another agent, or the same one without its session_id, finds this computer busy; others' IDs are not theirs.
     for (const token of [chatgpt.access_token, claude.access_token]) {
@@ -830,6 +830,41 @@ describe('main computer tools', () => {
     expect(
       (await tool(token, 'computer_act', { session_id: named.session_id })).result.structuredContent,
     ).toMatchObject({ session_id: named.session_id });
+  });
+  it("switches a computer's screen when asked, keeps it, and says when it can't", async () => {
+    const fake = fakeComputerProvider();
+    vi.stubEnv('CAPTURE_ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+    endpoint = createMcpEndpoint({ db, auth, origin, computers: fake.provider });
+    const a = await identity('a');
+    const token = (await authorize(a.cookie, await register()))!.access_token;
+    const open = async (args: Record<string, unknown>) => (await tool(token, 'computer_open', args)).result;
+    // A new computer starts at the default screen, untouched.
+    const opened = (await open({})).structuredContent;
+    expect(opened.display).toEqual({ width: 1440, height: 900 });
+    expect(opened).not.toHaveProperty('screen_unchanged');
+    const tall = (await open({ session_id: opened.session_id, screen: '1280x1024' })).structuredContent;
+    expect(tall).toMatchObject({ computer_id: opened.computer_id, display: { width: 1280, height: 1024 } });
+    expect(tall).not.toHaveProperty('screen_unchanged');
+    // The computer keeps it, in screenshots and in later sessions.
+    expect(
+      (await tool(token, 'computer_act', { session_id: tall.session_id })).result.structuredContent.display,
+    ).toEqual({ width: 1280, height: 1024 });
+    const kept = (await open({ session_id: tall.session_id })).structuredContent;
+    expect(kept.display).toEqual({ width: 1280, height: 1024 });
+    expect(fake.calls.screens).toEqual(['1280x1024']);
+    // Only the presets.
+    expect(await open({ session_id: kept.session_id, screen: '1024x768' })).toMatchObject({ isError: true });
+    expect(fake.calls.screens).toEqual(['1280x1024']);
+    // A computer from before screen sizes keeps its own, and the agent is told.
+    const sandbox = [...fake.sandboxes.values()].find(each => each.computerId === opened.computer_id)!;
+    Object.assign(sandbox, { screen: { width: 1280, height: 800 }, desktop: { width: 1280, height: 800 } });
+    const legacy = (await open({ session_id: kept.session_id, screen: '1920x1200' })).structuredContent;
+    expect(legacy).toMatchObject({ display: { width: 1280, height: 800 }, screen_unchanged: expect.any(String) });
+    // A failed switch leaves the screen as it was, and the computer still opens.
+    Object.assign(sandbox, { desktop: { width: 1920, height: 1200 } });
+    fake.failScreen();
+    const failed = (await open({ session_id: legacy.session_id, screen: '1920x1200' })).structuredContent;
+    expect(failed).toMatchObject({ display: { width: 1280, height: 800 }, screen_unchanged: expect.any(String) });
   });
   it('tells an agent the user took control, shows it waiting, and says so once after the hand-back', async () => {
     const fake = fakeComputerProvider();

@@ -73,6 +73,9 @@ export type OpenOptions = {
   // The profile to use, by its ID from a session's profiles. Without it, a reopened computer keeps the profile it had,
   // and a new one gets the default.
   profile?: string;
+  // The screen size to switch the computer to, in pixels; without it, the computer keeps its own, and a new one starts
+  // at 1440x900.
+  screen?: '1440x900' | '1280x1024' | '1920x1200';
 };
 
 type SessionAnswer = {
@@ -86,6 +89,8 @@ type SessionAnswer = {
   sync: SyncSummary;
   idlePauseSeconds: number;
   userHadControl?: boolean;
+  // The screen asked for could not be set: the computer predates screen sizes and keeps its own.
+  screenUnchanged?: boolean;
 };
 
 // How often a kept connection checks whether the member handed back, and the most it waits between failed
@@ -182,6 +187,7 @@ export class ComputerSession {
   readonly profiles: Profile[];
   readonly sync: SyncSummary;
   readonly userHadControl: boolean;
+  readonly screenUnchanged: boolean;
   private closed = false;
 
   constructor(
@@ -196,6 +202,7 @@ export class ComputerSession {
     this.profiles = answer.profiles;
     this.sync = answer.sync;
     this.userHadControl = !!answer.userHadControl;
+    this.screenUnchanged = !!answer.screenUnchanged;
   }
 
   exec(command: string, options?: { cwd?: string; timeoutSeconds?: number }) {

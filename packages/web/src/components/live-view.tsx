@@ -366,8 +366,10 @@ function LiveSession({ intent, target, onStop }: { intent: Intent; target: Targe
               <AlertDescription>{problem}</AlertDescription>
             </Alert>
           )}
+          {/* 16:10 until the screen's size is known: a new computer's 1440x900, and an older one's 1280x800. */}
           <div
             className={`relative aspect-[16/10] w-full overflow-hidden rounded-lg bg-black ${inControl ? 'ring-2 ring-brand' : 'ring-1 ring-foreground/10'}`}
+            style={viewer.size ? { aspectRatio: `${viewer.size.width} / ${viewer.size.height}` } : undefined}
           >
             {/* noVNC owns this element's children. */}
             <div ref={viewer.screen} className="absolute inset-0" />
@@ -478,9 +480,10 @@ const mac = () => typeof navigator !== 'undefined' && isMac(navigator.platform);
 const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
 // noVNC on this lease's relay connection, to the computer named (a fork's ID; without one, the main computer), while
-// it is connectable, reconnecting after drops while the page is visible. viewOnly follows the takeover without reconnecting; the computer's desktop size is fixed for agents, so
-// the page never resizes it. beatAt is when the heartbeat last answered. setClipboard sets the computer's clipboard
-// for a paste (useLiveViewClipboard); problem is why the last paste failed.
+// it is connectable, reconnecting after drops while the page is visible. viewOnly follows the takeover without
+// reconnecting. Agents choose the computer's screen size, so the page never resizes it; size is that screen's, for the
+// view's shape. beatAt is when the heartbeat last answered. setClipboard sets the computer's clipboard for a paste
+// (useLiveViewClipboard); problem is why the last paste failed.
 function useViewer(
   lease: string,
   computer: string | undefined,
@@ -496,6 +499,7 @@ function useViewer(
   const epoch = useRef(0);
   const [state, setState] = useState<Viewer>('idle');
   const [problem, setProblem] = useState<string | null>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const paste = useRef(setClipboard);
   useEffect(() => {
     paste.current = setClipboard;
@@ -520,6 +524,14 @@ function useViewer(
     const target = screen.current;
     if (!connectable || !target) return;
     const detachInput = attachInput(target, client, paste, setProblem, epoch);
+    // noVNC sizes its canvas to the computer's screen, and again when the screen changes size.
+    const resized = new MutationObserver(() => {
+      const canvas = target.querySelector('canvas');
+      if (!canvas?.width || !canvas.height) return;
+      const { width, height } = canvas;
+      setSize(last => (last?.width === width && last.height === height ? last : { width, height }));
+    });
+    resized.observe(target, { subtree: true, attributeFilter: ['width', 'height'] });
     let stopped = false;
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -586,13 +598,14 @@ function useViewer(
     return () => {
       stopped = true;
       detachInput();
+      resized.disconnect();
       clearTimeout(timer);
       client.current?.disconnect();
       client.current = null;
       setState('idle');
     };
   }, [connectable, lease, computer, generation]);
-  return { screen, state, problem };
+  return { screen, state, problem, size };
 }
 
 // Keyboard shortcuts and pasting while in control (lib/live-view-input.ts). A capture listener on noVNC's container

@@ -177,6 +177,26 @@ describe('computer sessions over REST', () => {
     expect((await rawRequest(secret, 'GET', `/members/${worker.publicId}/capture?profile=cmp_x`)).status).toBe(400);
   });
 
+  it("switch the computer's screen when asked, and say when it can't", async () => {
+    const admin = await person('admin', 'admin');
+    const worker = await person('worker', 'member');
+    const { client } = await newKey(admin.cookie);
+    const session = await client.computers.open({ member: worker.publicId, screen: '1920x1200' });
+    expect(session.screenUnchanged).toBe(false);
+    const sandbox = developer.fake.sandboxes.get((await forkRow(session.computer.id)).sandboxId!)!;
+    expect(sandbox.screen).toEqual({ width: 1920, height: 1200 });
+    // A computer from before screen sizes keeps its own.
+    Object.assign(sandbox, { screen: { width: 1280, height: 800 }, desktop: { width: 1280, height: 800 } });
+    const legacy = await client.computers.open({
+      member: worker.publicId,
+      computer: session.computer.id,
+      session: session.id,
+      screen: '1440x900',
+    });
+    expect(legacy.screenUnchanged).toBe(true);
+    expect(sandbox.screen).toEqual({ width: 1280, height: 800 });
+  });
+
   it('refuse malformed requests', async () => {
     const admin = await person('admin', 'admin');
     const worker = await person('worker', 'member');
@@ -186,6 +206,7 @@ describe('computer sessions over REST', () => {
       { member: 'mem_x' },
       { member: worker.publicId, computer: 'nope' },
       { member: worker.publicId, label: '' },
+      { member: worker.publicId, screen: '1024x768' },
       { member: worker.publicId, extra: true },
       'not json',
     ])

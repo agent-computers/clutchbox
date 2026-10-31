@@ -60,6 +60,7 @@ import {
   handBackComputer,
   issueCdpToken,
   openComputerSession,
+  SCREEN_NAMES,
   SESSION_ID_PATTERN,
   type SessionHandle,
   setComputerSize,
@@ -487,11 +488,12 @@ export function createApi({
           session: z.string().regex(SESSION_ID_PATTERN).optional(),
           label: z.string().trim().min(1).max(100).optional(),
           profile: z.string().regex(BROWSER_ID_PATTERN).optional(),
+          screen: z.enum(SCREEN_NAMES).optional(),
         })
         .strict(),
     );
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const { member, computer, session, label, profile } = parsed.data;
+    const { member, computer, session, label, profile, screen } = parsed.data;
     const caller = await computerCallerForMember(db, keyOf(c), member);
     if ('error' in caller) return keyFailure(c, caller);
     let handle: SessionHandle | undefined;
@@ -501,6 +503,7 @@ export function createApi({
         computerId: computer,
         label,
         profile,
+        screen,
       });
       if ('error' in opened) return computerFailure(c, opened);
       handle = opened;
@@ -523,6 +526,7 @@ export function createApi({
           sync: opened.sync,
           idlePauseSeconds: IDLE_PAUSE_MS / 1000,
           ...(opened.userHadControl ? { userHadControl: true } : {}),
+          ...(opened.screenUnchanged ? { screenUnchanged: true } : {}),
         },
         201,
       );

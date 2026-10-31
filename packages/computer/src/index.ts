@@ -3,8 +3,25 @@ import { z } from 'zod';
 
 // What a computer offers, whatever runs it: a provider creates, resumes, and pauses computers, and a session
 // controls one. Adapters implement these for a sandbox provider (packages/e2b).
-// The desktop's size; screenshots and actions use its coordinates.
-export const DISPLAY = { width: 1280, height: 800 };
+// The screen sizes a computer switches between (setScreen), named by their pixels; screenshots and actions use the
+// screen's coordinates. A new computer starts at DEFAULT_SCREEN. A desktop can't grow past the size it started at, so
+// providers start it at the largest; one started before these sizes stays at its own until it is reset.
+export const SCREENS = {
+  '1440x900': { width: 1440, height: 900 },
+  '1280x1024': { width: 1280, height: 1024 },
+  '1920x1200': { width: 1920, height: 1200 },
+} as const;
+export type ScreenSize = keyof typeof SCREENS;
+export const SCREEN_NAMES = Object.keys(SCREENS) as [ScreenSize, ...ScreenSize[]];
+export const DEFAULT_SCREEN: ScreenSize = '1440x900';
+// A screenshot's size, read from its PNG header: the screen it shows, whatever size the computer runs at. Null for
+// anything but a PNG.
+export function pngSize(png: Uint8Array): { width: number; height: number } | null {
+  const header = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
+  if (png.length < 24 || header.some((byte, i) => png[i] !== byte)) return null;
+  const view = new DataView(png.buffer, png.byteOffset, 24);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
 // A key name (Return, ctrl, F5, a) or a chord of them joined by +, in characters a shell passes through unquoted:
 // adapters may hand keys to a command line, as E2B's xdotool does. Text, symbols included, goes through `type`.
 export const keyNamePattern = /^[A-Za-z0-9_+.,=/:-]+$/;
@@ -95,6 +112,9 @@ export interface ComputerSession {
   refresh(budgetMs: number): Promise<'current' | 'refreshed'>;
   // Sets the system time zone (a valid IANA name), which a running Chrome follows at once.
   setTimeZone(timeZone: string): Promise<void>;
+  // Switches the screen to `screen`; windows and the browser keep running, and Chrome stays maximized. False, changing
+  // nothing, on a computer whose desktop started smaller than the screen.
+  setScreen(screen: ScreenSize): Promise<boolean>;
   // Runs Chrome on `profile` (PROFILE_PATTERN), the one Chrome every other method uses until the next call: a Chrome on
   // another profile is stopped gracefully first, so its cookies reach disk, and its tabs close. A computer runs
   // FIRST_PROFILE until told otherwise. Done, or failed, within budgetMs; a failure leaves no Chrome on the wrong profile.
